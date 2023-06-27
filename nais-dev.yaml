@@ -1,0 +1,11 @@
+apiVersion: "nais.io/v1alpha1"
+kind: "Application"
+metadata:
+  name: delta-backend
+  namespace: delta
+  labels:
+    team: delta
+spec:
+  image: {{image}}
+  ingresses:
+    - https://delta-backend.ekstern.dev.nav.no
