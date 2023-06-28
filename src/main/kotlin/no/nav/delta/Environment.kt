@@ -1,11 +1,11 @@
 package no.nav.delta
 
 data class Environment (
-    val dbUsername: String = getEnvVar("DB_USERNAME"),
-    val dbPassword: String = getEnvVar("DB_PASSWORD"),
-    val dbHost: String = getEnvVar("DB_HOST"),
-    val dbPort: String = getEnvVar("DB_PORT"),
-    val dbName: String = getEnvVar("DB_DATABASE"),
+    val dbUsername: String = getEnvVar("NAIS_DATABASE_DELTA_DELTA_USERNAME"),
+    val dbPassword: String = getEnvVar("NAIS_DATABASE_DELTA_DELTA_PASSWORD"),
+    val dbHost: String = getEnvVar("NAIS_DATABASE_DELTA_DELTA_HOST"),
+    val dbPort: String = getEnvVar("NAIS_DATABASE_DELTA_DELTA_PORT"),
+    val dbName: String = getEnvVar("NAIS_DATABASE_DELTA_DELTA_DATABASE"),
     val applicationPort: Int = getEnvVar("APPLICATION_PORT", "8080").toInt(),
 ){
     fun jdbcUrl() = "jdbc:postgresql://$dbHost:$dbPort/$dbName"
