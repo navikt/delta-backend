@@ -80,7 +80,7 @@ jobs:
   deploy-dev:
     name: Deploy to dev
     runs-on: ubuntu-latest
-    needs: [test, build]
+    needs: build
     steps:
       - uses: actions/checkout@v3
       - uses: nais/deploy/actions/deploy@v1
