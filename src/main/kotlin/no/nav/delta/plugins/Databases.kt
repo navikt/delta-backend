@@ -1,80 +1,75 @@
 package no.nav.delta.plugins
 
-import io.ktor.http.*
-import io.ktor.server.request.*
-import io.ktor.server.response.*
-import kotlinx.coroutines.*
-import java.sql.*
-import io.ktor.server.application.*
-import io.ktor.server.routing.*
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
+import com.zaxxer.hikari.pool.HikariPool
+import java.net.ConnectException
+import java.net.SocketException
+import java.sql.Connection
+import java.sql.ResultSet
+import no.nav.delta.Environment
+import org.flywaydb.core.Flyway
 
-fun Application.configureDatabases() {
+class Database(private val env: Environment, retries: Long = 30, sleepTime: Long = 10_000) :
+    DatabaseInterface {
+    private val dataSource: HikariDataSource
 
-    val dbConnection: Connection = connectToPostgres(embedded = true)
-    val cityService = CityService(dbConnection)
-    routing {
-        // Create city
-        post("/cities") {
-            val city = call.receive<City>()
-            val id = cityService.create(city)
-            call.respond(HttpStatusCode.Created, id)
-        }
-        // Read city
-        get("/cities/{id}") {
-            val id = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
+    override val connection: Connection
+        get() = dataSource.connection
+
+    init {
+        var current = 0
+        var connected = false
+        var tempDatasource: HikariDataSource? = null
+        while (!connected && current++ < retries) {
             try {
-                val city = cityService.read(id)
-                call.respond(HttpStatusCode.OK, city)
-            } catch (e: Exception) {
-                call.respond(HttpStatusCode.NotFound)
+                tempDatasource =
+                    HikariDataSource(
+                        HikariConfig().apply {
+                            jdbcUrl = env.jdbcUrl()
+                            username = env.dbUsername
+                            password = env.dbPassword
+                            maximumPoolSize = 10
+                            minimumIdle = 3
+                            idleTimeout = 10000
+                            maxLifetime = 300000
+                            isAutoCommit = false
+                            transactionIsolation = "TRANSACTION_REPEATABLE_READ"
+                            validate()
+                        },
+                    )
+                connected = true
+            } catch (ex: HikariPool.PoolInitializationException) {
+                if (ex.cause?.cause is ConnectException || ex.cause?.cause is SocketException) {
+                    Thread.sleep(sleepTime)
+                } else {
+                    throw ex
+                }
             }
         }
-        // Update city
-        put("/cities/{id}") {
-            val id = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
-            val user = call.receive<City>()
-            cityService.update(id, user)
-            call.respond(HttpStatusCode.OK)
+        if (tempDatasource == null) {
+            throw RuntimeException("Could not connect to DB")
         }
-        // Delete city
-        delete("/cities/{id}") {
-            val id = call.parameters["id"]?.toInt() ?: throw IllegalArgumentException("Invalid ID")
-            cityService.delete(id)
-            call.respond(HttpStatusCode.OK)
-        }
+        dataSource = tempDatasource
+        runFlywayMigrations()
     }
+
+    private fun runFlywayMigrations() =
+        Flyway.configure().run {
+            locations("db")
+            configuration(mapOf("flyway.postgresql.transactional.lock" to "false"))
+            dataSource(env.jdbcUrl(), env.dbUsername, env.dbPassword)
+            load().migrate()
+        }
 }
 
-/**
- * Makes a connection to a Postgres database.
- *
- * In order to connect to your running Postgres process,
- * please specify the following parameters in your configuration file:
- * - postgres.url -- Url of your running database process.
- * - postgres.user -- Username for database connection
- * - postgres.password -- Password for database connection
- *
- * If you don't have a database process running yet, you may need to [download]((https://www.postgresql.org/download/))
- * and install Postgres and follow the instructions [here](https://postgresapp.com/).
- * Then, you would be able to edit your url,  which is usually "jdbc:postgresql://host:port/database", as well as
- * user and password values.
- *
- *
- * @param embedded -- if [true] defaults to an embedded database for tests that runs locally in the same process.
- * In this case you don't have to provide any parameters in configuration file, and you don't have to run a process.
- *
- * @return [Connection] that represent connection to the database. Please, don't forget to close this connection when
- * your application shuts down by calling [Connection.close]
- * */
-fun Application.connectToPostgres(embedded: Boolean): Connection {
-    Class.forName("org.postgresql.Driver")
-    if (embedded) {
-        return DriverManager.getConnection("jdbc:h2:mem:test;DB_CLOSE_DELAY=-1", "root", "")
-    } else {
-        val url = environment.config.property("postgres.url").getString()
-        val user = environment.config.property("postgres.user").getString()
-        val password = environment.config.property("postgres.password").getString()
-
-        return DriverManager.getConnection(url, user, password)
+fun <T> ResultSet.toList(mapper: ResultSet.() -> T) =
+    mutableListOf<T>().apply {
+        while (next()) {
+            add(mapper())
+        }
     }
+
+interface DatabaseInterface {
+    val connection: Connection
 }
