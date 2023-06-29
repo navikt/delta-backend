@@ -1,23 +1,138 @@
 openapi: "3.0.3"
 info:
-  title: "Application API"
-  description: "Application API"
+  title: "Delta API"
+  description: "API for Delta"
   version: "1.0.0"
 servers:
   - url: "http://0.0.0.0:8080"
+  - url: "https://delta.ekstern.dev.nav.no"
 paths:
-  /:
+  /admin/events:
     get:
-      description: "Hello World!"
+      tags:
+        - admin
+      description: "Get all events created by me"
       responses:
         "200":
-          description: "OK"
+          description: "All my events"
           content:
-            text/plain:
+            application/json:
               schema:
-                type: "string"
-              examples:
-                Example#1:
-                  value: "Hello World!"
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+    put:
+      tags:
+        - admin
+      description: "Create an event"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEvent'
+      responses:
+        "201":
+          description: "created event"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+  /event/{id}:
+    get:
+      tags:
+        - user
+      description: "Get an event"
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
+      responses:
+        "201":
+          description: "Event joined"
+    put:
+      tags:
+        - user
+      description: "Join an event"
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JoinEvent"
+      responses:
+        "201":
+          description: "Event joined"
+    delete:
+      tags:
+        - user
+      description: "Leave an event"
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaveEvent"
+      responses:
+        "200":
+          description: "Event left"
 components:
   schemas:
+    CreateEvent:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        startTime:
+          type: datetime
+        endTime:
+          type: datetime
+        location:
+          type: string
+    Event:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        startTime:
+          type: datetime
+        endTime:
+          type: datetime
+        location:
+          type: string
+        ownerEmail:
+          type: string
+        id:
+          type: integer
+    JoinEvent:
+      type: object
+      properties:
+        email:
+          type: string
+    LeaveEvent:
+      properties:
+        id:
+          type: string
