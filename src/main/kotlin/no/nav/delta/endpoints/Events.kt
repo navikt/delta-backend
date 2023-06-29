@@ -7,6 +7,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
+import java.text.SimpleDateFormat
 import java.util.*
 
 
@@ -45,10 +46,11 @@ fun DatabaseInterface.addEvent(event: Event) {
             .use {
                 it.setString(1, event.title)
                 it.setString(2, event.description)
-                it.setTimestamp(3, event.startTime as Timestamp?)
-                it.setTimestamp(3, event.startTime as Timestamp?)
-                it.executeQuery()
+                it.setTimestamp(3, Timestamp.from(event.startTime.toInstant()))
+                it.setTimestamp(4, Timestamp.from(event.endTime.toInstant()))
+                it.executeUpdate()
             }
+        it.commit()
     }
 }
 
@@ -61,6 +63,7 @@ fun Route.eventApi(database: DatabaseInterface) {
             put {
                 val event = call.receive(Event::class)
                 database.addEvent(event)
+                call.respond("success")
             }
         }
     }
