@@ -14,3 +14,8 @@ spec:
       - type: POSTGRES_14
         databases:
           - name: delta
+  azure:
+    application:
+      enabled: true
+      tenant: nav.no
+      allowAllUsers: true
