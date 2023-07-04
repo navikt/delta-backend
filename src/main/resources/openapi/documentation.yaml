@@ -134,5 +134,5 @@ components:
           type: string
     LeaveEvent:
       properties:
-        id:
+        otp:
           type: string
