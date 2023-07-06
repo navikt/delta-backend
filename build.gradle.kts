@@ -6,6 +6,7 @@ val logback_version: String by project
 val postgres_version: String by project
 val hikari_version: String by project
 val flyway_version: String by project
+val jackson_version: String by project
 
 plugins {
     kotlin("jvm") version "1.8.22"
@@ -43,6 +44,10 @@ dependencies {
     implementation("org.postgresql:postgresql:$postgres_version")
     implementation("com.zaxxer:HikariCP:$hikari_version")
     implementation("org.flywaydb:flyway-core:$flyway_version")
+
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jackson_version")
+    implementation("com.fasterxml.jackson.module:jackson-module-jaxb-annotations:$jackson_version")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:$jackson_version")
 }
 
 tasks {
