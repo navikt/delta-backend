@@ -14,11 +14,20 @@ import java.util.*
 
 data class Event (
     val id: Int,
+    val ownerEmail: String,
     val title: String,
     val description: String,
     val startTime: Date,
     val endTime: Date,
 )
+
+data class CreateEvent (
+    val title: String,
+    val description: String,
+    val startTime: Date,
+    val endTime: Date,
+)
+
 fun DatabaseInterface.getEvents(): List<Event> {
     val events = ArrayList<Event>()
     connection.use {
@@ -28,6 +37,7 @@ fun DatabaseInterface.getEvents(): List<Event> {
                     while (it.next()) {
                         val event = Event(
                             id = it.getInt("id"),
+                            ownerEmail = it.getString("owner"),
                             title = it.getString("title"),
                             description = it.getString("description"),
                             startTime = it.getDate("start_time"),
@@ -41,14 +51,15 @@ fun DatabaseInterface.getEvents(): List<Event> {
     return events
 }
 
-fun DatabaseInterface.addEvent(event: Event) {
+fun DatabaseInterface.addEvent(ownerEmail: String, title: String, description: String, startTime: Timestamp, endTime: Timestamp) {
     connection.use {
-        it.prepareStatement("INSERT INTO event(title, description, start_time, end_time) VALUES (?, ?, ?, ?);")
+        it.prepareStatement("INSERT INTO event(owner, title, description, start_time, end_time) VALUES (?, ?, ?, ?, ?);")
             .use {
-                it.setString(1, event.title)
-                it.setString(2, event.description)
-                it.setTimestamp(3, Timestamp.from(event.startTime.toInstant()))
-                it.setTimestamp(4, Timestamp.from(event.endTime.toInstant()))
+                it.setString(1, ownerEmail)
+                it.setString(2, title)
+                it.setString(3, description)
+                it.setTimestamp(4, startTime)
+                it.setTimestamp(5, endTime)
                 it.executeUpdate()
             }
         it.commit()
@@ -67,10 +78,18 @@ fun Route.eventApi(database: DatabaseInterface) {
     authenticate("jwt")  {
         route("/admin/event") {
             put {
-                val event = call.receive(Event::class)
-                database.addEvent(event)
+                val createEvent = call.receive(CreateEvent::class)
+
+                database.addEvent(
+                    "ownerEmail",
+                    createEvent.title,
+                    createEvent.description,
+                    Timestamp.from(createEvent.startTime.toInstant()),
+                    Timestamp.from(createEvent.endTime.toInstant()),
+                )
                 call.respond("success")
             }
+            
         }
     }
 }
