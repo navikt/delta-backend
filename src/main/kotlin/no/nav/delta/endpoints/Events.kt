@@ -1,8 +1,10 @@
 package no.nav.delta.endpoints
 
 import io.ktor.http.*
+import io.ktor.http.cio.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
+import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -89,7 +91,11 @@ fun Route.eventApi(database: DatabaseInterface) {
                 )
                 call.respond("success")
             }
-            
+
+            get {
+                val principal = call.principal<JWTPrincipal>()
+                call.respond(principal!!.payload)
+            }
         }
     }
 }
