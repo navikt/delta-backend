@@ -11,8 +11,6 @@ spec:
       rules:
         - application: delta-frontend
   image: {{image}}
-  ingresses:
-    - https://delta-backend.intern.dev.nav.no
   gcp:
     sqlInstances:
       - type: POSTGRES_14
