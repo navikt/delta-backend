@@ -6,6 +6,10 @@ metadata:
   labels:
     team: delta
 spec:
+  accessPolicy:
+    inbound:
+      rules:
+        - application: delta-frontend
   image: {{image}}
   ingresses:
     - https://delta-backend.intern.dev.nav.no
