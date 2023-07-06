@@ -1,5 +1,6 @@
 package no.nav.delta.application
 
+import com.auth0.jwk.JwkProvider
 import com.fasterxml.jackson.databind.SerializationFeature
 import io.ktor.serialization.jackson.*
 import io.ktor.serialization.kotlinx.json.*
@@ -13,12 +14,15 @@ import io.ktor.server.routing.*
 import no.nav.delta.Environment
 import no.nav.delta.endpoints.eventApi
 import no.nav.delta.plugins.*
+import setupAuth
 
 fun createApplicationEngine(
     env: Environment,
     //applicationState: ApplicationState,
     database: DatabaseInterface,
+    jwkProvider: JwkProvider,
 ): ApplicationEngine = embeddedServer(Netty, env.applicationPort) {
+    setupAuth(env, jwkProvider, env.jwtIssuer)
     install(ContentNegotiation) {
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)

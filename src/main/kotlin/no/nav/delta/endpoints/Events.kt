@@ -2,6 +2,7 @@ package no.nav.delta.endpoints
 
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -60,6 +61,11 @@ fun Route.eventApi(database: DatabaseInterface) {
             get {
                 call.respond(database.getEvents())
             }
+        }
+    }
+
+    authenticate("jwt")  {
+        route("/admin/event") {
             put {
                 val event = call.receive(Event::class)
                 database.addEvent(event)
