@@ -3,6 +3,8 @@ package no.nav.delta.application
 import com.auth0.jwk.JwkProvider
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer
+import com.fasterxml.jackson.module.kotlin.addDeserializer
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.ktor.serialization.jackson.*
 import io.ktor.serialization.kotlinx.json.*
@@ -16,7 +18,10 @@ import io.ktor.server.routing.*
 import no.nav.delta.Environment
 import no.nav.delta.endpoints.eventApi
 import no.nav.delta.plugins.*
+import org.flywaydb.core.internal.util.LocalDateTimeSerializer
 import setupAuth
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 fun createApplicationEngine(
     env: Environment,
@@ -29,7 +34,10 @@ fun createApplicationEngine(
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)
             registerKotlinModule()
-            registerModule(JavaTimeModule())
+
+            val javaTimeModule = JavaTimeModule()
+            javaTimeModule.addDeserializer(LocalDateTime::class, LocalDateTimeDeserializer(DateTimeFormatter.ISO_DATE_TIME))
+            registerModule(javaTimeModule)
             configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false)
         }
         json()
