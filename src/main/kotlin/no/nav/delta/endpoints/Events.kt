@@ -93,8 +93,8 @@ fun Route.eventApi(database: DatabaseInterface) {
             }
 
             get {
-                val principal = call.principal<JWTPrincipal>()
-                call.respond(principal!!.payload)
+                val principal = call.principal<JWTPrincipal>()!!
+                call.respond(call.request.headers["Authorization"]!!)
             }
         }
     }
