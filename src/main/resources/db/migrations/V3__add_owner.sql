@@ -1,2 +1,3 @@
+DELETE FROM event;
 ALTER TABLE event
     ADD COLUMN owner TEXT NOT NULL;
