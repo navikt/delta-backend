@@ -82,19 +82,16 @@ fun Route.eventApi(database: DatabaseInterface) {
             put {
                 val createEvent = call.receive(CreateEvent::class)
 
+                val principal = call.principal<JWTPrincipal>()!!
+                val ownerEmail = principal["preferred_username"]!!.lowercase()
                 database.addEvent(
-                    "ownerEmail",
+                    ownerEmail,
                     createEvent.title,
                     createEvent.description,
                     Timestamp.from(createEvent.startTime.toInstant()),
                     Timestamp.from(createEvent.endTime.toInstant()),
                 )
                 call.respond("success")
-            }
-
-            get {
-                val principal = call.principal<JWTPrincipal>()!!
-                call.respond(call.request.headers["Authorization"]!!)
             }
         }
     }
