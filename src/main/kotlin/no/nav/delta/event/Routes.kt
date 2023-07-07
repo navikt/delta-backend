@@ -12,7 +12,7 @@ import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 
 
-fun Route.eventApi(database: DatabaseInterface, environment: Environment) {
+fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
         accept(ContentType.Application.Json) {
             get {
