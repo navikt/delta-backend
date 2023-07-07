@@ -21,13 +21,7 @@ fun Route.eventApi(database: DatabaseInterface, environment: Environment) {
         }
     }
 
-    authenticate(
-        if (environment.development) {
-            "dev"
-        } else {
-            "jwt"
-        }
-    ) {
+    authenticate("jwt") {
         route("/admin/event") {
             put {
                 val createEvent = call.receive(CreateEvent::class)
