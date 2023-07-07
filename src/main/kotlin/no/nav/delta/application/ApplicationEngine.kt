@@ -49,9 +49,6 @@ fun createApplicationEngine(
 
     routing {
         swaggerUI(path = "openapi")
-        get("/") {
-            call.respond(Response(text = "Hello world!"))
-        }
         eventApi(database, environment = env)
     }
 }

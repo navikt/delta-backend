@@ -1,6 +1,7 @@
 package no.nav.delta.event
 
 import no.nav.delta.plugins.DatabaseInterface
+import java.sql.ResultSet
 import java.sql.Timestamp
 
 fun DatabaseInterface.getEvents(): List<Event> {
@@ -10,14 +11,7 @@ fun DatabaseInterface.getEvents(): List<Event> {
             .use {
                 it.executeQuery().use {
                     while (it.next()) {
-                        val event = Event(
-                            id = it.getInt("id"),
-                            ownerEmail = it.getString("owner"),
-                            title = it.getString("title"),
-                            description = it.getString("description"),
-                            startTime = it.getTimestamp("start_time"),
-                            endTime = it.getTimestamp("end_time"),
-                        )
+                        val event = resultSetToEvent(it)
                         events.add(event)
                     }
                 }
@@ -45,4 +39,28 @@ fun DatabaseInterface.addEvent(
             }
         it.commit()
     }
+}
+
+fun DatabaseInterface.getEvent(id: Int): Event? {
+    connection.use {
+        it.prepareStatement("SELECT * FROM event WHERE id=?")
+            .use {
+                it.setInt(1, id)
+                val result = it.executeQuery()
+
+                if (!result.next()) return null
+                return resultSetToEvent(result)
+            }
+    }
+}
+
+fun resultSetToEvent(resultSet: ResultSet): Event {
+    return Event(
+        id = resultSet.getInt("id"),
+        ownerEmail = resultSet.getString("owner"),
+        title = resultSet.getString("title"),
+        description = resultSet.getString("description"),
+        startTime = resultSet.getTimestamp("start_time"),
+        endTime = resultSet.getTimestamp("end_time"),
+    )
 }

@@ -19,6 +19,23 @@ fun Route.eventApi(database: DatabaseInterface, environment: Environment) {
                 call.respond(database.getEvents())
             }
         }
+        route("/{id}") {
+            get {
+                val id = call.parameters["id"]
+                if (id == null) {
+                    call.respond(HttpStatusCode.BadRequest)
+                    return@get
+                }
+
+                val result = database.getEvent(id.toInt())
+                if (result == null) {
+                    call.respond(HttpStatusCode.NotFound)
+                    return@get
+                }
+
+                call.respond(result)
+            }
+        }
     }
 
     authenticate("jwt") {
