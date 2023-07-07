@@ -16,8 +16,8 @@ fun DatabaseInterface.getEvents(): List<Event> {
                             ownerEmail = it.getString("owner"),
                             title = it.getString("title"),
                             description = it.getString("description"),
-                            startTime = it.getDate("start_time"),
-                            endTime = it.getDate("end_time"),
+                            startTime = it.getTimestamp("start_time"),
+                            endTime = it.getTimestamp("end_time"),
                         )
                         events.add(event)
                     }
