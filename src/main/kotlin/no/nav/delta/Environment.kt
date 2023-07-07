@@ -1,6 +1,6 @@
 package no.nav.delta
 
-data class Environment (
+data class Environment(
     val dbUsername: String = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_USERNAME", "delta"),
     val dbPassword: String = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_PASSWORD", "delta"),
     val dbHost: String = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_HOST", "localhost"),
@@ -15,7 +15,7 @@ data class Environment (
     val jwtIssuer: String = getEnvVar("AZURE_OPENID_CONFIG_ISSUER", ""),
 
     val development: Boolean = getEnvVar("DEV_MODE", "true") == "true"
-){
+) {
     fun jdbcUrl() = "jdbc:postgresql://$dbHost:$dbPort/$dbName"
 }
 

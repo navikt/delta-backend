@@ -3,12 +3,12 @@ package no.nav.delta.plugins
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import com.zaxxer.hikari.pool.HikariPool
+import no.nav.delta.Environment
+import org.flywaydb.core.Flyway
 import java.net.ConnectException
 import java.net.SocketException
 import java.sql.Connection
 import java.sql.ResultSet
-import no.nav.delta.Environment
-import org.flywaydb.core.Flyway
 
 class Database(private val env: Environment, retries: Long = 30, sleepTime: Long = 10_000) :
     DatabaseInterface {

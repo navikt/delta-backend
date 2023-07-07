@@ -1,11 +1,8 @@
 package no.nav.delta
 
 import com.auth0.jwk.JwkProviderBuilder
-import io.ktor.server.application.*
-import io.ktor.server.engine.*
-import io.ktor.server.netty.*
 import no.nav.delta.application.createApplicationEngine
-import no.nav.delta.plugins.*
+import no.nav.delta.plugins.Database
 import java.net.URL
 import java.util.concurrent.TimeUnit
 

@@ -19,7 +19,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import no.nav.delta.Environment
 import no.nav.delta.event.eventApi
-import no.nav.delta.plugins.*
+import no.nav.delta.plugins.DatabaseInterface
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 

@@ -2,7 +2,7 @@ package no.nav.delta.event
 
 import java.util.*
 
-data class Event (
+data class Event(
     val id: Int,
     val ownerEmail: String,
     val title: String,
@@ -11,7 +11,7 @@ data class Event (
     val endTime: Date,
 )
 
-data class CreateEvent (
+data class CreateEvent(
     val title: String,
     val description: String,
     val startTime: Date,
