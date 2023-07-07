@@ -7,11 +7,12 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import no.nav.delta.Environment
 import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 
 
-fun Route.eventApi(database: DatabaseInterface) {
+fun Route.eventApi(database: DatabaseInterface, environment: Environment) {
     route("/event") {
         accept(ContentType.Application.Json) {
             get {
@@ -20,7 +21,13 @@ fun Route.eventApi(database: DatabaseInterface) {
         }
     }
 
-    authenticate("jwt")  {
+    authenticate(
+        if (environment.development) {
+            "dev"
+        } else {
+            "jwt"
+        }
+    ) {
         route("/admin/event") {
             put {
                 val createEvent = call.receive(CreateEvent::class)

@@ -20,7 +20,6 @@ import io.ktor.server.routing.*
 import no.nav.delta.Environment
 import no.nav.delta.event.eventApi
 import no.nav.delta.plugins.*
-import setupAuth
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -38,7 +37,10 @@ fun createApplicationEngine(
 
             val javaTimeModule = JavaTimeModule()
             javaTimeModule.addSerializer(LocalDateTime::class, LocalDateTimeSerializer(DateTimeFormatter.ISO_DATE_TIME))
-            javaTimeModule.addDeserializer(LocalDateTime::class, LocalDateTimeDeserializer(DateTimeFormatter.ISO_DATE_TIME))
+            javaTimeModule.addDeserializer(
+                LocalDateTime::class,
+                LocalDateTimeDeserializer(DateTimeFormatter.ISO_DATE_TIME)
+            )
             registerModule(javaTimeModule)
             configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false)
         }
@@ -50,7 +52,7 @@ fun createApplicationEngine(
         get("/") {
             call.respond(Response(text = "Hello world!"))
         }
-        eventApi(database)
+        eventApi(database, environment = env)
     }
 }
 

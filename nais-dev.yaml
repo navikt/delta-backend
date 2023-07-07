@@ -21,3 +21,6 @@ spec:
       enabled: true
       tenant: nav.no
       allowAllUsers: true
+  env:
+    - name: DEV_MODE
+      value: false
