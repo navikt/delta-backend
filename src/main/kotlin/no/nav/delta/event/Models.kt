@@ -19,11 +19,10 @@ data class CreateEvent(
     val endTime: Date,
 )
 
-data class RegistrationEmail (
-    val email: String
+data class RegistrationEmail(
+    val email: String,
 )
 
-data class ParticipationOtp (
-    val otp: String
+data class ParticipationOtp(
+    val otp: String,
 )
-

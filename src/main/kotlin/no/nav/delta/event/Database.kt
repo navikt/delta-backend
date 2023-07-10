@@ -82,7 +82,10 @@ fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
 fun DatabaseInterface.registerForEvent(eventId: String, email: String): String? {
     var otp: String? = null
     connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("INSERT INTO participant(event_id, email) VALUES (uuid(?), ?) RETURNING otp;")
+        val preparedStatement =
+            connection.prepareStatement(
+                "INSERT INTO participant(event_id, email) VALUES (uuid(?), ?) RETURNING otp;",
+            )
         preparedStatement.setString(1, eventId)
         preparedStatement.setString(2, email)
 
@@ -93,8 +96,9 @@ fun DatabaseInterface.registerForEvent(eventId: String, email: String): String? 
             return null
         }
 
-        if (result.next())
+        if (result.next()) {
             otp = result.getString("otp")
+        }
         connection.commit()
     }
     return otp
