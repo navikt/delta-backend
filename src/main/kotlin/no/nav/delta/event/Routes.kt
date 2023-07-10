@@ -44,8 +44,6 @@ fun Route.eventApi(database: DatabaseInterface) {
 
                 val principal = call.principal<JWTPrincipal>()!!
                 val ownerEmail = principal["preferred_username"]!!.lowercase()
-                println(createEvent.startTime)
-                println(createEvent.startTime.toInstant())
 
                 database.addEvent(
                     ownerEmail,
