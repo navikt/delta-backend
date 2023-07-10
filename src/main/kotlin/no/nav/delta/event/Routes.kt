@@ -2,6 +2,7 @@ package no.nav.delta.event
 
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
@@ -10,13 +11,14 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.accept
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
-import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 import java.util.UUID
+import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
@@ -52,6 +54,16 @@ fun Route.eventApi(database: DatabaseInterface) {
 
                 call.respond(ParticipationOtp(result))
             }
+            delete {
+                val id = getUuidFromPath(call) ?: return@delete
+
+                val otp = call.receive(ParticipationOtp::class).otp
+                if (!database.unregisterFromEvent(id.toString(), otp.toString())) {
+                    return@delete call.respond(HttpStatusCode.NotFound)
+                }
+
+                call.respond(HttpStatusCode.OK)
+            }
         }
     }
 
@@ -85,5 +97,19 @@ fun Route.eventApi(database: DatabaseInterface) {
                 call.respond(result)
             }
         }
+    }
+}
+
+suspend fun getUuidFromPath(call: ApplicationCall): UUID? {
+    val id = call.parameters["id"] ?: run {
+        call.respond(HttpStatusCode.BadRequest, "Missing id")
+        return null
+    }
+
+    return try {
+        UUID.fromString(id)
+    } catch (e: IllegalArgumentException) {
+        call.respond(HttpStatusCode.BadRequest, "Invalid UUID")
+        null
     }
 }

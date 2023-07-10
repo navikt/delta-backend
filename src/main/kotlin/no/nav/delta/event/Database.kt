@@ -1,10 +1,10 @@
 package no.nav.delta.event
 
-import no.nav.delta.plugins.DatabaseInterface
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
+import no.nav.delta.plugins.DatabaseInterface
 
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
@@ -78,7 +78,7 @@ fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
     return events
 }
 
-fun DatabaseInterface.registerForEvent(eventId: String, email: String): String? {
+fun DatabaseInterface.registerForEvent(eventId: String, email: String): UUID? {
     var otp: String? = null
     connection.use { connection ->
         val preparedStatement =
@@ -100,7 +100,24 @@ fun DatabaseInterface.registerForEvent(eventId: String, email: String): String? 
         }
         connection.commit()
     }
-    return otp
+    otp ?: return null
+    return UUID.fromString(otp)
+}
+
+fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Boolean {
+    var rowsAffected: Int
+    connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                "DELETE FROM participant WHERE event_id=uuid(?) AND otp=uuid(?);",
+            )
+        preparedStatement.setString(1, eventId)
+        preparedStatement.setString(2, otp)
+
+        rowsAffected = preparedStatement.executeUpdate()
+        connection.commit()
+    }
+    return rowsAffected > 0
 }
 
 fun resultSetToEvent(resultSet: ResultSet): Event {

@@ -24,5 +24,5 @@ data class RegistrationEmail(
 )
 
 data class ParticipationOtp(
-    val otp: String,
+    val otp: UUID,
 )
