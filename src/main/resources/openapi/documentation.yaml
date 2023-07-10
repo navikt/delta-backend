@@ -106,9 +106,11 @@ components:
         description:
           type: string
         startTime:
-          type: datetime
+          type: string
+          format: date-time
         endTime:
-          type: datetime
+          type: string
+          format: date-time
         location:
           type: string
     Event:
@@ -119,9 +121,11 @@ components:
         description:
           type: string
         startTime:
-          type: datetime
+          type: string
+          format: date-time
         endTime:
-          type: datetime
+          type: string
+          format: date-time
         location:
           type: string
         ownerEmail:
@@ -134,7 +138,9 @@ components:
       properties:
         email:
           type: string
+          format: email
     LeaveEvent:
       properties:
         otp:
           type: string
+          format: uuid
