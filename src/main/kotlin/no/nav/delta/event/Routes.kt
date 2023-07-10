@@ -16,9 +16,9 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
+import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 import java.util.UUID
-import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {

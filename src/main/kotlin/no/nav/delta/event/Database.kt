@@ -1,10 +1,10 @@
 package no.nav.delta.event
 
+import no.nav.delta.plugins.DatabaseInterface
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
-import no.nav.delta.plugins.DatabaseInterface
 
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
