@@ -66,14 +66,14 @@ fun Route.eventApi(database: DatabaseInterface) {
                     return@put
                 }
 
-                database.addEvent(
+                val result = database.addEvent(
                     ownerEmail,
                     createEvent.title,
                     createEvent.description,
                     Timestamp.from(createEvent.startTime.toInstant()),
                     Timestamp.from(createEvent.endTime.toInstant()),
                 )
-                call.respond("success")
+                call.respond(result)
             }
         }
     }

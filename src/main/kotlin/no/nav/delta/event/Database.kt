@@ -24,20 +24,32 @@ fun DatabaseInterface.addEvent(
     description: String,
     startTime: Timestamp,
     endTime: Timestamp,
-) {
+): Event {
+    lateinit var out: Event
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
-                "INSERT INTO event(owner, title, description, start_time, end_time) VALUES (?, ?, ?, ?, ?);",
+"""
+INSERT INTO event(owner, title, description, start_time, end_time)
+    VALUES (?, ?, ?, ?, ?)
+RETURNING *;
+""",
             )
+
         preparedStatement.setString(1, ownerEmail)
         preparedStatement.setString(2, title)
         preparedStatement.setString(3, description)
         preparedStatement.setTimestamp(4, startTime)
         preparedStatement.setTimestamp(5, endTime)
-        preparedStatement.executeUpdate()
+
+        preparedStatement.executeQuery().use {
+            it.next()
+            out = resultSetToEvent(it)
+        }
         connection.commit()
     }
+
+    return out
 }
 
 fun DatabaseInterface.getEvent(id: String): Event? {
