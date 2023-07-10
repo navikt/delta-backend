@@ -3,7 +3,7 @@ package no.nav.delta.event
 import java.util.*
 
 data class Event(
-    val id: Int,
+    val id: UUID,
     val ownerEmail: String,
     val title: String,
     val description: String,

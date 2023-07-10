@@ -48,7 +48,8 @@ paths:
           description: "Event id"
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -126,7 +127,8 @@ components:
         ownerEmail:
           type: string
         id:
-          type: integer
+          type: string
+          format: uuid
     JoinEvent:
       type: object
       properties:

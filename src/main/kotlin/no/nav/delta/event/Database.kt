@@ -3,6 +3,7 @@ package no.nav.delta.event
 import no.nav.delta.plugins.DatabaseInterface
 import java.sql.ResultSet
 import java.sql.Timestamp
+import java.util.UUID
 
 fun DatabaseInterface.getEvents(): List<Event> {
     val events = ArrayList<Event>()
@@ -41,11 +42,11 @@ fun DatabaseInterface.addEvent(
     }
 }
 
-fun DatabaseInterface.getEvent(id: Int): Event? {
+fun DatabaseInterface.getEvent(id: String): Event? {
     connection.use {
-        it.prepareStatement("SELECT * FROM event WHERE id=?")
+        it.prepareStatement("SELECT * FROM event WHERE id=uuid(?)")
             .use {
-                it.setInt(1, id)
+                it.setString(1, id)
                 val result = it.executeQuery()
 
                 if (!result.next()) return null
@@ -56,7 +57,7 @@ fun DatabaseInterface.getEvent(id: Int): Event? {
 
 fun resultSetToEvent(resultSet: ResultSet): Event {
     return Event(
-        id = resultSet.getInt("id"),
+        id = UUID.fromString(resultSet.getString("id")),
         ownerEmail = resultSet.getString("owner"),
         title = resultSet.getString("title"),
         description = resultSet.getString("description"),
