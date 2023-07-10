@@ -12,6 +12,7 @@ paths:
       tags:
         - admin
       description: "Get all events created by me"
+      operationId: getMyEvents
       responses:
         "200":
           description: "All my events"
@@ -25,6 +26,7 @@ paths:
       tags:
         - admin
       description: "Create an event"
+      operationId: createEvent
       requestBody:
         content:
           application/json:
@@ -42,6 +44,7 @@ paths:
       tags:
         - user
       description: "Get an event"
+      operationId: getEvent
       parameters:
         - name: id
           in: path
@@ -62,6 +65,7 @@ paths:
       tags:
         - user
       description: "Join an event"
+      operationId: joinEvent
       parameters:
         - name: id
           in: path
@@ -81,6 +85,7 @@ paths:
       tags:
         - user
       description: "Leave an event"
+      operationId: leaveEvent
       parameters:
         - name: id
           in: path
