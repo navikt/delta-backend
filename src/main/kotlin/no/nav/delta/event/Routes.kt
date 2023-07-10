@@ -28,7 +28,8 @@ fun Route.eventApi(database: DatabaseInterface) {
         route("/{id}") {
             get {
                 // Get id from path, return 400 if missing
-                val id = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing id")
+                val id = call.parameters["id"]
+                    ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing id")
 
                 // Check if id is a valid UUID
                 try {
@@ -43,7 +44,8 @@ fun Route.eventApi(database: DatabaseInterface) {
                 call.respond(result)
             }
             post {
-                val id = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Missing id")
+                val id = call.parameters["id"]
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, "Missing id")
 
                 val email = call.receive(RegistrationEmail::class).email
                 val result = database.registerForEvent(id, email) ?: return@post call.respond(HttpStatusCode.NotFound)
