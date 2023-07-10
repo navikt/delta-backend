@@ -5,7 +5,6 @@ import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
-import javax.xml.crypto.Data
 
 fun DatabaseInterface.getFutureEvents(): List<Event> {
     val events = ArrayList<Event>()
