@@ -27,7 +27,9 @@ fun createApplicationEngine(
     //applicationState: ApplicationState,
     database: DatabaseInterface,
     jwkProvider: JwkProvider,
-): ApplicationEngine = embeddedServer(Netty, env.applicationPort) {
+): ApplicationEngine = embeddedServer(Netty, env.applicationPort, module = { mySetup(env, database, jwkProvider) })
+
+fun Application.mySetup(env: Environment, database: DatabaseInterface, jwkProvider: JwkProvider) {
     setupAuth(env, jwkProvider, env.jwtIssuer)
     install(ContentNegotiation) {
         jackson {
@@ -51,5 +53,3 @@ fun createApplicationEngine(
         eventApi(database)
     }
 }
-
-data class Response(val text: String)
