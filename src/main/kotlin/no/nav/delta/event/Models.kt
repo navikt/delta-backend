@@ -18,3 +18,12 @@ data class CreateEvent(
     val startTime: Date,
     val endTime: Date,
 )
+
+data class RegistrationEmail (
+    val email: String
+)
+
+data class ParticipationOtp (
+    val otp: String
+)
+

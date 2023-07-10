@@ -11,6 +11,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.accept
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import no.nav.delta.plugins.DatabaseInterface
@@ -49,6 +50,14 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
 
                 call.respond(result)
+            }
+            post {
+                val id = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Missing id")
+
+                val email = call.receive(RegistrationEmail::class).email
+                val result = database.registerForEvent(id, email) ?: return@post call.respond(HttpStatusCode.NotFound)
+
+                call.respond(ParticipationOtp(result))
             }
         }
     }
