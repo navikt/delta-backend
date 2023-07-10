@@ -49,7 +49,7 @@ fun createApplicationEngine(
 
     routing {
         swaggerUI(path = "openapi")
-        eventApi(database, environment = env)
+        eventApi(database)
     }
 }
 
