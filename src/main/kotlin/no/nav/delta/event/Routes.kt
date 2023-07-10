@@ -55,6 +55,13 @@ fun Route.eventApi(database: DatabaseInterface) {
 
     authenticate("jwt") {
         route("/admin/event") {
+            get {
+                val principal = call.principal<JWTPrincipal>()!!
+                val ownerEmail = principal["preferred_username"]!!.lowercase()
+
+                call.respond(database.getEventsByOwner(ownerEmail))
+            }
+
             put {
                 val createEvent = call.receive(CreateEvent::class)
 

@@ -4,6 +4,7 @@ import no.nav.delta.plugins.DatabaseInterface
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.util.UUID
+import javax.xml.crypto.Data
 
 fun DatabaseInterface.getFutureEvents(): List<Event> {
     val events = ArrayList<Event>()
@@ -61,6 +62,20 @@ fun DatabaseInterface.getEvent(id: String): Event? {
         if (!result.next()) return null
         return resultSetToEvent(result)
     }
+}
+
+fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
+    val events = ArrayList<Event>()
+    connection.use { connection ->
+        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=?")
+        preparedStatement.setString(1, ownerEmail)
+        val result = preparedStatement.executeQuery()
+        while (result.next()) {
+            val event = resultSetToEvent(result)
+            events.add(event)
+        }
+    }
+    return events
 }
 
 fun resultSetToEvent(resultSet: ResultSet): Event {
