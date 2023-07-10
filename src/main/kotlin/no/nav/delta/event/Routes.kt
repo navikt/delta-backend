@@ -7,7 +7,6 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import no.nav.delta.Environment
 import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 
