@@ -61,6 +61,11 @@ fun Route.eventApi(database: DatabaseInterface) {
                 val principal = call.principal<JWTPrincipal>()!!
                 val ownerEmail = principal["preferred_username"]!!.lowercase()
 
+                if (createEvent.startTime.after(createEvent.endTime)) {
+                    call.respond(HttpStatusCode.BadRequest, "Start time must be before end time")
+                    return@put
+                }
+
                 database.addEvent(
                     ownerEmail,
                     createEvent.title,
