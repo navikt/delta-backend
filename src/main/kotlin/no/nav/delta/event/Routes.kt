@@ -21,7 +21,7 @@ fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
         accept(ContentType.Application.Json) {
             get {
-                call.respond(database.getEvents())
+                call.respond(database.getFutureEvents())
             }
         }
         route("/{id}") {

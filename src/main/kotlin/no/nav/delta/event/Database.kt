@@ -5,10 +5,10 @@ import java.sql.ResultSet
 import java.sql.Timestamp
 import java.util.UUID
 
-fun DatabaseInterface.getEvents(): List<Event> {
+fun DatabaseInterface.getFutureEvents(): List<Event> {
     val events = ArrayList<Event>()
     connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("SELECT * FROM event;")
+        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
         val result = preparedStatement.executeQuery()
         while (result.next()) {
             val event = resultSetToEvent(result)
