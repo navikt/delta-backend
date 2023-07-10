@@ -74,7 +74,7 @@ paths:
             schema:
               $ref: "#/components/schemas/Event"
       responses:
-        "201":
+        "200":
           description: "Event joined"
     put:
       tags:
