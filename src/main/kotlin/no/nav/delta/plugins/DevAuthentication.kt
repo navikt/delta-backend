@@ -2,11 +2,10 @@ package no.nav.delta.plugins
 
 import com.auth0.jwt.interfaces.Claim
 import com.auth0.jwt.interfaces.Payload
-import io.ktor.server.application.*
-import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
-import java.util.*
-
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.auth.authentication
+import io.ktor.server.auth.jwt.JWTPrincipal
+import java.util.Date
 
 fun addDummyPrincipal(call: ApplicationCall) {
     val principal = JWTPrincipal(object : Payload {

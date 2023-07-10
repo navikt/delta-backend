@@ -1,6 +1,7 @@
 package no.nav.delta.event
 
-import java.util.*
+import java.util.Date
+import java.util.UUID
 
 data class Event(
     val id: UUID,

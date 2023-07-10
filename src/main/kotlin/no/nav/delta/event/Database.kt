@@ -3,7 +3,7 @@ package no.nav.delta.event
 import no.nav.delta.plugins.DatabaseInterface
 import java.sql.ResultSet
 import java.sql.Timestamp
-import java.util.*
+import java.util.UUID
 
 fun DatabaseInterface.getEvents(): List<Event> {
     val events = ArrayList<Event>()
@@ -23,12 +23,12 @@ fun DatabaseInterface.addEvent(
     title: String,
     description: String,
     startTime: Timestamp,
-    endTime: Timestamp
+    endTime: Timestamp,
 ) {
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
-                "INSERT INTO event(owner, title, description, start_time, end_time) VALUES (?, ?, ?, ?, ?);"
+                "INSERT INTO event(owner, title, description, start_time, end_time) VALUES (?, ?, ?, ?, ?);",
             )
         preparedStatement.setString(1, ownerEmail)
         preparedStatement.setString(2, title)

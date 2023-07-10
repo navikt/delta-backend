@@ -18,5 +18,3 @@ fun main() {
 
     createApplicationEngine(environment, database, jwkProvider).start(wait = true)
 }
-
-

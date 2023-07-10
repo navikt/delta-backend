@@ -14,7 +14,7 @@ data class Environment(
     val jwkKeysUrl: String = getEnvVar("AZURE_OPENID_CONFIG_JWKS_URI", "http://localhost/"),
     val jwtIssuer: String = getEnvVar("AZURE_OPENID_CONFIG_ISSUER", ""),
 
-    val development: Boolean = getEnvVar("DEV_MODE", "true") == "true"
+    val development: Boolean = getEnvVar("DEV_MODE", "true") == "true",
 ) {
     fun jdbcUrl() = "jdbc:postgresql://$dbHost:$dbPort/$dbName"
 }
