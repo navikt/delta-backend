@@ -39,6 +39,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Event"
+  /event:
+    get:
+      tags:
+        - user
+      description: "Get future events"
+      operationId: getFutureEvents
+      responses:
+        "200":
+          description: "All future events"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
   /event/{id}:
     get:
       tags:
