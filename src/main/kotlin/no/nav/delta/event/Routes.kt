@@ -29,25 +29,12 @@ fun Route.eventApi(database: DatabaseInterface) {
         }
         route("/{id}") {
             get {
-                // Get id from path, return 400 if missing
-                val id = call.parameters["id"]
-                    ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing id")
-
-                // Check if id is a valid UUID
-                try {
-                    UUID.fromString(id)
-                } catch (e: IllegalArgumentException) {
-                    return@get call.respond(HttpStatusCode.BadRequest, "Invalid UUID")
-                }
-
-                // Get event from database, return 404 if not found
+                val id = getUuidFromPath(call)?.toString() ?: return@get
                 val result = database.getEvent(id) ?: return@get call.respond(HttpStatusCode.NotFound)
-
                 call.respond(result)
             }
             post {
-                val id = call.parameters["id"]
-                    ?: return@post call.respond(HttpStatusCode.BadRequest, "Missing id")
+                val id = getUuidFromPath(call)?.toString() ?: return@post
 
                 val email = call.receive(RegistrationEmail::class).email
                 val result = database.registerForEvent(id, email) ?: return@post call.respond(HttpStatusCode.NotFound)
@@ -78,7 +65,6 @@ fun Route.eventApi(database: DatabaseInterface) {
 
             put {
                 val createEvent = call.receive(CreateEvent::class)
-
                 val principal = call.principal<JWTPrincipal>()!!
                 val ownerEmail = principal["preferred_username"]!!.lowercase()
 
