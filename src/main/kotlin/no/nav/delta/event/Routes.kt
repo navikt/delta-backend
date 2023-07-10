@@ -28,26 +28,17 @@ fun Route.eventApi(database: DatabaseInterface) {
         route("/{id}") {
             get {
                 // Get id from path, return 400 if missing
-                val id = call.parameters["id"]
-                if (id == null) {
-                    call.respond(HttpStatusCode.BadRequest, "Missing id")
-                    return@get
-                }
+                val id = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing id")
 
                 // Check if id is a valid UUID
                 try {
                     UUID.fromString(id)
                 } catch (e: IllegalArgumentException) {
-                    call.respond(HttpStatusCode.BadRequest, "Invalid UUID")
-                    return@get
+                    return@get call.respond(HttpStatusCode.BadRequest, "Invalid UUID")
                 }
 
                 // Get event from database, return 404 if not found
-                val result = database.getEvent(id)
-                if (result == null) {
-                    call.respond(HttpStatusCode.NotFound)
-                    return@get
-                }
+                val result = database.getEvent(id) ?: return@get call.respond(HttpStatusCode.NotFound)
 
                 call.respond(result)
             }
