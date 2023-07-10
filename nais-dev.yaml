@@ -23,4 +23,4 @@ spec:
       allowAllUsers: true
   env:
     - name: DEV_MODE
-      value: "false"
+      value: !!string "false"
