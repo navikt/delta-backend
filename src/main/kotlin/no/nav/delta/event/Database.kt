@@ -6,19 +6,6 @@ import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
 
-fun DatabaseInterface.getFutureEvents(): List<Event> {
-    val events = ArrayList<Event>()
-    connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
-        val result = preparedStatement.executeQuery()
-        while (result.next()) {
-            val event = resultSetToEvent(result)
-            events.add(event)
-        }
-    }
-    return events
-}
-
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
     title: String,
@@ -62,6 +49,19 @@ fun DatabaseInterface.getEvent(id: String): Event? {
         if (!result.next()) return null
         return resultSetToEvent(result)
     }
+}
+
+fun DatabaseInterface.getFutureEvents(): List<Event> {
+    val events = ArrayList<Event>()
+    connection.use { connection ->
+        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
+        val result = preparedStatement.executeQuery()
+        while (result.next()) {
+            val event = resultSetToEvent(result)
+            events.add(event)
+        }
+    }
+    return events
 }
 
 fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
