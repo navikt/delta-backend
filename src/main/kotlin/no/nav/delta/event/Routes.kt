@@ -35,11 +35,14 @@ fun Route.eventApi(database: DatabaseInterface) {
             }
             post {
                 val id = getUuidFromPath(call)?.toString() ?: return@post
-
                 val email = call.receive(RegistrationEmail::class).email
-                val result = database.registerForEvent(id, email) ?: return@post call.respond(HttpStatusCode.NotFound)
 
-                call.respond(ParticipationOtp(result))
+                // Don't leak information about whether the user is already registered
+                val successResponse = "Successfully registered"
+                if (database.alreadyRegisteredForEvent(id, email)) return@post call.respond(successResponse)
+
+                database.registerForEvent(id, email) ?: return@post call.respond(HttpStatusCode.NotFound)
+                call.respond(successResponse)
             }
             delete {
                 val id = getUuidFromPath(call) ?: return@delete
@@ -79,7 +82,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                     createEvent.description,
                     Timestamp.from(createEvent.startTime.toInstant()),
                     Timestamp.from(createEvent.endTime.toInstant()),
-                    createEvent.location
+                    createEvent.location,
                 )
                 call.respond(result)
             }

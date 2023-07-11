@@ -1,11 +1,11 @@
 package no.nav.delta.event
 
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.plugins.toList
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
-import no.nav.delta.plugins.toList
 
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
@@ -75,7 +75,7 @@ fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
 }
 
 fun DatabaseInterface.registerForEvent(eventId: String, email: String): UUID? {
-    val otp: String;
+    val otp: String
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
@@ -98,6 +98,22 @@ fun DatabaseInterface.registerForEvent(eventId: String, email: String): UUID? {
         connection.commit()
     }
     return UUID.fromString(otp)
+}
+
+fun DatabaseInterface.alreadyRegisteredForEvent(eventId: String, email: String): Boolean {
+    val registered: Boolean
+    connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                "SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;",
+            )
+        preparedStatement.setString(1, eventId)
+        preparedStatement.setString(2, email)
+
+        val result = preparedStatement.executeQuery()
+        registered = result.next()
+    }
+    return registered
 }
 
 fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Boolean {
