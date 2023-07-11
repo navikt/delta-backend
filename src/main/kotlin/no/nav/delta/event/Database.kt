@@ -5,6 +5,7 @@ import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
+import no.nav.delta.plugins.toList
 
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
@@ -14,7 +15,7 @@ fun DatabaseInterface.addEvent(
     endTime: Timestamp,
     location: String?,
 ): Event {
-    lateinit var out: Event
+    val out: Event
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
@@ -32,10 +33,9 @@ RETURNING *;
         preparedStatement.setTimestamp(5, endTime)
         preparedStatement.setString(6, location)
 
-        preparedStatement.executeQuery().use {
-            it.next()
-            out = resultSetToEvent(it)
-        }
+        val result = preparedStatement.executeQuery()
+        result.next()
+        out = result.resultSetToEvent()
         connection.commit()
     }
 
@@ -49,39 +49,33 @@ fun DatabaseInterface.getEvent(id: String): Event? {
         val result = preparedStatement.executeQuery()
 
         if (!result.next()) return null
-        return resultSetToEvent(result)
+        return result.resultSetToEvent()
     }
 }
 
 fun DatabaseInterface.getFutureEvents(): List<Event> {
-    val events = ArrayList<Event>()
+    val events: MutableList<Event>
     connection.use { connection ->
         val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
         val result = preparedStatement.executeQuery()
-        while (result.next()) {
-            val event = resultSetToEvent(result)
-            events.add(event)
-        }
+        events = result.toList { resultSetToEvent() }
     }
     return events
 }
 
 fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
-    val events = ArrayList<Event>()
+    val events: MutableList<Event>
     connection.use { connection ->
         val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=?")
         preparedStatement.setString(1, ownerEmail)
         val result = preparedStatement.executeQuery()
-        while (result.next()) {
-            val event = resultSetToEvent(result)
-            events.add(event)
-        }
+        events = result.toList { resultSetToEvent() }
     }
     return events
 }
 
 fun DatabaseInterface.registerForEvent(eventId: String, email: String): UUID? {
-    var otp: String? = null
+    val otp: String;
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
@@ -90,24 +84,24 @@ fun DatabaseInterface.registerForEvent(eventId: String, email: String): UUID? {
         preparedStatement.setString(1, eventId)
         preparedStatement.setString(2, email)
 
-        lateinit var result: ResultSet
+        val result: ResultSet
         try {
             result = preparedStatement.executeQuery()
         } catch (e: SQLException) {
             return null
         }
 
-        if (result.next()) {
-            otp = result.getString("otp")
+        if (!result.next()) {
+            return null
         }
+        otp = result.getString("otp")
         connection.commit()
     }
-    otp ?: return null
     return UUID.fromString(otp)
 }
 
 fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Boolean {
-    var rowsAffected: Int
+    val rowsAffected: Int
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
@@ -122,14 +116,14 @@ fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Boolean
     return rowsAffected > 0
 }
 
-fun resultSetToEvent(resultSet: ResultSet): Event {
+fun ResultSet.resultSetToEvent(): Event {
     return Event(
-        id = UUID.fromString(resultSet.getString("id")),
-        ownerEmail = resultSet.getString("owner"),
-        title = resultSet.getString("title"),
-        description = resultSet.getString("description"),
-        startTime = resultSet.getTimestamp("start_time"),
-        endTime = resultSet.getTimestamp("end_time"),
-        location = resultSet.getString("location"),
+        id = UUID.fromString(getString("id")),
+        ownerEmail = getString("owner"),
+        title = getString("title"),
+        description = getString("description"),
+        startTime = getTimestamp("start_time"),
+        endTime = getTimestamp("end_time"),
+        location = getString("location"),
     )
 }
