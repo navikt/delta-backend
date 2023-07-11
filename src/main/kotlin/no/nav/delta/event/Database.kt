@@ -4,12 +4,12 @@ import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.left
 import arrow.core.right
-import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.plugins.toList
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.util.UUID
+import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.plugins.toList
 
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
@@ -23,7 +23,7 @@ fun DatabaseInterface.addEvent(
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
-"""
+                """
 INSERT INTO event(owner, title, description, start_time, end_time, location)
     VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
@@ -60,7 +60,8 @@ fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event
 fun DatabaseInterface.getFutureEvents(): List<Event> {
     val events: MutableList<Event>
     connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
+        val preparedStatement =
+            connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
         val result = preparedStatement.executeQuery()
         events = result.toList { resultSetToEvent() }
     }
@@ -78,29 +79,34 @@ fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
     return events
 }
 
-fun DatabaseInterface.registerForEvent(eventId: String, email: String): Either<RegisterForEventError, UUID> {
+fun DatabaseInterface.registerForEvent(
+    eventId: String,
+    email: String
+): Either<RegisterForEventError, UUID> {
     return connection.use { connection ->
-        checkIfEventExists(connection, eventId).flatMap {
-            checkIfParticipantIsRegistered(connection, eventId, email)
-        }.flatMap {
-            checkIfEventIsFull(connection, eventId)
-        }.flatMap {
-            val preparedStatement =
-                connection.prepareStatement(
-                    "INSERT INTO participant(event_id, email) VALUES (uuid(?), ?) RETURNING otp;",
-                )
-            preparedStatement.setString(1, eventId)
-            preparedStatement.setString(2, email)
+        checkIfEventExists(connection, eventId)
+            .flatMap { checkIfParticipantIsRegistered(connection, eventId, email) }
+            .flatMap { checkIfEventIsFull(connection, eventId) }
+            .flatMap {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        "INSERT INTO participant(event_id, email) VALUES (uuid(?), ?) RETURNING otp;",
+                    )
+                preparedStatement.setString(1, eventId)
+                preparedStatement.setString(2, email)
 
-            val result: ResultSet = preparedStatement.executeQuery()
-            result.next()
-            connection.commit()
-            UUID.fromString(result.getString("otp")).right()
-        }
+                val result: ResultSet = preparedStatement.executeQuery()
+                result.next()
+                connection.commit()
+                UUID.fromString(result.getString("otp")).right()
+            }
     }
 }
 
-fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Either<UnregisterFromEventError, Unit> {
+fun DatabaseInterface.unregisterFromEvent(
+    eventId: String,
+    otp: String
+): Either<UnregisterFromEventError, Unit> {
     return connection.use { connection ->
         checkIfEventExists(connection, eventId).flatMap {
             val preparedStatement =
@@ -129,36 +135,46 @@ fun ResultSet.resultSetToEvent(): Event {
     )
 }
 
-fun checkIfEventExists(connection: Connection, eventId: String): Either<EventNotFoundException, Unit> {
+fun checkIfEventExists(
+    connection: Connection,
+    eventId: String
+): Either<EventNotFoundException, Unit> {
     connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?);").use { preparedStatement ->
         preparedStatement.setString(1, eventId)
+
         val result = preparedStatement.executeQuery()
         if (!result.next()) return EventNotFoundException.left()
     }
     return Either.Right(Unit)
 }
 
-fun checkIfParticipantIsRegistered(connection: Connection, eventId: String, email: String): Either<ParticipantAlreadyRegisteredException, Unit> {
-    connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;")
+fun checkIfParticipantIsRegistered(
+    connection: Connection,
+    eventId: String,
+    email: String
+): Either<ParticipantAlreadyRegisteredException, Unit> {
+    connection
+        .prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;")
         .use { preparedStatement ->
             preparedStatement.setString(1, eventId)
             preparedStatement.setString(2, email)
+
             val result = preparedStatement.executeQuery()
-            if (result.next()) {
-                ParticipantAlreadyRegisteredException.left()
-            }
+            if (result.next()) ParticipantAlreadyRegisteredException.left()
             return Unit.right()
         }
 }
 
-fun checkIfEventIsFull(connection: Connection, eventId: String): Either<EventIsFullException, Unit> {
-    connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?);")
-        .use { preparedStatement ->
-            preparedStatement.setString(1, eventId)
-            val result = preparedStatement.executeQuery()
-            if (result.next()) {
-                EventIsFullException.left()
-            }
-            return Unit.right()
-        }
+fun checkIfEventIsFull(
+    connection: Connection,
+    eventId: String
+): Either<EventIsFullException, Unit> {
+    connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?);").use {
+        preparedStatement ->
+        preparedStatement.setString(1, eventId)
+
+        val result = preparedStatement.executeQuery()
+        if (result.next()) EventIsFullException.left()
+        return Unit.right()
+    }
 }

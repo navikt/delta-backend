@@ -1,10 +1,10 @@
 package no.nav.delta
 
 import com.auth0.jwk.JwkProviderBuilder
-import no.nav.delta.application.createApplicationEngine
-import no.nav.delta.plugins.Database
 import java.net.URL
 import java.util.concurrent.TimeUnit
+import no.nav.delta.application.createApplicationEngine
+import no.nav.delta.plugins.Database
 
 fun main() {
     val environment = Environment()

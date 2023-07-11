@@ -17,18 +17,14 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
-import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
+import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
-        accept(ContentType.Application.Json) {
-            get {
-                call.respond(database.getFutureEvents())
-            }
-        }
+        accept(ContentType.Application.Json) { get { call.respond(database.getFutureEvents()) } }
         route("/{id}") {
             get {
                 val id = getUuidFromPath(call)?.toString() ?: return@get
@@ -64,7 +60,8 @@ fun Route.eventApi(database: DatabaseInterface) {
                 val ownerEmail = principal["preferred_username"]!!.lowercase()
 
                 if (createEvent.startTime.after(createEvent.endTime)) {
-                    return@put call.respond(HttpStatusCode.BadRequest, "Start time must be before end time")
+                    return@put call.respond(
+                        HttpStatusCode.BadRequest, "Start time must be before end time")
                 }
 
                 call.respond(
@@ -91,17 +88,17 @@ suspend fun Either<Any, Any>.unwrapAndRespond(call: ApplicationCall) {
                 else -> throw RuntimeException("Unhandled exception: ${it::class.jvmName}")
             }
         },
-        {
-            call.respond(it)
-        },
+        { call.respond(it) },
     )
 }
 
 suspend fun getUuidFromPath(call: ApplicationCall): UUID? {
-    val id = call.parameters["id"] ?: run {
-        call.respond(HttpStatusCode.BadRequest, "Missing id")
-        return null
-    }
+    val id =
+        call.parameters["id"]
+            ?: run {
+                call.respond(HttpStatusCode.BadRequest, "Missing id")
+                return null
+            }
 
     return try {
         UUID.fromString(id)

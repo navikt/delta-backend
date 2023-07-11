@@ -32,7 +32,6 @@ fun Application.setupAuth(
                 when {
                     hasDeltaBackendClientAudience(credentials, environment) ->
                         JWTPrincipal(credentials.payload)
-
                     else -> {
                         unauthorized(credentials)
                     }

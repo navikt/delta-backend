@@ -6,14 +6,12 @@ data class Environment(
     val dbHost: String = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_HOST", "localhost"),
     val dbPort: String = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_PORT", "5432"),
     val dbName: String = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_DATABASE", "delta"),
-
     val applicationPort: Int = getEnvVar("APPLICATION_PORT", "8080").toInt(),
     val azureAppClientId: String = getEnvVar("AZURE_APP_CLIENT_ID", ""),
     val azureAppClientSecret: String = getEnvVar("AZURE_APP_CLIENT_SECRET", ""),
     val azureTokenEndpoint: String = getEnvVar("AZURE_OPENID_CONFIG_TOKEN_ENDPOINT", ""),
     val jwkKeysUrl: String = getEnvVar("AZURE_OPENID_CONFIG_JWKS_URI", "http://localhost/"),
     val jwtIssuer: String = getEnvVar("AZURE_OPENID_CONFIG_ISSUER", ""),
-
     val development: Boolean = getEnvVar("DEV_MODE", "true") == "true",
 ) {
     fun jdbcUrl() = "jdbc:postgresql://$dbHost:$dbPort/$dbName"
