@@ -7,7 +7,7 @@ servers:
   - url: "http://0.0.0.0:8080"
   - url: "http://delta-backend"
 paths:
-  /admin/events:
+  /admin/event:
     get:
       tags:
         - admin
@@ -68,14 +68,13 @@ paths:
           schema:
             type: string
             format: uuid
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Event"
       responses:
         "200":
           description: "Event joined"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
     post:
       tags:
         - user
