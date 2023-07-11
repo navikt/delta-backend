@@ -91,7 +91,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JoinEvent"
+              $ref: "#/components/schemas/EmailObject"
       responses:
         "200":
           description: "Event joined"
@@ -152,7 +152,16 @@ components:
         id:
           type: string
           format: uuid
-    JoinEvent:
+    EventWithParticipants:
+      type: object
+      properties:
+        event:
+          $ref: "#/components/schemas/Event"
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailObject"
+    EmailObject:
       type: object
       properties:
         email:

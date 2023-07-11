@@ -57,6 +57,20 @@ fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event
     }
 }
 
+fun DatabaseInterface.getParticipants(
+    id: String
+): Either<EventNotFoundException, List<Participant>> {
+    connection.use { connection ->
+        return checkIfEventExists(connection, id).flatMap {
+            val preparedStatement =
+                connection.prepareStatement("SELECT email FROM participant WHERE event_id=uuid(?);")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            result.toList { Participant(email = getString(1)) }.right()
+        }
+    }
+}
+
 fun DatabaseInterface.getFutureEvents(): List<Event> {
     val events: MutableList<Event>
     connection.use { connection ->

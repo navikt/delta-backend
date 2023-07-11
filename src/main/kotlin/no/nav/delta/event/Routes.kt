@@ -1,6 +1,7 @@
 package no.nav.delta.event
 
 import arrow.core.Either
+import arrow.core.flatMap
 import arrow.core.getOrElse
 import arrow.core.right
 import io.ktor.http.ContentType
@@ -33,7 +34,15 @@ fun Route.eventApi(database: DatabaseInterface) {
                     getUuidFromPath(call).getOrElse {
                         return@get it(call)
                     }
-                database.getEvent(id.toString()).unwrapAndRespond(call)
+
+                database
+                    .getEvent(id.toString())
+                    .flatMap { event ->
+                        database.getParticipants(id.toString()).flatMap { participants ->
+                            EventWithParticipants(event, participants).right()
+                        }
+                    }
+                    .unwrapAndRespond(call)
             }
             post {
                 val id =

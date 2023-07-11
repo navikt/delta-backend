@@ -13,6 +13,15 @@ data class Event(
     val location: String?,
 )
 
+data class EventWithParticipants(
+    val event: Event,
+    val participants: List<Participant>,
+)
+
+data class Participant(
+    val email: String,
+)
+
 data class CreateEvent(
     val title: String,
     val description: String,
