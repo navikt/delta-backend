@@ -7,6 +7,7 @@ val postgres_version: String by project
 val hikari_version: String by project
 val flyway_version: String by project
 val jackson_version: String by project
+val arrow_version: String by project
 
 plugins {
     kotlin("jvm") version "1.8.22"
@@ -58,6 +59,9 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jackson_version")
     implementation("com.fasterxml.jackson.module:jackson-module-jaxb-annotations:$jackson_version")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:$jackson_version")
+
+    implementation("io.arrow-kt:arrow-core:$arrow_version")
+    implementation("io.arrow-kt:arrow-fx-coroutines:$arrow_version")
 }
 
 tasks {

@@ -1,5 +1,6 @@
 package no.nav.delta.event
 
+import arrow.core.Either
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -19,6 +20,7 @@ import io.ktor.server.routing.route
 import no.nav.delta.plugins.DatabaseInterface
 import java.sql.Timestamp
 import java.util.UUID
+import kotlin.reflect.jvm.jvmName
 
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
@@ -30,29 +32,19 @@ fun Route.eventApi(database: DatabaseInterface) {
         route("/{id}") {
             get {
                 val id = getUuidFromPath(call)?.toString() ?: return@get
-                val result = database.getEvent(id) ?: return@get call.respond(HttpStatusCode.NotFound)
-                call.respond(result)
+                database.getEvent(id).unwrapAndRespond(call)
             }
             post {
                 val id = getUuidFromPath(call)?.toString() ?: return@post
                 val email = call.receive(RegistrationEmail::class).email
 
-                // Don't leak information about whether the user is already registered
-                val successResponse = "Successfully registered"
-                if (database.alreadyRegisteredForEvent(id, email)) return@post call.respond(successResponse)
-
-                database.registerForEvent(id, email) ?: return@post call.respond(HttpStatusCode.NotFound)
-                call.respond(successResponse)
+                database.registerForEvent(id, email).unwrapAndRespond(call)
             }
             delete {
                 val id = getUuidFromPath(call) ?: return@delete
-
                 val otp = call.receive(ParticipationOtp::class).otp
-                if (!database.unregisterFromEvent(id.toString(), otp.toString())) {
-                    return@delete call.respond(HttpStatusCode.NotFound)
-                }
 
-                call.respond(HttpStatusCode.OK)
+                database.unregisterFromEvent(id.toString(), otp.toString()).unwrapAndRespond(call)
             }
         }
     }
@@ -72,22 +64,37 @@ fun Route.eventApi(database: DatabaseInterface) {
                 val ownerEmail = principal["preferred_username"]!!.lowercase()
 
                 if (createEvent.startTime.after(createEvent.endTime)) {
-                    call.respond(HttpStatusCode.BadRequest, "Start time must be before end time")
-                    return@put
+                    return@put call.respond(HttpStatusCode.BadRequest, "Start time must be before end time")
                 }
 
-                val result = database.addEvent(
-                    ownerEmail,
-                    createEvent.title,
-                    createEvent.description,
-                    Timestamp.from(createEvent.startTime.toInstant()),
-                    Timestamp.from(createEvent.endTime.toInstant()),
-                    createEvent.location,
+                call.respond(
+                    database.addEvent(
+                        ownerEmail,
+                        createEvent.title,
+                        createEvent.description,
+                        Timestamp.from(createEvent.startTime.toInstant()),
+                        Timestamp.from(createEvent.endTime.toInstant()),
+                        createEvent.location,
+                    ),
                 )
-                call.respond(result)
             }
         }
     }
+}
+
+suspend fun Either<Any, Any>.unwrapAndRespond(call: ApplicationCall) {
+    this.fold(
+        {
+            when (it) {
+                is ExceptionWithDefaultResponse -> it.defaultResponse(call).invoke()
+                is Exception -> throw it
+                else -> throw RuntimeException("Unhandled exception: ${it::class.jvmName}")
+            }
+        },
+        {
+            call.respond(it)
+        },
+    )
 }
 
 suspend fun getUuidFromPath(call: ApplicationCall): UUID? {

@@ -1,9 +1,13 @@
 package no.nav.delta.event
 
+import arrow.core.Either
+import arrow.core.flatMap
+import arrow.core.left
+import arrow.core.right
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.toList
+import java.sql.Connection
 import java.sql.ResultSet
-import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
 
@@ -42,14 +46,14 @@ RETURNING *;
     return out
 }
 
-fun DatabaseInterface.getEvent(id: String): Event? {
+fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event> {
     connection.use { connection ->
         val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?)")
         preparedStatement.setString(1, id)
         val result = preparedStatement.executeQuery()
 
-        if (!result.next()) return null
-        return result.resultSetToEvent()
+        if (!result.next()) return EventNotFoundException.left()
+        return result.resultSetToEvent().right()
     }
 }
 
@@ -74,62 +78,43 @@ fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
     return events
 }
 
-fun DatabaseInterface.registerForEvent(eventId: String, email: String): UUID? {
-    val otp: String
-    connection.use { connection ->
-        val preparedStatement =
-            connection.prepareStatement(
-                "INSERT INTO participant(event_id, email) VALUES (uuid(?), ?) RETURNING otp;",
-            )
-        preparedStatement.setString(1, eventId)
-        preparedStatement.setString(2, email)
+fun DatabaseInterface.registerForEvent(eventId: String, email: String): Either<RegisterForEventError, UUID> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).flatMap {
+            checkIfParticipantIsRegistered(connection, eventId, email)
+        }.flatMap {
+            checkIfEventIsFull(connection, eventId)
+        }.flatMap {
+            val preparedStatement =
+                connection.prepareStatement(
+                    "INSERT INTO participant(event_id, email) VALUES (uuid(?), ?) RETURNING otp;",
+                )
+            preparedStatement.setString(1, eventId)
+            preparedStatement.setString(2, email)
 
-        val result: ResultSet
-        try {
-            result = preparedStatement.executeQuery()
-        } catch (e: SQLException) {
-            return null
+            val result: ResultSet = preparedStatement.executeQuery()
+            result.next()
+            connection.commit()
+            UUID.fromString(result.getString("otp")).right()
         }
-
-        if (!result.next()) {
-            return null
-        }
-        otp = result.getString("otp")
-        connection.commit()
     }
-    return UUID.fromString(otp)
 }
 
-fun DatabaseInterface.alreadyRegisteredForEvent(eventId: String, email: String): Boolean {
-    val registered: Boolean
-    connection.use { connection ->
-        val preparedStatement =
-            connection.prepareStatement(
-                "SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;",
-            )
-        preparedStatement.setString(1, eventId)
-        preparedStatement.setString(2, email)
+fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Either<UnregisterFromEventError, Unit> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).flatMap {
+            val preparedStatement =
+                connection.prepareStatement(
+                    "DELETE FROM participant WHERE event_id=uuid(?) AND otp=uuid(?);",
+                )
+            preparedStatement.setString(1, eventId)
+            preparedStatement.setString(2, otp)
 
-        val result = preparedStatement.executeQuery()
-        registered = result.next()
+            val rowsAffected = preparedStatement.executeUpdate()
+            if (rowsAffected == 0) return InvalidOtpException.left()
+            Unit.right()
+        }
     }
-    return registered
-}
-
-fun DatabaseInterface.unregisterFromEvent(eventId: String, otp: String): Boolean {
-    val rowsAffected: Int
-    connection.use { connection ->
-        val preparedStatement =
-            connection.prepareStatement(
-                "DELETE FROM participant WHERE event_id=uuid(?) AND otp=uuid(?);",
-            )
-        preparedStatement.setString(1, eventId)
-        preparedStatement.setString(2, otp)
-
-        rowsAffected = preparedStatement.executeUpdate()
-        connection.commit()
-    }
-    return rowsAffected > 0
 }
 
 fun ResultSet.resultSetToEvent(): Event {
@@ -142,4 +127,38 @@ fun ResultSet.resultSetToEvent(): Event {
         endTime = getTimestamp("end_time"),
         location = getString("location"),
     )
+}
+
+fun checkIfEventExists(connection: Connection, eventId: String): Either<EventNotFoundException, Unit> {
+    connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?);").use { preparedStatement ->
+        preparedStatement.setString(1, eventId)
+        val result = preparedStatement.executeQuery()
+        if (!result.next()) return EventNotFoundException.left()
+    }
+    return Either.Right(Unit)
+}
+
+fun checkIfParticipantIsRegistered(connection: Connection, eventId: String, email: String): Either<ParticipantAlreadyRegisteredException, Unit> {
+    connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;")
+        .use { preparedStatement ->
+            preparedStatement.setString(1, eventId)
+            preparedStatement.setString(2, email)
+            val result = preparedStatement.executeQuery()
+            if (result.next()) {
+                ParticipantAlreadyRegisteredException.left()
+            }
+            return Unit.right()
+        }
+}
+
+fun checkIfEventIsFull(connection: Connection, eventId: String): Either<EventIsFullException, Unit> {
+    connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?);")
+        .use { preparedStatement ->
+            preparedStatement.setString(1, eventId)
+            val result = preparedStatement.executeQuery()
+            if (result.next()) {
+                EventIsFullException.left()
+            }
+            return Unit.right()
+        }
 }
