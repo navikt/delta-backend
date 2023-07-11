@@ -10,6 +10,7 @@ data class Event(
     val description: String,
     val startTime: Date,
     val endTime: Date,
+    val location: String?,
 )
 
 data class CreateEvent(
@@ -17,6 +18,7 @@ data class CreateEvent(
     val description: String,
     val startTime: Date,
     val endTime: Date,
+    val location: String?,
 )
 
 data class RegistrationEmail(

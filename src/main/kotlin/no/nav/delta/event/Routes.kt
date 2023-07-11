@@ -79,6 +79,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                     createEvent.description,
                     Timestamp.from(createEvent.startTime.toInstant()),
                     Timestamp.from(createEvent.endTime.toInstant()),
+                    createEvent.location
                 )
                 call.respond(result)
             }

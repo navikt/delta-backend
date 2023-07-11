@@ -12,14 +12,15 @@ fun DatabaseInterface.addEvent(
     description: String,
     startTime: Timestamp,
     endTime: Timestamp,
+    location: String?,
 ): Event {
     lateinit var out: Event
     connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
 """
-INSERT INTO event(owner, title, description, start_time, end_time)
-    VALUES (?, ?, ?, ?, ?)
+INSERT INTO event(owner, title, description, start_time, end_time, location)
+    VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
 """,
             )
@@ -29,6 +30,7 @@ RETURNING *;
         preparedStatement.setString(3, description)
         preparedStatement.setTimestamp(4, startTime)
         preparedStatement.setTimestamp(5, endTime)
+        preparedStatement.setString(6, location)
 
         preparedStatement.executeQuery().use {
             it.next()
@@ -128,5 +130,6 @@ fun resultSetToEvent(resultSet: ResultSet): Event {
         description = resultSet.getString("description"),
         startTime = resultSet.getTimestamp("start_time"),
         endTime = resultSet.getTimestamp("end_time"),
+        location = resultSet.getString("location"),
     )
 }
