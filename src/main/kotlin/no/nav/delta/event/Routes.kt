@@ -1,6 +1,8 @@
 package no.nav.delta.event
 
 import arrow.core.Either
+import arrow.core.getOrElse
+import arrow.core.right
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -27,17 +29,26 @@ fun Route.eventApi(database: DatabaseInterface) {
         accept(ContentType.Application.Json) { get { call.respond(database.getFutureEvents()) } }
         route("/{id}") {
             get {
-                val id = getUuidFromPath(call)?.toString() ?: return@get
-                database.getEvent(id).unwrapAndRespond(call)
+                val id =
+                    getUuidFromPath(call).getOrElse {
+                        return@get it(call)
+                    }
+                database.getEvent(id.toString()).unwrapAndRespond(call)
             }
             post {
-                val id = getUuidFromPath(call)?.toString() ?: return@post
+                val id =
+                    getUuidFromPath(call).getOrElse {
+                        return@post it(call)
+                    }
                 val email = call.receive(RegistrationEmail::class).email
 
-                database.registerForEvent(id, email).unwrapAndRespond(call)
+                database.registerForEvent(id.toString(), email).unwrapAndRespond(call)
             }
             delete {
-                val id = getUuidFromPath(call) ?: return@delete
+                val id =
+                    getUuidFromPath(call).getOrElse {
+                        return@delete it(call)
+                    }
                 val otp = call.receive(ParticipationOtp::class).otp
 
                 database.unregisterFromEvent(id.toString(), otp.toString()).unwrapAndRespond(call)
@@ -92,18 +103,16 @@ suspend fun Either<Any, Any>.unwrapAndRespond(call: ApplicationCall) {
     )
 }
 
-suspend fun getUuidFromPath(call: ApplicationCall): UUID? {
+suspend fun getUuidFromPath(
+    call: ApplicationCall
+): Either<suspend (ApplicationCall) -> Unit, UUID> {
     val id =
         call.parameters["id"]
-            ?: run {
-                call.respond(HttpStatusCode.BadRequest, "Missing id")
-                return null
-            }
+            ?: return Either.Left { c -> c.respond(HttpStatusCode.BadRequest, "Missing id") }
 
-    return try {
-        UUID.fromString(id)
-    } catch (e: IllegalArgumentException) {
-        call.respond(HttpStatusCode.BadRequest, "Invalid UUID")
-        null
-    }
+    return runCatching { UUID.fromString(id) }
+        .fold(
+            { it.right() },
+            { Either.Left { c -> c.respond(HttpStatusCode.BadRequest, "Invalid id") } },
+        )
 }
