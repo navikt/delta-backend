@@ -18,6 +18,9 @@ plugins {
 spotless {
     kotlin {
         ktlint()
+        trimTrailingWhitespace()
+        indentWithSpaces()
+        endWithNewline()
     }
 }
 
