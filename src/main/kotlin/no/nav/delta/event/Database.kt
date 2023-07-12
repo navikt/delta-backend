@@ -131,6 +131,7 @@ fun DatabaseInterface.unregisterFromEvent(
             preparedStatement.setString(2, otp)
 
             val rowsAffected = preparedStatement.executeUpdate()
+            connection.commit()
             if (rowsAffected == 0) return InvalidOtpException.left()
             Unit.right()
         }

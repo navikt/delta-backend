@@ -63,7 +63,10 @@ fun Route.eventApi(database: DatabaseInterface) {
                     }
                 val otp = call.receive(ParticipationOtp::class).otp
 
-                database.unregisterFromEvent(id.toString(), otp.toString()).unwrapAndRespond(call)
+                database
+                    .unregisterFromEvent(id.toString(), otp.toString())
+                    .flatMap { "Success".right() }
+                    .unwrapAndRespond(call)
             }
         }
     }
