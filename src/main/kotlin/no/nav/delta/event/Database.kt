@@ -186,8 +186,7 @@ fun checkIfParticipantIsRegistered(
             preparedStatement.setString(2, email)
 
             val result = preparedStatement.executeQuery()
-            if (result.next()) ParticipantAlreadyRegisteredException.left()
-            return Unit.right()
+            return if (result.next()) ParticipantAlreadyRegisteredException.left() else Unit.right()
         }
 }
 

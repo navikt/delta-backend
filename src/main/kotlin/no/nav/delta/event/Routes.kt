@@ -51,7 +51,10 @@ fun Route.eventApi(database: DatabaseInterface) {
                     }
                 val email = call.receive(RegistrationEmail::class).email
 
-                database.registerForEvent(id.toString(), email).unwrapAndRespond(call)
+                database
+                    .registerForEvent(id.toString(), email)
+                    .flatMap { "Success".right() }
+                    .unwrapAndRespond(call)
             }
             delete {
                 val id =
