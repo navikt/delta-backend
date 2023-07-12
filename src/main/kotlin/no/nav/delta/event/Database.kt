@@ -170,9 +170,8 @@ fun checkIfEventExists(
         preparedStatement.setString(1, eventId)
 
         val result = preparedStatement.executeQuery()
-        if (!result.next()) return EventNotFoundException.left()
+        return if (!result.next()) EventNotFoundException.left() else Either.Right(Unit)
     }
-    return Either.Right(Unit)
 }
 
 fun checkIfParticipantIsRegistered(
@@ -200,7 +199,6 @@ fun checkIfEventIsFull(
         preparedStatement.setString(1, eventId)
 
         val result = preparedStatement.executeQuery()
-        if (result.next()) EventIsFullException.left()
-        return Unit.right()
+        return if (result.next()) EventIsFullException.left() else Unit.right()
     }
 }
