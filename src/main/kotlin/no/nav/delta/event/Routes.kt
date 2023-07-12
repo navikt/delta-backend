@@ -103,7 +103,7 @@ suspend fun Either<Any, Any>.unwrapAndRespond(call: ApplicationCall) {
     this.fold(
         {
             when (it) {
-                is ExceptionWithDefaultResponse -> it.defaultResponse(call).invoke()
+                is ExceptionWithDefaultResponse -> it.defaultResponse(call)
                 // Unknown exceptions, this *should* never happen
                 is Exception -> throw it
                 else -> throw RuntimeException("Unhandled exception: ${it::class.jvmName}")

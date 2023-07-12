@@ -8,7 +8,7 @@ sealed class ExceptionWithDefaultResponse(
     private val statusCode: HttpStatusCode,
     override val message: String
 ) : Exception(message) {
-    fun defaultResponse(call: ApplicationCall) = suspend { call.respond(statusCode, message) }
+    suspend fun defaultResponse(call: ApplicationCall) { call.respond(statusCode, message) }
 }
 
 sealed interface RegisterForEventError
