@@ -96,6 +96,15 @@ fun Route.eventApi(database: DatabaseInterface) {
                 )
             }
         }
+
+        route("/user/event") {
+            get {
+                val principal = call.principal<JWTPrincipal>()!!
+                val email = principal["preferred_username"]!!.lowercase()
+
+                call.respond(database.getJoinedEvents(email))
+            }
+        }
     }
 }
 

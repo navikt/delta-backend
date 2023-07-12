@@ -39,10 +39,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Event"
-  /event:
+  /user/event:
     get:
       tags:
         - user
+      description: "Get all joined events"
+      operationId: getJoinedEvents
+      responses:
+        "200":
+          description: "All joined events"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+  /event:
+    get:
+      tags:
+        - general
       description: "Get future events"
       operationId: getFutureEvents
       responses:
@@ -57,7 +72,7 @@ paths:
   /event/{id}:
     get:
       tags:
-        - user
+        - general
       description: "Get an event"
       operationId: getEvent
       parameters:
@@ -77,7 +92,7 @@ paths:
                 $ref: "#/components/schemas/EventWithParticipants"
     post:
       tags:
-        - user
+        - general
       description: "Join an event"
       operationId: joinEvent
       parameters:
@@ -97,7 +112,7 @@ paths:
           description: "Event joined"
     delete:
       tags:
-        - user
+        - general
       description: "Leave an event"
       operationId: leaveEvent
       parameters:

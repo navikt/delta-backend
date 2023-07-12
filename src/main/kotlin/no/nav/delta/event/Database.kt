@@ -137,6 +137,18 @@ fun DatabaseInterface.unregisterFromEvent(
     }
 }
 
+fun DatabaseInterface.getJoinedEvents(email: String): List<Event> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                "SELECT * FROM event JOIN participant p on event.id = p.event_id WHERE email=?;")
+        preparedStatement.setString(1, email)
+
+        val result = preparedStatement.executeQuery()
+        result.toList { resultSetToEvent() }
+    }
+}
+
 fun ResultSet.resultSetToEvent(): Event {
     return Event(
         id = UUID.fromString(getString("id")),
