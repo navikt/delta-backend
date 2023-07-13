@@ -39,6 +39,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Event"
+  /admin/event/{id}:
+    delete:
+      tags:
+        - admin
+      description: "Delete an event"
+      operationId: deleteEvent
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: "Event deleted"
+
   /user/event:
     get:
       tags:

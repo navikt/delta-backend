@@ -4,6 +4,7 @@ import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.left
 import arrow.core.right
+import io.ktor.network.sockets.*
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -47,21 +48,21 @@ RETURNING *;
 }
 
 fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event> {
-    connection.use { connection ->
+    return connection.use { connection ->
         val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?)")
         preparedStatement.setString(1, id)
         val result = preparedStatement.executeQuery()
 
         if (!result.next()) return EventNotFoundException.left()
-        return result.resultSetToEvent().right()
+        result.resultSetToEvent().right()
     }
 }
 
 fun DatabaseInterface.getParticipants(
     id: String
 ): Either<EventNotFoundException, List<Participant>> {
-    connection.use { connection ->
-        return checkIfEventExists(connection, id).flatMap {
+    return connection.use { connection ->
+        checkIfEventExists(connection, id).flatMap {
             val preparedStatement =
                 connection.prepareStatement("SELECT email FROM participant WHERE event_id=uuid(?);")
             preparedStatement.setString(1, id)
@@ -132,8 +133,7 @@ fun DatabaseInterface.unregisterFromEvent(
 
             val rowsAffected = preparedStatement.executeUpdate()
             connection.commit()
-            if (rowsAffected == 0) return InvalidOtpException.left()
-            Unit.right()
+            if (rowsAffected == 0) InvalidOtpException.left() else Unit.right()
         }
     }
 }
@@ -147,6 +147,18 @@ fun DatabaseInterface.getJoinedEvents(email: String): List<Event> {
 
         val result = preparedStatement.executeQuery()
         result.toList { resultSetToEvent() }
+    }
+}
+
+fun DatabaseInterface.deleteEvent(id: String): Either<EventNotFoundException, Unit> {
+    return connection.use { connection ->
+        val preparedStatement = connection.prepareStatement("DELETE FROM event WHERE id=uuid(?);")
+        preparedStatement.setString(1, id)
+
+        val result = preparedStatement.executeUpdate()
+        connection.commit()
+
+        if (result == 0) EventNotFoundException.left() else Unit.right()
     }
 }
 
@@ -166,11 +178,12 @@ fun checkIfEventExists(
     connection: Connection,
     eventId: String
 ): Either<EventNotFoundException, Unit> {
-    connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?);").use { preparedStatement ->
+    return connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?);").use {
+        preparedStatement ->
         preparedStatement.setString(1, eventId)
 
         val result = preparedStatement.executeQuery()
-        return if (!result.next()) EventNotFoundException.left() else Either.Right(Unit)
+        if (!result.next()) EventNotFoundException.left() else Either.Right(Unit)
     }
 }
 
@@ -179,14 +192,14 @@ fun checkIfParticipantIsRegistered(
     eventId: String,
     email: String
 ): Either<ParticipantAlreadyRegisteredException, Unit> {
-    connection
+    return connection
         .prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;")
         .use { preparedStatement ->
             preparedStatement.setString(1, eventId)
             preparedStatement.setString(2, email)
 
             val result = preparedStatement.executeQuery()
-            return if (result.next()) ParticipantAlreadyRegisteredException.left() else Unit.right()
+            if (result.next()) ParticipantAlreadyRegisteredException.left() else Unit.right()
         }
 }
 
@@ -194,11 +207,11 @@ fun checkIfEventIsFull(
     connection: Connection,
     eventId: String
 ): Either<EventIsFullException, Unit> {
-    connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?);").use {
+    return connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?);").use {
         preparedStatement ->
         preparedStatement.setString(1, eventId)
 
         val result = preparedStatement.executeQuery()
-        return if (result.next()) EventIsFullException.left() else Unit.right()
+        if (result.next()) EventIsFullException.left() else Unit.right()
     }
 }

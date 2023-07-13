@@ -101,6 +101,29 @@ fun Route.eventApi(database: DatabaseInterface) {
                     ),
                 )
             }
+            route("/{id}") {
+                delete {
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@delete it(call)
+                        }
+                    val event =
+                        database.getEvent(id.toString()).getOrElse {
+                            return@delete it.defaultResponse(call)
+                        }
+
+                    if (event.ownerEmail != email) {
+                        return@delete call.respond(HttpStatusCode.Forbidden, "No access")
+                    }
+
+                    database
+                        .deleteEvent(id.toString())
+                        .flatMap { "Success".right() }
+                        .unwrapAndRespond(call)
+                }
+            }
         }
 
         route("/user/event") {
