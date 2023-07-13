@@ -30,6 +30,14 @@ data class CreateEvent(
     val location: String?,
 )
 
+data class ChangeEvent(
+    val title: String?,
+    val description: String?,
+    val startTime: Date?,
+    val endTime: Date?,
+    val location: String?,
+)
+
 data class RegistrationEmail(
     val email: String,
 )

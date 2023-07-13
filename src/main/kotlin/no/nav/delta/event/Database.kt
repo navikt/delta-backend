@@ -53,8 +53,7 @@ fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event
         preparedStatement.setString(1, id)
         val result = preparedStatement.executeQuery()
 
-        if (!result.next()) return EventNotFoundException.left()
-        result.resultSetToEvent().right()
+        if (!result.next()) EventNotFoundException.left() else result.resultSetToEvent().right()
     }
 }
 
@@ -159,6 +158,25 @@ fun DatabaseInterface.deleteEvent(id: String): Either<EventNotFoundException, Un
         connection.commit()
 
         if (result == 0) EventNotFoundException.left() else Unit.right()
+    }
+}
+
+fun DatabaseInterface.updateEvent(newEvent: Event): Either<EventNotFoundException, Event> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                "UPDATE event SET title=?, description=?, start_time=?, end_time=?, location=? WHERE id=uuid(?) RETURNING *;")
+        preparedStatement.setString(1, newEvent.title)
+        preparedStatement.setString(2, newEvent.description)
+        preparedStatement.setTimestamp(3, Timestamp.from(newEvent.startTime.toInstant()))
+        preparedStatement.setTimestamp(4, Timestamp.from(newEvent.endTime.toInstant()))
+        preparedStatement.setString(5, newEvent.location)
+        preparedStatement.setString(6, newEvent.id.toString())
+
+        val result = preparedStatement.executeQuery()
+        connection.commit()
+
+        if (!result.next()) EventNotFoundException.left() else result.resultSetToEvent().right()
     }
 }
 

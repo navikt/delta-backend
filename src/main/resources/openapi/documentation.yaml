@@ -56,7 +56,31 @@ paths:
       responses:
         "200":
           description: "Event deleted"
-
+    patch:
+      tags:
+        - admin
+      description: "Change an event"
+      operationId: changeEvent
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEvent'
+      responses:
+        "200":
+          description: "Event changed"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
   /user/event:
     get:
       tags:

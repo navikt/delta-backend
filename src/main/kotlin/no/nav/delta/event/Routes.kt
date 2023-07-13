@@ -13,13 +13,7 @@ import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
-import io.ktor.server.routing.Route
-import io.ktor.server.routing.accept
-import io.ktor.server.routing.delete
-import io.ktor.server.routing.get
-import io.ktor.server.routing.post
-import io.ktor.server.routing.put
-import io.ktor.server.routing.route
+import io.ktor.server.routing.*
 import java.sql.Timestamp
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
@@ -122,6 +116,36 @@ fun Route.eventApi(database: DatabaseInterface) {
                         .deleteEvent(id.toString())
                         .flatMap { "Success".right() }
                         .unwrapAndRespond(call)
+                }
+                patch {
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@patch it(call)
+                        }
+
+                    val originalEvent =
+                        database.getEvent(id.toString()).getOrElse {
+                            return@patch it.defaultResponse(call)
+                        }
+
+                    if (originalEvent.ownerEmail != email) {
+                        return@patch call.respond(HttpStatusCode.Forbidden, "No access")
+                    }
+                    val changedEvent = call.receive<ChangeEvent>()
+
+                    val newEvent =
+                        Event(
+                            id = originalEvent.id,
+                            ownerEmail = originalEvent.ownerEmail,
+                            title = changedEvent.title ?: originalEvent.title,
+                            description = changedEvent.description ?: originalEvent.description,
+                            startTime = changedEvent.startTime ?: originalEvent.startTime,
+                            endTime = changedEvent.endTime ?: originalEvent.endTime,
+                            location = changedEvent.location ?: originalEvent.location,
+                        )
+                    database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
             }
         }
