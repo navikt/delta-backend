@@ -4,7 +4,6 @@ import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.left
 import arrow.core.right
-import io.ktor.network.sockets.*
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -20,8 +19,7 @@ fun DatabaseInterface.addEvent(
     endTime: Timestamp,
     location: String?,
 ): Event {
-    val out: Event
-    connection.use { connection ->
+    return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
                 """
@@ -39,12 +37,10 @@ RETURNING *;
         preparedStatement.setString(6, location)
 
         val result = preparedStatement.executeQuery()
-        result.next()
-        out = result.resultSetToEvent()
         connection.commit()
+        result.next()
+        result.resultSetToEvent()
     }
-
-    return out
 }
 
 fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event> {
@@ -72,25 +68,21 @@ fun DatabaseInterface.getParticipants(
 }
 
 fun DatabaseInterface.getFutureEvents(): List<Event> {
-    val events: MutableList<Event>
-    connection.use { connection ->
+    return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
         val result = preparedStatement.executeQuery()
-        events = result.toList { resultSetToEvent() }
+        result.toList { resultSetToEvent() }
     }
-    return events
 }
 
 fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
-    val events: MutableList<Event>
-    connection.use { connection ->
+    return connection.use { connection ->
         val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=?")
         preparedStatement.setString(1, ownerEmail)
         val result = preparedStatement.executeQuery()
-        events = result.toList { resultSetToEvent() }
+        result.toList { resultSetToEvent() }
     }
-    return events
 }
 
 fun DatabaseInterface.registerForEvent(
@@ -165,7 +157,11 @@ fun DatabaseInterface.updateEvent(newEvent: Event): Either<EventNotFoundExceptio
     return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
-                "UPDATE event SET title=?, description=?, start_time=?, end_time=?, location=? WHERE id=uuid(?) RETURNING *;")
+                """
+UPDATE event 
+    SET title=?, description=?, start_time=?, end_time=?, location=? 
+    WHERE id=uuid(?) RETURNING *;
+""")
         preparedStatement.setString(1, newEvent.title)
         preparedStatement.setString(2, newEvent.description)
         preparedStatement.setTimestamp(3, Timestamp.from(newEvent.startTime.toInstant()))
