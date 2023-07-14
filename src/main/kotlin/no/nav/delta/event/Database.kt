@@ -39,7 +39,7 @@ RETURNING *;
         val result = preparedStatement.executeQuery()
         connection.commit()
         result.next()
-        result.resultSetToEvent()
+        result.toEvent()
     }
 }
 
@@ -49,7 +49,7 @@ fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event
         preparedStatement.setString(1, id)
         val result = preparedStatement.executeQuery()
 
-        if (!result.next()) EventNotFoundException.left() else result.resultSetToEvent().right()
+        if (!result.next()) EventNotFoundException.left() else result.toEvent().right()
     }
 }
 
@@ -72,7 +72,7 @@ fun DatabaseInterface.getFutureEvents(): List<Event> {
         val preparedStatement =
             connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
         val result = preparedStatement.executeQuery()
-        result.toList { resultSetToEvent() }
+        result.toList { toEvent() }
     }
 }
 
@@ -81,7 +81,7 @@ fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
         val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=?")
         preparedStatement.setString(1, ownerEmail)
         val result = preparedStatement.executeQuery()
-        result.toList { resultSetToEvent() }
+        result.toList { toEvent() }
     }
 }
 
@@ -137,7 +137,7 @@ fun DatabaseInterface.getJoinedEvents(email: String): List<Event> {
         preparedStatement.setString(1, email)
 
         val result = preparedStatement.executeQuery()
-        result.toList { resultSetToEvent() }
+        result.toList { toEvent() }
     }
 }
 
@@ -172,11 +172,11 @@ UPDATE event
         val result = preparedStatement.executeQuery()
         connection.commit()
 
-        if (!result.next()) EventNotFoundException.left() else result.resultSetToEvent().right()
+        if (!result.next()) EventNotFoundException.left() else result.toEvent().right()
     }
 }
 
-fun ResultSet.resultSetToEvent(): Event {
+fun ResultSet.toEvent(): Event {
     return Event(
         id = UUID.fromString(getString("id")),
         ownerEmail = getString("owner"),
