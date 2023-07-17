@@ -119,20 +119,20 @@ fun DatabaseInterface.registerForEvent(
 
 fun DatabaseInterface.unregisterFromEvent(
     eventId: String,
-    otp: String
+    email: String
 ): Either<UnregisterFromEventError, Unit> {
     return connection.use { connection ->
         checkIfEventExists(connection, eventId).flatMap {
             val preparedStatement =
                 connection.prepareStatement(
-                    "DELETE FROM participant WHERE event_id=uuid(?) AND otp=uuid(?);",
+                    "DELETE FROM participant WHERE event_id=uuid(?) AND email=?;",
                 )
             preparedStatement.setString(1, eventId)
-            preparedStatement.setString(2, otp)
+            preparedStatement.setString(2, email)
 
             val rowsAffected = preparedStatement.executeUpdate()
             connection.commit()
-            if (rowsAffected == 0) InvalidOtpException.left() else Unit.right()
+            if (rowsAffected == 0) EmailNotFoundException.left() else Unit.right()
         }
     }
 }

@@ -144,11 +144,6 @@ paths:
           required: true
           schema:
             type: integer
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EmailObject"
       responses:
         "200":
           description: "Event joined"
@@ -164,11 +159,6 @@ paths:
           required: true
           schema:
             type: integer
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LeaveEvent"
       responses:
         "200":
           description: "Event left"

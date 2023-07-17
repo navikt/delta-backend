@@ -38,29 +38,33 @@ fun Route.eventApi(database: DatabaseInterface) {
                     }
                     .unwrapAndRespond(call)
             }
-            post {
-                val id =
-                    getUuidFromPath(call).getOrElse {
-                        return@post it(call)
-                    }
-                val email = call.receive(RegistrationEmail::class).email
+            authenticate("jwt") {
+                post {
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@post it(call)
+                        }
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
 
-                database
-                    .registerForEvent(id.toString(), email)
-                    .flatMap { "Success".right() }
-                    .unwrapAndRespond(call)
-            }
-            delete {
-                val id =
-                    getUuidFromPath(call).getOrElse {
-                        return@delete it(call)
-                    }
-                val otp = call.receive(ParticipationOtp::class).otp
-
-                database
-                    .unregisterFromEvent(id.toString(), otp.toString())
-                    .flatMap { "Success".right() }
-                    .unwrapAndRespond(call)
+                    database
+                        .registerForEvent(id.toString(), email)
+                        .flatMap { "Success".right() }
+                        .unwrapAndRespond(call)
+                }
+                delete {
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@delete it(call)
+                        }
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
+    
+                    database
+                        .unregisterFromEvent(id.toString(), email)
+                        .flatMap { "Success".right() }
+                        .unwrapAndRespond(call)
+                }
             }
         }
     }

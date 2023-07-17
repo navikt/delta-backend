@@ -23,8 +23,8 @@ object EventIsFullException :
 
 sealed interface UnregisterFromEventError
 
-object InvalidOtpException :
-    ExceptionWithDefaultResponse(HttpStatusCode.Unauthorized, "Invalid one time password"),
+object EmailNotFoundException :
+    ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Email not found"),
     UnregisterFromEventError
 
 object EventNotFoundException :
