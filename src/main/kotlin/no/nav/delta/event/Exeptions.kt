@@ -18,9 +18,6 @@ sealed interface RegisterForEventError
 object ParticipantAlreadyRegisteredException :
     ExceptionWithDefaultResponse(HttpStatusCode.OK, "Success"), RegisterForEventError
 
-object EventIsFullException :
-    ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Event not found"), RegisterForEventError
-
 sealed interface UnregisterFromEventError
 
 object EmailNotFoundException :

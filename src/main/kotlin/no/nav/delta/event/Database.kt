@@ -92,7 +92,6 @@ fun DatabaseInterface.registerForEvent(
     return connection.use { connection ->
         checkIfEventExists(connection, eventId)
             .flatMap { checkIfParticipantIsRegistered(connection, eventId, email) }
-            .flatMap { checkIfEventIsFull(connection, eventId) }
             .flatMap {
                 val preparedStatement =
                     connection.prepareStatement(
@@ -101,7 +100,7 @@ fun DatabaseInterface.registerForEvent(
                 preparedStatement.setString(1, eventId)
                 preparedStatement.setString(2, email)
 
-                val result = preparedStatement.executeUpdate();
+                preparedStatement.executeUpdate()
                 connection.commit()
                 Unit.right()
             }
@@ -216,15 +215,3 @@ fun checkIfParticipantIsRegistered(
         }
 }
 
-fun checkIfEventIsFull(
-    connection: Connection,
-    eventId: String
-): Either<EventIsFullException, Unit> {
-    return connection.prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?);").use {
-        preparedStatement ->
-        preparedStatement.setString(1, eventId)
-
-        val result = preparedStatement.executeQuery()
-        if (result.next()) EventIsFullException.left() else Unit.right()
-    }
-}
