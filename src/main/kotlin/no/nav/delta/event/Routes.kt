@@ -39,32 +39,6 @@ fun Route.eventApi(database: DatabaseInterface) {
                     .unwrapAndRespond(call)
             }
             authenticate("jwt") {
-                post {
-                    val id =
-                        getUuidFromPath(call).getOrElse {
-                            return@post it(call)
-                        }
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
-
-                    database
-                        .registerForEvent(id.toString(), email)
-                        .flatMap { "Success".right() }
-                        .unwrapAndRespond(call)
-                }
-                delete {
-                    val id =
-                        getUuidFromPath(call).getOrElse {
-                            return@delete it(call)
-                        }
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
-
-                    database
-                        .unregisterFromEvent(id.toString(), email)
-                        .flatMap { "Success".right() }
-                        .unwrapAndRespond(call)
-                }
             }
         }
     }
@@ -160,6 +134,34 @@ fun Route.eventApi(database: DatabaseInterface) {
                 val email = principal["preferred_username"]!!.lowercase()
 
                 call.respond(database.getJoinedEvents(email))
+            }
+            route("/{id}") {
+                post {
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@post it(call)
+                        }
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
+
+                    database
+                        .registerForEvent(id.toString(), email)
+                        .flatMap { "Success".right() }
+                        .unwrapAndRespond(call)
+                }
+                delete {
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@delete it(call)
+                        }
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
+
+                    database
+                        .unregisterFromEvent(id.toString(), email)
+                        .flatMap { "Success".right() }
+                        .unwrapAndRespond(call)
+                }
             }
         }
     }

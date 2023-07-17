@@ -96,6 +96,37 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Event"
+  /user/event/{id}:
+    post:
+      tags:
+        - user
+      description: "Join an event"
+      operationId: joinEvent
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: "Event joined"
+    delete:
+      tags:
+        - user
+      description: "Leave an event"
+      operationId: leaveEvent
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: "Event left"
   /event:
     get:
       tags:
@@ -132,36 +163,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EventWithParticipants"
-    post:
-      tags:
-        - general
-      description: "Join an event"
-      operationId: joinEvent
-      parameters:
-        - name: id
-          in: path
-          description: "Event id"
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: "Event joined"
-    delete:
-      tags:
-        - general
-      description: "Leave an event"
-      operationId: leaveEvent
-      parameters:
-        - name: id
-          in: path
-          description: "Event id"
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: "Event left"
 components:
   schemas:
     CreateEvent:
