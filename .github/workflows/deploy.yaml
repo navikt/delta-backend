@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: read
+      contents: write
       security-events: write
 
     strategy:
@@ -26,6 +26,11 @@ jobs:
         with:
           distribution: "temurin"
           java-version: "17"
+          
+      - name: Setup Gradle to generate and submit dependency graphs
+        uses: gradle/gradle-build-action@dependency-graph
+        with:
+          dependency-graph: generate-and-submit
 
       - run: ./gradlew shadowJar -x test
         env:
