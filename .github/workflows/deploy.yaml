@@ -5,49 +5,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  analyze:
-    name: Analyze
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: write
-      security-events: write
-
-    strategy:
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v3
-
-      - uses: github/codeql-action/init@v2
-        with:
-          languages: kotlin
-
-      - uses: actions/setup-java@v3
-        id: setup-java
-        with:
-          distribution: "temurin"
-          java-version: "17"
-          
-      - name: Setup Gradle to generate and submit dependency graphs
-        uses: gradle/gradle-build-action@dependency-graph
-        with:
-          dependency-graph: generate-and-submit
-
-      - run: ./gradlew shadowJar -x test
-        env:
-          ORG_GRADLE_PROJECT_githubUser: x-access-token
-          ORG_GRADLE_PROJECT_githubPassword: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: github/codeql-action/analyze@v2
-        with:
-          category: "/language:kotlin"
-
   build:
     name: Build
     runs-on: ubuntu-latest
     permissions:
       packages: "write"
-      contents: "read"
+      contents: "write"
       id-token: "write"
     outputs:
       image: ${{ steps.docker-build-push.outputs.image }}
@@ -60,6 +23,10 @@ jobs:
         java-version: '17'
     - uses: gradle/wrapper-validation-action@v1.0.6
       id: gradle-wrapper-validation
+    - name: Setup Gradle to generate and submit dependency graphs
+      uses: gradle/gradle-build-action@dependency-graph
+      with:
+        dependency-graph: generate-and-submit
     - uses: actions/cache@v3
       id: gradle-cache
       with:
