@@ -59,7 +59,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                         }
                     val principal = call.principal<JWTPrincipal>()!!
                     val email = principal["preferred_username"]!!.lowercase()
-    
+
                     database
                         .unregisterFromEvent(id.toString(), email)
                         .flatMap { "Success".right() }

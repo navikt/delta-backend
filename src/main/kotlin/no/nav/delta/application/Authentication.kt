@@ -23,9 +23,8 @@ fun Application.setupAuth(
                 if (environment.development) {
                     // This predicate is modifying state -> I know this is a bit yuck...
                     addDummyPrincipal(call)
-                    return@skipWhen true
-                }
-                false
+                    true
+                } else false
             }
             verifier(jwkProvider, issuer)
             validate { credentials ->
