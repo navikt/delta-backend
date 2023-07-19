@@ -25,7 +25,7 @@ fun Route.eventApi(database: DatabaseInterface) {
         route("/{id}") {
             get {
                 val id =
-                    getUuidFromPath(call).getOrElse {
+                    call.getUuidFromPath().getOrElse {
                         return@get it(call)
                     }
 
@@ -72,7 +72,7 @@ fun Route.eventApi(database: DatabaseInterface) {
             route("/{id}") {
                 delete {
                     val id =
-                        getUuidFromPath(call).getOrElse {
+                        call.getUuidFromPath().getOrElse {
                             return@delete it(call)
                         }
                     val email = call.principalEmail()
@@ -93,7 +93,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
                 patch {
                     val id =
-                        getUuidFromPath(call).getOrElse {
+                        call.getUuidFromPath().getOrElse {
                             return@patch it(call)
                         }
                     val email = call.principalEmail()
@@ -122,7 +122,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
                 post {
                     val id =
-                        getUuidFromPath(call).getOrElse {
+                        call.getUuidFromPath().getOrElse {
                             return@post it(call)
                         }
                     val email = call.principalEmail()
@@ -162,7 +162,7 @@ fun Route.eventApi(database: DatabaseInterface) {
             route("/{id}") {
                 post {
                     val id =
-                        getUuidFromPath(call).getOrElse {
+                        call.getUuidFromPath().getOrElse {
                             return@post it(call)
                         }
                     val email = call.principalEmail()
@@ -174,7 +174,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
                 delete {
                     val id =
-                        getUuidFromPath(call).getOrElse {
+                        call.getUuidFromPath().getOrElse {
                             return@delete it(call)
                         }
                     val email = call.principalEmail()
@@ -203,11 +203,9 @@ suspend fun Either<Any, Any>.unwrapAndRespond(call: ApplicationCall) {
     )
 }
 
-suspend fun getUuidFromPath(
-    call: ApplicationCall
-): Either<suspend (ApplicationCall) -> Unit, UUID> {
+suspend fun ApplicationCall.getUuidFromPath(): Either<suspend (ApplicationCall) -> Unit, UUID> {
     val id =
-        call.parameters["id"]
+        parameters["id"]
             ?: return Either.Left { c -> c.respond(HttpStatusCode.BadRequest, "Missing id") }
 
     return runCatching { UUID.fromString(id) }
@@ -217,4 +215,5 @@ suspend fun getUuidFromPath(
         )
 }
 
-fun ApplicationCall.principalEmail() = principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+fun ApplicationCall.principalEmail() =
+    principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
