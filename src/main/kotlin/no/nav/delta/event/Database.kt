@@ -70,7 +70,7 @@ fun DatabaseInterface.getParticipants(
 fun DatabaseInterface.getFutureEvents(): List<Event> {
     return connection.use { connection ->
         val preparedStatement =
-            connection.prepareStatement("SELECT * FROM event WHERE end_time > now();")
+            connection.prepareStatement("SELECT * FROM event WHERE end_time > now() ORDER BY start_time;")
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
     }
@@ -78,7 +78,7 @@ fun DatabaseInterface.getFutureEvents(): List<Event> {
 
 fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
     return connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=?")
+        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=? ORDER BY start_time;")
         preparedStatement.setString(1, ownerEmail)
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
@@ -131,7 +131,7 @@ fun DatabaseInterface.getJoinedEvents(email: String): List<Event> {
     return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
-                "SELECT * FROM event JOIN participant p on event.id = p.event_id WHERE email=?;")
+                "SELECT * FROM event JOIN participant p on event.id = p.event_id WHERE email=? ORDER BY start_time;")
         preparedStatement.setString(1, email)
 
         val result = preparedStatement.executeQuery()
