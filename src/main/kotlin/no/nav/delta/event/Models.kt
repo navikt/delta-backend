@@ -37,11 +37,3 @@ data class ChangeEvent(
     val endTime: Date?,
     val location: String?,
 )
-
-data class RegistrationEmail(
-    val email: String,
-)
-
-data class ParticipationOtp(
-    val otp: UUID,
-)
