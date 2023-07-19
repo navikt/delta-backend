@@ -28,3 +28,12 @@ object EventNotFoundException :
     ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Event not found"),
     RegisterForEventError,
     UnregisterFromEventError
+
+sealed class IdException(private val statusCode: HttpStatusCode, override val message: String) :
+    ExceptionWithDefaultResponse(statusCode, message)
+
+object InvalidIdException : IdException(HttpStatusCode.BadRequest, "Invalid id")
+
+object MissingIdException : IdException(HttpStatusCode.BadRequest, "Missing id")
+
+object ForbiddenException : ExceptionWithDefaultResponse(HttpStatusCode.Forbidden, "No access")

@@ -3,6 +3,7 @@ package no.nav.delta.event
 import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.getOrElse
+import arrow.core.left
 import arrow.core.right
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -26,7 +27,7 @@ fun Route.eventApi(database: DatabaseInterface) {
             get {
                 val id =
                     call.getUuidFromPath().getOrElse {
-                        return@get it(call)
+                        return@get it.defaultResponse(call)
                     }
 
                 database
@@ -71,43 +72,23 @@ fun Route.eventApi(database: DatabaseInterface) {
             }
             route("/{id}") {
                 delete {
-                    val id =
-                        call.getUuidFromPath().getOrElse {
-                            return@delete it(call)
-                        }
-                    val email = call.principalEmail()
-
                     val event =
-                        database.getEvent(id.toString()).getOrElse {
-                            return@delete it.defaultResponse(call)
+                        call.getEventOrNoAccess(database).getOrElse {
+                            return@delete
                         }
-
-                    if (event.ownerEmail != email) {
-                        return@delete call.respond(HttpStatusCode.Forbidden, "No access")
-                    }
 
                     database
-                        .deleteEvent(id.toString())
+                        .deleteEvent(event.id.toString())
                         .flatMap { "Success".right() }
                         .unwrapAndRespond(call)
                 }
                 patch {
-                    val id =
-                        call.getUuidFromPath().getOrElse {
-                            return@patch it(call)
-                        }
-                    val email = call.principalEmail()
-
                     val originalEvent =
-                        database.getEvent(id.toString()).getOrElse {
-                            return@patch it.defaultResponse(call)
+                        call.getEventOrNoAccess(database).getOrElse {
+                            return@patch
                         }
 
-                    if (originalEvent.ownerEmail != email) {
-                        return@patch call.respond(HttpStatusCode.Forbidden, "No access")
-                    }
                     val changedEvent = call.receive<ChangeEvent>()
-
                     val newEvent =
                         Event(
                             id = originalEvent.id,
@@ -121,22 +102,12 @@ fun Route.eventApi(database: DatabaseInterface) {
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
                 post {
-                    val id =
-                        call.getUuidFromPath().getOrElse {
-                            return@post it(call)
-                        }
-                    val email = call.principalEmail()
-
                     val originalEvent =
-                        database.getEvent(id.toString()).getOrElse {
-                            return@post it.defaultResponse(call)
+                        call.getEventOrNoAccess(database).getOrElse {
+                            return@post
                         }
 
-                    if (originalEvent.ownerEmail != email) {
-                        return@post call.respond(HttpStatusCode.Forbidden, "No access")
-                    }
                     val changedEvent = call.receive<CreateEvent>()
-
                     val newEvent =
                         Event(
                             id = originalEvent.id,
@@ -163,7 +134,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 post {
                     val id =
                         call.getUuidFromPath().getOrElse {
-                            return@post it(call)
+                            return@post it.defaultResponse(call)
                         }
                     val email = call.principalEmail()
 
@@ -175,7 +146,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 delete {
                     val id =
                         call.getUuidFromPath().getOrElse {
-                            return@delete it(call)
+                            return@delete it.defaultResponse(call)
                         }
                     val email = call.principalEmail()
 
@@ -203,16 +174,35 @@ suspend fun Either<Any, Any>.unwrapAndRespond(call: ApplicationCall) {
     )
 }
 
-suspend fun ApplicationCall.getUuidFromPath(): Either<suspend (ApplicationCall) -> Unit, UUID> {
-    val id =
-        parameters["id"]
-            ?: return Either.Left { c -> c.respond(HttpStatusCode.BadRequest, "Missing id") }
+fun ApplicationCall.getUuidFromPath(): Either<IdException, UUID> {
+    val id = parameters["id"] ?: return MissingIdException.left()
 
     return runCatching { UUID.fromString(id) }
         .fold(
             { it.right() },
-            { Either.Left { c -> c.respond(HttpStatusCode.BadRequest, "Invalid id") } },
+            { InvalidIdException.left() },
         )
+}
+
+fun ApplicationCall.getEventOrNoAccess(
+    database: DatabaseInterface
+): Either<ExceptionWithDefaultResponse, Event> {
+    val id =
+        getUuidFromPath().getOrElse {
+            return it.left()
+        }
+    val email = principalEmail()
+
+    val event =
+        database.getEvent(id.toString()).getOrElse {
+            return it.left()
+        }
+
+    if (event.ownerEmail != email) {
+        return ForbiddenException.left()
+    }
+
+    return event.right()
 }
 
 fun ApplicationCall.principalEmail() =
