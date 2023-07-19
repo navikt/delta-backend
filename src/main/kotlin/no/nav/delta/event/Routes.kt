@@ -38,24 +38,20 @@ fun Route.eventApi(database: DatabaseInterface) {
                     }
                     .unwrapAndRespond(call)
             }
-            authenticate("jwt") {
-            }
         }
     }
 
     authenticate("jwt") {
         route("/admin/event") {
             get {
-                val principal = call.principal<JWTPrincipal>()!!
-                val ownerEmail = principal["preferred_username"]!!.lowercase()
+                val ownerEmail = call.principalEmail()
 
                 call.respond(database.getEventsByOwner(ownerEmail))
             }
 
             put {
                 val createEvent = call.receive(CreateEvent::class)
-                val principal = call.principal<JWTPrincipal>()!!
-                val ownerEmail = principal["preferred_username"]!!.lowercase()
+                val ownerEmail = call.principalEmail()
 
                 if (createEvent.startTime.after(createEvent.endTime)) {
                     return@put call.respond(
@@ -75,12 +71,12 @@ fun Route.eventApi(database: DatabaseInterface) {
             }
             route("/{id}") {
                 delete {
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
                     val id =
                         getUuidFromPath(call).getOrElse {
                             return@delete it(call)
                         }
+                    val email = call.principalEmail()
+
                     val event =
                         database.getEvent(id.toString()).getOrElse {
                             return@delete it.defaultResponse(call)
@@ -96,12 +92,11 @@ fun Route.eventApi(database: DatabaseInterface) {
                         .unwrapAndRespond(call)
                 }
                 patch {
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
                     val id =
                         getUuidFromPath(call).getOrElse {
                             return@patch it(call)
                         }
+                    val email = call.principalEmail()
 
                     val originalEvent =
                         database.getEvent(id.toString()).getOrElse {
@@ -126,12 +121,11 @@ fun Route.eventApi(database: DatabaseInterface) {
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
                 post {
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
                     val id =
                         getUuidFromPath(call).getOrElse {
                             return@post it(call)
                         }
+                    val email = call.principalEmail()
 
                     val originalEvent =
                         database.getEvent(id.toString()).getOrElse {
@@ -171,8 +165,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                         getUuidFromPath(call).getOrElse {
                             return@post it(call)
                         }
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
+                    val email = call.principalEmail()
 
                     database
                         .registerForEvent(id.toString(), email)
@@ -184,8 +177,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                         getUuidFromPath(call).getOrElse {
                             return@delete it(call)
                         }
-                    val principal = call.principal<JWTPrincipal>()!!
-                    val email = principal["preferred_username"]!!.lowercase()
+                    val email = call.principalEmail()
 
                     database
                         .unregisterFromEvent(id.toString(), email)
@@ -224,3 +216,5 @@ suspend fun getUuidFromPath(
             { Either.Left { c -> c.respond(HttpStatusCode.BadRequest, "Invalid id") } },
         )
 }
+
+fun ApplicationCall.principalEmail() = principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
