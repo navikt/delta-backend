@@ -59,6 +59,31 @@ paths:
     patch:
       tags:
         - admin
+      description: "Patch event"
+      operationId: patchEvent
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEvent'
+      responses:
+        "200":
+          description: "Event patched"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+    post:
+      tags:
+        - admin
       description: "Change an event"
       operationId: changeEvent
       parameters:

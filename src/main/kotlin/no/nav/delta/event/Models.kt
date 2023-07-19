@@ -27,7 +27,7 @@ data class CreateEvent(
     val description: String,
     val startTime: Date,
     val endTime: Date,
-    val location: String?,
+    val location: String,
 )
 
 data class ChangeEvent(

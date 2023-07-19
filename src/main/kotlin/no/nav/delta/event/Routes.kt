@@ -125,6 +125,36 @@ fun Route.eventApi(database: DatabaseInterface) {
                         )
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
+                post {
+                    val principal = call.principal<JWTPrincipal>()!!
+                    val email = principal["preferred_username"]!!.lowercase()
+                    val id =
+                        getUuidFromPath(call).getOrElse {
+                            return@post it(call)
+                        }
+
+                    val originalEvent =
+                        database.getEvent(id.toString()).getOrElse {
+                            return@post it.defaultResponse(call)
+                        }
+
+                    if (originalEvent.ownerEmail != email) {
+                        return@post call.respond(HttpStatusCode.Forbidden, "No access")
+                    }
+                    val changedEvent = call.receive<CreateEvent>()
+
+                    val newEvent =
+                        Event(
+                            id = originalEvent.id,
+                            ownerEmail = originalEvent.ownerEmail,
+                            title = changedEvent.title,
+                            description = changedEvent.description,
+                            startTime = changedEvent.startTime,
+                            endTime = changedEvent.endTime,
+                            location = changedEvent.location,
+                        )
+                    database.updateEvent(newEvent).unwrapAndRespond(call)
+                }
             }
         }
 
