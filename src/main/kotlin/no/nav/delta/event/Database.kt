@@ -70,7 +70,8 @@ fun DatabaseInterface.getParticipants(
 fun DatabaseInterface.getFutureEvents(): List<Event> {
     return connection.use { connection ->
         val preparedStatement =
-            connection.prepareStatement("SELECT * FROM event WHERE end_time > now() ORDER BY start_time;")
+            connection.prepareStatement(
+                "SELECT * FROM event WHERE end_time > now() ORDER BY start_time;")
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
     }
@@ -78,7 +79,8 @@ fun DatabaseInterface.getFutureEvents(): List<Event> {
 
 fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
     return connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE owner=? ORDER BY start_time;")
+        val preparedStatement =
+            connection.prepareStatement("SELECT * FROM event WHERE owner=? ORDER BY start_time;")
         preparedStatement.setString(1, ownerEmail)
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
@@ -214,4 +216,3 @@ fun checkIfParticipantIsRegistered(
             if (result.next()) ParticipantAlreadyRegisteredException.left() else Unit.right()
         }
 }
-
