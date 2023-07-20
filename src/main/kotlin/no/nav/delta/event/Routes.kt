@@ -23,7 +23,11 @@ import no.nav.delta.plugins.DatabaseInterface
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
         accept(ContentType.Application.Json) {
-            get { call.respond(database.getEvents(onlyFuture = true, onlyPublic = true)) }
+            get {
+                val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
+                val onlyPublic = call.parameters["onlyPublic"]?.toBoolean() ?: false
+                call.respond(database.getEvents(onlyFuture, onlyPublic))
+            }
         }
         route("/{id}") {
             get {

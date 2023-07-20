@@ -174,13 +174,25 @@ paths:
       responses:
         "200":
           description: "Event left"
-
   /event:
     get:
       tags:
         - general
       description: "Get future events"
       operationId: getFutureEvents
+      parameters:
+        - name: onlyPublic
+          in: query
+          description: "Public events only"
+          required: false
+          schema:
+            type: boolean
+        - name: onlyFuture
+          in: query
+          description: "Future events only"
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: "All future events"
