@@ -5,6 +5,7 @@ import arrow.core.flatMap
 import arrow.core.getOrElse
 import arrow.core.left
 import arrow.core.right
+import arrow.core.some
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -48,7 +49,7 @@ fun Route.eventApi(database: DatabaseInterface) {
             get {
                 val ownerEmail = call.principalEmail()
 
-                call.respond(database.getEventsByOwner(ownerEmail))
+                call.respond(database.getEvents(byOwner = ownerEmail.some()))
             }
 
             put {
@@ -139,7 +140,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 val principal = call.principal<JWTPrincipal>()!!
                 val email = principal["preferred_username"]!!.lowercase()
 
-                call.respond(database.getJoinedEvents(email))
+                call.respond(database.getEvents(joinedBy = email.some()))
             }
             route("/{id}") {
                 post {

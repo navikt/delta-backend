@@ -1,10 +1,13 @@
 package no.nav.delta.event
 
 import arrow.core.Either
+import arrow.core.Option
 import arrow.core.flatMap
 import arrow.core.left
+import arrow.core.none
 import arrow.core.right
 import java.sql.Connection
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.util.UUID
@@ -66,26 +69,30 @@ fun DatabaseInterface.getParticipants(
 
 fun DatabaseInterface.getEvents(
     onlyFuture: Boolean = false,
-    onlyPublic: Boolean = false
+    onlyPublic: Boolean = false,
+    byOwner: Option<String> = none(),
+    joinedBy: Option<String> = none(),
 ): List<Event> {
     return connection.use { connection ->
         val clauses = mutableListOf("TRUE")
-        if (onlyFuture) clauses.add("end_time > NOW()")
+        val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
+
+        if (onlyFuture) clauses.add("start_time > NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
+        byOwner.onSome { owner ->
+            clauses.add("owner = ?")
+            values.add { setString(it, owner) }
+        }
+        joinedBy.onSome { joinedBy ->
+            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ?)")
+            values.add { setString(it, joinedBy) }
+        }
 
         val preparedStatement =
             connection.prepareStatement(
                 "SELECT * FROM event WHERE ${clauses.joinToString(" AND ")} ORDER BY start_time;")
-        val result = preparedStatement.executeQuery()
-        result.toList { toEvent() }
-    }
-}
+        values.forEachIndexed { index, setSomething -> preparedStatement.setSomething(index + 1) }
 
-fun DatabaseInterface.getEventsByOwner(ownerEmail: String): List<Event> {
-    return connection.use { connection ->
-        val preparedStatement =
-            connection.prepareStatement("SELECT * FROM event WHERE owner=? ORDER BY start_time;")
-        preparedStatement.setString(1, ownerEmail)
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
     }
@@ -130,18 +137,6 @@ fun DatabaseInterface.unregisterFromEvent(
             connection.commit()
             if (rowsAffected == 0) EmailNotFoundException.left() else Unit.right()
         }
-    }
-}
-
-fun DatabaseInterface.getJoinedEvents(email: String): List<Event> {
-    return connection.use { connection ->
-        val preparedStatement =
-            connection.prepareStatement(
-                "SELECT * FROM event JOIN participant p on event.id = p.event_id WHERE email=? ORDER BY start_time;")
-        preparedStatement.setString(1, email)
-
-        val result = preparedStatement.executeQuery()
-        result.toList { toEvent() }
     }
 }
 
