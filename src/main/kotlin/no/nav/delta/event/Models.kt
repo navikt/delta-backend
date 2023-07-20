@@ -10,7 +10,8 @@ data class Event(
     val description: String,
     val startTime: Date,
     val endTime: Date,
-    val location: String?,
+    val location: String,
+    val public: Boolean,
 )
 
 data class EventWithParticipants(
@@ -28,6 +29,7 @@ data class CreateEvent(
     val startTime: Date,
     val endTime: Date,
     val location: String,
+    val public: Boolean,
 )
 
 data class ChangeEvent(
@@ -36,4 +38,5 @@ data class ChangeEvent(
     val startTime: Date?,
     val endTime: Date?,
     val location: String?,
+    val public: Boolean?,
 )

@@ -15,14 +15,15 @@ import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.*
-import java.sql.Timestamp
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
-        accept(ContentType.Application.Json) { get { call.respond(database.getFutureEvents()) } }
+        accept(ContentType.Application.Json) {
+            get { call.respond(database.getEvents(onlyFuture = true, onlyPublic = true)) }
+        }
         route("/{id}") {
             get {
                 val id =
@@ -62,11 +63,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 call.respond(
                     database.addEvent(
                         ownerEmail,
-                        createEvent.title,
-                        createEvent.description,
-                        Timestamp.from(createEvent.startTime.toInstant()),
-                        Timestamp.from(createEvent.endTime.toInstant()),
-                        createEvent.location,
+                        createEvent,
                     ),
                 )
             }
@@ -98,6 +95,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                             startTime = changedEvent.startTime ?: originalEvent.startTime,
                             endTime = changedEvent.endTime ?: originalEvent.endTime,
                             location = changedEvent.location ?: originalEvent.location,
+                            public = changedEvent.public ?: originalEvent.public,
                         )
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
@@ -117,6 +115,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                             startTime = changedEvent.startTime,
                             endTime = changedEvent.endTime,
                             location = changedEvent.location,
+                            public = changedEvent.public,
                         )
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }

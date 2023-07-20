@@ -13,28 +13,25 @@ import no.nav.delta.plugins.toList
 
 fun DatabaseInterface.addEvent(
     ownerEmail: String,
-    title: String,
-    description: String,
-    startTime: Timestamp,
-    endTime: Timestamp,
-    location: String?,
+    createEvent: CreateEvent,
 ): Event {
     return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
                 """
-INSERT INTO event(owner, title, description, start_time, end_time, location)
-    VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO event(owner, title, description, start_time, end_time, location, public)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 """,
             )
 
         preparedStatement.setString(1, ownerEmail)
-        preparedStatement.setString(2, title)
-        preparedStatement.setString(3, description)
-        preparedStatement.setTimestamp(4, startTime)
-        preparedStatement.setTimestamp(5, endTime)
-        preparedStatement.setString(6, location)
+        preparedStatement.setString(2, createEvent.title)
+        preparedStatement.setString(3, createEvent.description)
+        preparedStatement.setTimestamp(4, Timestamp.from(createEvent.startTime.toInstant()))
+        preparedStatement.setTimestamp(5, Timestamp.from(createEvent.startTime.toInstant()))
+        preparedStatement.setString(6, createEvent.location)
+        preparedStatement.setBoolean(7, createEvent.public)
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -67,11 +64,18 @@ fun DatabaseInterface.getParticipants(
     }
 }
 
-fun DatabaseInterface.getFutureEvents(): List<Event> {
+fun DatabaseInterface.getEvents(
+    onlyFuture: Boolean = false,
+    onlyPublic: Boolean = false
+): List<Event> {
     return connection.use { connection ->
+        val clauses = mutableListOf("TRUE")
+        if (onlyFuture) clauses.add("end_time > NOW()")
+        if (onlyPublic) clauses.add("public = TRUE")
+
         val preparedStatement =
             connection.prepareStatement(
-                "SELECT * FROM event WHERE end_time > now() ORDER BY start_time;")
+                "SELECT * FROM event WHERE ${clauses.joinToString(" AND ")} ORDER BY start_time;")
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
     }
@@ -159,7 +163,7 @@ fun DatabaseInterface.updateEvent(newEvent: Event): Either<EventNotFoundExceptio
             connection.prepareStatement(
                 """
 UPDATE event 
-    SET title=?, description=?, start_time=?, end_time=?, location=? 
+    SET title=?, description=?, start_time=?, end_time=?, location=?, public=?
     WHERE id=uuid(?) RETURNING *;
 """)
         preparedStatement.setString(1, newEvent.title)
@@ -167,7 +171,8 @@ UPDATE event
         preparedStatement.setTimestamp(3, Timestamp.from(newEvent.startTime.toInstant()))
         preparedStatement.setTimestamp(4, Timestamp.from(newEvent.endTime.toInstant()))
         preparedStatement.setString(5, newEvent.location)
-        preparedStatement.setString(6, newEvent.id.toString())
+        preparedStatement.setBoolean(6, newEvent.public)
+        preparedStatement.setString(7, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -185,6 +190,7 @@ fun ResultSet.toEvent(): Event {
         startTime = getTimestamp("start_time"),
         endTime = getTimestamp("end_time"),
         location = getString("location"),
+        public = getBoolean("public"),
     )
 }
 

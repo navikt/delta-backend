@@ -205,6 +205,8 @@ components:
           format: date-time
         location:
           type: string
+        public:
+          type: boolean
     Event:
       type: object
       properties:
@@ -225,6 +227,8 @@ components:
         id:
           type: string
           format: uuid
+        public:
+          type: boolean
     EventWithParticipants:
       type: object
       properties:
