@@ -27,13 +27,18 @@ object EmailNotFoundException :
 object EventNotFoundException :
     ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Event not found"),
     RegisterForEventError,
-    UnregisterFromEventError
+    UnregisterFromEventError,
+    EventAccessException
 
-sealed class IdException(private val statusCode: HttpStatusCode, override val message: String) :
-    ExceptionWithDefaultResponse(statusCode, message)
+sealed interface IdException : EventAccessException
 
-object InvalidIdException : IdException(HttpStatusCode.BadRequest, "Invalid id")
+object InvalidIdException :
+    ExceptionWithDefaultResponse(HttpStatusCode.BadRequest, "Invalid id"), IdException
 
-object MissingIdException : IdException(HttpStatusCode.BadRequest, "Missing id")
+object MissingIdException :
+    ExceptionWithDefaultResponse(HttpStatusCode.BadRequest, "Missing id"), IdException
 
-object ForbiddenException : ExceptionWithDefaultResponse(HttpStatusCode.Forbidden, "No access")
+sealed interface EventAccessException
+
+object ForbiddenException :
+    ExceptionWithDefaultResponse(HttpStatusCode.Forbidden, "No access"), EventAccessException

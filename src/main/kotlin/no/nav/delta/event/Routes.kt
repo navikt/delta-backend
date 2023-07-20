@@ -27,7 +27,7 @@ fun Route.eventApi(database: DatabaseInterface) {
             get {
                 val id =
                     call.getUuidFromPath().getOrElse {
-                        return@get it.defaultResponse(call)
+                        return@get it.left().unwrapAndRespond(call)
                     }
 
                 database
@@ -73,8 +73,8 @@ fun Route.eventApi(database: DatabaseInterface) {
             route("/{id}") {
                 delete {
                     val event =
-                        call.getEventOrNoAccess(database).getOrElse {
-                            return@delete
+                        call.getEventWithPrivilege(database).getOrElse {
+                            return@delete it.left().unwrapAndRespond(call)
                         }
 
                     database
@@ -84,8 +84,8 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
                 patch {
                     val originalEvent =
-                        call.getEventOrNoAccess(database).getOrElse {
-                            return@patch
+                        call.getEventWithPrivilege(database).getOrElse {
+                            return@patch it.left().unwrapAndRespond(call)
                         }
 
                     val changedEvent = call.receive<ChangeEvent>()
@@ -103,8 +103,8 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
                 post {
                     val originalEvent =
-                        call.getEventOrNoAccess(database).getOrElse {
-                            return@post
+                        call.getEventWithPrivilege(database).getOrElse {
+                            return@post it.left().unwrapAndRespond(call)
                         }
 
                     val changedEvent = call.receive<CreateEvent>()
@@ -134,7 +134,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 post {
                     val id =
                         call.getUuidFromPath().getOrElse {
-                            return@post it.defaultResponse(call)
+                            return@post it.left().unwrapAndRespond(call)
                         }
                     val email = call.principalEmail()
 
@@ -146,7 +146,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 delete {
                     val id =
                         call.getUuidFromPath().getOrElse {
-                            return@delete it.defaultResponse(call)
+                            return@delete it.left().unwrapAndRespond(call)
                         }
                     val email = call.principalEmail()
 
@@ -184,9 +184,9 @@ fun ApplicationCall.getUuidFromPath(): Either<IdException, UUID> {
         )
 }
 
-fun ApplicationCall.getEventOrNoAccess(
+fun ApplicationCall.getEventWithPrivilege(
     database: DatabaseInterface
-): Either<ExceptionWithDefaultResponse, Event> {
+): Either<EventAccessException, Event> {
     val id =
         getUuidFromPath().getOrElse {
             return it.left()
