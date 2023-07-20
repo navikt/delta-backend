@@ -119,6 +119,18 @@ fun Route.eventApi(database: DatabaseInterface) {
                         )
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
+                delete("/participant") {
+                    val event =
+                        call.getEventWithPrivilege(database).getOrElse {
+                            return@delete it.left().unwrapAndRespond(call)
+                        }
+                    val participantEmail = call.receive<Participant>().email
+
+                    database
+                        .unregisterFromEvent(event.id.toString(), participantEmail)
+                        .flatMap { "Success".right() }
+                        .unwrapAndRespond(call)
+                }
             }
         }
 

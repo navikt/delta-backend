@@ -106,6 +106,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Event'
+  /admin/event/{id}/participant:
+    delete:
+      tags:
+        - admin
+      description: "Remove a participant from an event"
+      operationId: removeParticipant
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailObject'
+      responses:
+        "200":
+          description: "Participant removed"
   /user/event:
     get:
       tags:
@@ -152,6 +174,7 @@ paths:
       responses:
         "200":
           description: "Event left"
+
   /event:
     get:
       tags:
