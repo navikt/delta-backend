@@ -1,0 +1,2 @@
+ALTER TABLE event
+    ADD COLUMN participant_limit INTEGER NOT NULL DEFAULT 0;

@@ -242,6 +242,8 @@ components:
           type: string
         public:
           type: boolean
+        participantLimit:
+          type: integer
     Event:
       type: object
       properties:
@@ -264,6 +266,8 @@ components:
           format: uuid
         public:
           type: boolean
+        participantLimit:
+          type: integer
     EventWithParticipants:
       type: object
       properties:

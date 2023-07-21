@@ -101,6 +101,8 @@ fun Route.eventApi(database: DatabaseInterface) {
                             endTime = changedEvent.endTime ?: originalEvent.endTime,
                             location = changedEvent.location ?: originalEvent.location,
                             public = changedEvent.public ?: originalEvent.public,
+                            participantLimit = changedEvent.participantLimit
+                                    ?: originalEvent.participantLimit,
                         )
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }
@@ -121,6 +123,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                             endTime = changedEvent.endTime,
                             location = changedEvent.location,
                             public = changedEvent.public,
+                            participantLimit = changedEvent.participantLimit,
                         )
                     database.updateEvent(newEvent).unwrapAndRespond(call)
                 }

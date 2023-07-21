@@ -22,8 +22,8 @@ fun DatabaseInterface.addEvent(
         val preparedStatement =
             connection.prepareStatement(
                 """
-INSERT INTO event(owner, title, description, start_time, end_time, location, public)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO event(owner, title, description, start_time, end_time, location, public, participant_limit)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 """,
             )
@@ -35,6 +35,7 @@ RETURNING *;
         preparedStatement.setTimestamp(5, Timestamp.from(createEvent.startTime.toInstant()))
         preparedStatement.setString(6, createEvent.location)
         preparedStatement.setBoolean(7, createEvent.public)
+        preparedStatement.setInt(8, createEvent.participantLimit)
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -105,6 +106,7 @@ fun DatabaseInterface.registerForEvent(
     return connection.use { connection ->
         checkIfEventExists(connection, eventId)
             .flatMap { checkIfParticipantIsRegistered(connection, eventId, email) }
+            .flatMap { checkIfEventIsFull(connection, eventId) }
             .flatMap {
                 val preparedStatement =
                     connection.prepareStatement(
@@ -157,9 +159,15 @@ fun DatabaseInterface.updateEvent(newEvent: Event): Either<EventNotFoundExceptio
         val preparedStatement =
             connection.prepareStatement(
                 """
-UPDATE event 
-    SET title=?, description=?, start_time=?, end_time=?, location=?, public=?
-    WHERE id=uuid(?) RETURNING *;
+UPDATE event
+SET    title=?,
+       description=?,
+       start_time=?,
+       end_time=?,
+       location=?,
+       public=?,
+       participant_limit=?
+WHERE  id=Uuid(?) returning *;
 """)
         preparedStatement.setString(1, newEvent.title)
         preparedStatement.setString(2, newEvent.description)
@@ -167,7 +175,8 @@ UPDATE event
         preparedStatement.setTimestamp(4, Timestamp.from(newEvent.endTime.toInstant()))
         preparedStatement.setString(5, newEvent.location)
         preparedStatement.setBoolean(6, newEvent.public)
-        preparedStatement.setString(7, newEvent.id.toString())
+        preparedStatement.setInt(7, newEvent.participantLimit)
+        preparedStatement.setString(8, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -186,6 +195,7 @@ fun ResultSet.toEvent(): Event {
         endTime = getTimestamp("end_time"),
         location = getString("location"),
         public = getBoolean("public"),
+        participantLimit = getInt("participant_limit"),
     )
 }
 
@@ -215,5 +225,30 @@ fun checkIfParticipantIsRegistered(
 
             val result = preparedStatement.executeQuery()
             if (result.next()) ParticipantAlreadyRegisteredException.left() else Unit.right()
+        }
+}
+
+fun checkIfEventIsFull(
+    connection: Connection,
+    eventId: String,
+): Either<EventFullException, Unit> {
+    return connection
+        .prepareStatement(
+            """
+SELECT e.participant_limit,
+       Count(p.event_id) AS participants_count
+FROM   event e
+       LEFT JOIN participant p
+              ON p.event_id = e.id
+WHERE  e.id = Uuid(?)
+GROUP  BY e.participant_limit
+HAVING Count(p.event_id) >= e.participant_limit
+       AND e.participant_limit > 0;
+""")
+        .use { preparedStatement ->
+            preparedStatement.setString(1, eventId)
+
+            val result = preparedStatement.executeQuery()
+            if (result.next()) EventFullException.left() else Unit.right()
         }
 }
