@@ -22,11 +22,30 @@ fun DatabaseInterface.addEvent(
         val preparedStatement =
             connection.prepareStatement(
                 """
-INSERT INTO event(owner, title, description, start_time, end_time, location, public, participant_limit)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING *;
-""",
+ INSERT INTO event
+            (
+                        owner,
+                        title,
+                        description,
+                        start_time,
+                        end_time,
+                        location,
+                        PUBLIC,
+                        participant_limit
             )
+            VALUES
+            (
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?
+            )
+            returning *;
+""")
 
         preparedStatement.setString(1, ownerEmail)
         preparedStatement.setString(2, createEvent.title)
@@ -46,7 +65,12 @@ RETURNING *;
 
 fun DatabaseInterface.getEvent(id: String): Either<EventNotFoundException, Event> {
     return connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?)")
+        val preparedStatement =
+            connection.prepareStatement("""
+SELECT *
+FROM   event
+WHERE  id = Uuid(?);
+""")
         preparedStatement.setString(1, id)
         val result = preparedStatement.executeQuery()
 
@@ -60,7 +84,12 @@ fun DatabaseInterface.getParticipants(
     return connection.use { connection ->
         checkIfEventExists(connection, id).flatMap {
             val preparedStatement =
-                connection.prepareStatement("SELECT email FROM participant WHERE event_id=uuid(?);")
+                connection.prepareStatement(
+                    """
+SELECT email
+FROM   participant
+WHERE  event_id = Uuid(?);
+""")
             preparedStatement.setString(1, id)
             val result = preparedStatement.executeQuery()
             result.toList { Participant(email = getString(1)) }.right()
@@ -110,8 +139,13 @@ fun DatabaseInterface.registerForEvent(
             .flatMap {
                 val preparedStatement =
                     connection.prepareStatement(
-                        "INSERT INTO participant(event_id, email) VALUES (uuid(?), ?);",
-                    )
+                        """
+INSERT INTO participant
+            (event_id,
+             email)
+VALUES      (Uuid(?),
+             ?);
+""")
                 preparedStatement.setString(1, eventId)
                 preparedStatement.setString(2, email)
 
@@ -130,8 +164,11 @@ fun DatabaseInterface.unregisterFromEvent(
         checkIfEventExists(connection, eventId).flatMap {
             val preparedStatement =
                 connection.prepareStatement(
-                    "DELETE FROM participant WHERE event_id=uuid(?) AND email=?;",
-                )
+                    """
+DELETE FROM participant
+WHERE  event_id = Uuid(?)
+       AND email = ?;
+""")
             preparedStatement.setString(1, eventId)
             preparedStatement.setString(2, email)
 
@@ -144,7 +181,11 @@ fun DatabaseInterface.unregisterFromEvent(
 
 fun DatabaseInterface.deleteEvent(id: String): Either<EventNotFoundException, Unit> {
     return connection.use { connection ->
-        val preparedStatement = connection.prepareStatement("DELETE FROM event WHERE id=uuid(?);")
+        val preparedStatement =
+            connection.prepareStatement("""
+DELETE FROM event
+WHERE  id = Uuid(?);
+""")
         preparedStatement.setString(1, id)
 
         val result = preparedStatement.executeUpdate()
@@ -203,7 +244,11 @@ fun checkIfEventExists(
     connection: Connection,
     eventId: String
 ): Either<EventNotFoundException, Unit> {
-    return connection.prepareStatement("SELECT * FROM event WHERE id=uuid(?);").use {
+    return connection.prepareStatement("""
+SELECT *
+FROM   event
+WHERE  id = Uuid(?);
+""").use {
         preparedStatement ->
         preparedStatement.setString(1, eventId)
 
@@ -218,7 +263,13 @@ fun checkIfParticipantIsRegistered(
     email: String
 ): Either<ParticipantAlreadyRegisteredException, Unit> {
     return connection
-        .prepareStatement("SELECT * FROM participant WHERE event_id=uuid(?) AND email=?;")
+        .prepareStatement(
+            """
+SELECT *
+FROM   participant
+WHERE  event_id = Uuid(?)
+       AND email = ?;
+""")
         .use { preparedStatement ->
             preparedStatement.setString(1, eventId)
             preparedStatement.setString(2, email)
