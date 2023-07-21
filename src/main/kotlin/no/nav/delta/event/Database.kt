@@ -32,7 +32,7 @@ RETURNING *;
         preparedStatement.setString(2, createEvent.title)
         preparedStatement.setString(3, createEvent.description)
         preparedStatement.setTimestamp(4, Timestamp.from(createEvent.startTime.toInstant()))
-        preparedStatement.setTimestamp(5, Timestamp.from(createEvent.startTime.toInstant()))
+        preparedStatement.setTimestamp(5, Timestamp.from(createEvent.endTime.toInstant()))
         preparedStatement.setString(6, createEvent.location)
         preparedStatement.setBoolean(7, createEvent.public)
         preparedStatement.setInt(8, createEvent.participantLimit)
