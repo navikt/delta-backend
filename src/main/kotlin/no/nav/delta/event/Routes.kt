@@ -6,7 +6,6 @@ import arrow.core.getOrElse
 import arrow.core.left
 import arrow.core.right
 import arrow.core.some
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
@@ -22,12 +21,10 @@ import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.eventApi(database: DatabaseInterface) {
     route("/event") {
-        accept(ContentType.Application.Json) {
-            get {
-                val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
-                val onlyPublic = call.parameters["onlyPublic"]?.toBoolean() ?: false
-                call.respond(database.getEvents(onlyFuture, onlyPublic))
-            }
+        get {
+            val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
+            val onlyPublic = call.parameters["onlyPublic"]?.toBoolean() ?: false
+            call.respond(database.getEvents(onlyFuture, onlyPublic))
         }
         route("/{id}") {
             get {
