@@ -21,6 +21,9 @@ object ParticipantAlreadyRegisteredException :
 object EventFullException :
     ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Event full"), RegisterForEventError
 
+object DeadlinePassedException :
+    ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Deadline passed"), RegisterForEventError
+
 sealed interface UnregisterFromEventError
 
 object EmailNotFoundException :

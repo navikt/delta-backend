@@ -242,6 +242,9 @@ components:
           type: string
         public:
           type: boolean
+        signupDeadline:
+          type: string
+          format: date-time
         participantLimit:
           type: integer
     Event:
@@ -266,6 +269,9 @@ components:
           format: uuid
         public:
           type: boolean
+        signupDeadline:
+          type: string
+          format: date-time
         participantLimit:
           type: integer
     EventWithParticipants:

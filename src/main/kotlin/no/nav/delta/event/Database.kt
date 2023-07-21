@@ -30,11 +30,13 @@ fun DatabaseInterface.addEvent(
                         start_time,
                         end_time,
                         location,
-                        PUBLIC,
-                        participant_limit
+                        public,
+                        participant_limit,
+                        signup_deadline
             )
             VALUES
             (
+                        ?,
                         ?,
                         ?,
                         ?,
@@ -55,6 +57,7 @@ fun DatabaseInterface.addEvent(
         preparedStatement.setString(6, createEvent.location)
         preparedStatement.setBoolean(7, createEvent.public)
         preparedStatement.setInt(8, createEvent.participantLimit)
+        preparedStatement.setTimestamp(9, Timestamp.from(createEvent.signupDeadline.toInstant()))
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -136,6 +139,7 @@ fun DatabaseInterface.registerForEvent(
         checkIfEventExists(connection, eventId)
             .flatMap { checkIfParticipantIsRegistered(connection, eventId, email) }
             .flatMap { checkIfEventIsFull(connection, eventId) }
+            .flatMap { checkIfDeadlineIsPassed(connection, eventId) }
             .flatMap {
                 val preparedStatement =
                     connection.prepareStatement(
@@ -207,7 +211,8 @@ SET    title=?,
        end_time=?,
        location=?,
        public=?,
-       participant_limit=?
+       participant_limit=?,
+       signup_deadline=?
 WHERE  id=Uuid(?) returning *;
 """)
         preparedStatement.setString(1, newEvent.title)
@@ -217,7 +222,8 @@ WHERE  id=Uuid(?) returning *;
         preparedStatement.setString(5, newEvent.location)
         preparedStatement.setBoolean(6, newEvent.public)
         preparedStatement.setInt(7, newEvent.participantLimit)
-        preparedStatement.setString(8, newEvent.id.toString())
+        preparedStatement.setTimestamp(8, Timestamp.from(newEvent.signupDeadline.toInstant()))
+        preparedStatement.setString(9, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -237,6 +243,7 @@ fun ResultSet.toEvent(): Event {
         location = getString("location"),
         public = getBoolean("public"),
         participantLimit = getInt("participant_limit"),
+        signupDeadline = getTimestamp("signup_deadline"),
     )
 }
 
@@ -301,5 +308,25 @@ HAVING Count(p.event_id) >= e.participant_limit
 
             val result = preparedStatement.executeQuery()
             if (result.next()) EventFullException.left() else Unit.right()
+        }
+}
+
+fun checkIfDeadlineIsPassed(
+    connection: Connection,
+    eventId: String,
+): Either<DeadlinePassedException, Unit> {
+    return connection
+        .prepareStatement(
+            """
+SELECT e.signup_deadline
+FROM event e
+WHERE e.id = Uuid(?)
+  AND e.signup_deadline <= NOW();
+""")
+        .use { preparedStatement ->
+            preparedStatement.setString(1, eventId)
+
+            val result = preparedStatement.executeQuery()
+            if (result.next()) DeadlinePassedException.left() else Unit.right()
         }
 }

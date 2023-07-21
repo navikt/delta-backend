@@ -13,6 +13,7 @@ data class Event(
     val location: String,
     val public: Boolean,
     val participantLimit: Int,
+    val signupDeadline: Date,
 )
 
 data class EventWithParticipants(
@@ -32,6 +33,7 @@ data class CreateEvent(
     val location: String,
     val public: Boolean,
     val participantLimit: Int,
+    val signupDeadline: Date,
 )
 
 data class ChangeEvent(
@@ -42,4 +44,5 @@ data class ChangeEvent(
     val location: String?,
     val public: Boolean?,
     val participantLimit: Int?,
+    val signupDeadline: Date?,
 )
