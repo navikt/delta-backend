@@ -323,8 +323,8 @@ fun checkIfDeadlineIsPassed(
 SELECT signup_deadline
 FROM event
 WHERE id = Uuid(?)
-  AND signup_deadline <= NOW(); -- if signup_deadline is null, it will be false, so no need to check for null
-""")
+  AND signup_deadline <= NOW();
+""") // if signup_deadline is null, it will be false, so no need to check for null
         .use { preparedStatement ->
             preparedStatement.setString(1, eventId)
 
