@@ -36,8 +36,8 @@ fun Route.eventApi(database: DatabaseInterface) {
                 database
                     .getEvent(id.toString())
                     .flatMap { event ->
-                        database.getParticipants(id.toString()).flatMap { participants ->
-                            EventWithParticipants(event, participants).right()
+                        database.getParticipants(id.toString()).map { participants ->
+                            EventWithParticipants(event, participants)
                         }
                     }
                     .unwrapAndRespond(call)
@@ -78,7 +78,7 @@ fun Route.eventApi(database: DatabaseInterface) {
 
                     database
                         .deleteEvent(event.id.toString())
-                        .flatMap { "Success".right() }
+                        .map { "Success" }
                         .unwrapAndRespond(call)
                 }
                 post {
@@ -112,7 +112,7 @@ fun Route.eventApi(database: DatabaseInterface) {
 
                     database
                         .unregisterFromEvent(event.id.toString(), participantEmail)
-                        .flatMap { "Success".right() }
+                        .map { "Success" }
                         .unwrapAndRespond(call)
                 }
             }
@@ -135,7 +135,7 @@ fun Route.eventApi(database: DatabaseInterface) {
 
                     database
                         .registerForEvent(id.toString(), email)
-                        .flatMap { "Success".right() }
+                        .map { "Success" }
                         .unwrapAndRespond(call)
                 }
                 delete {
@@ -147,7 +147,7 @@ fun Route.eventApi(database: DatabaseInterface) {
 
                     database
                         .unregisterFromEvent(id.toString(), email)
-                        .flatMap { "Success".right() }
+                        .map { "Success" }
                         .unwrapAndRespond(call)
                 }
             }

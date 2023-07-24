@@ -86,7 +86,7 @@ fun DatabaseInterface.getParticipants(
     id: String
 ): Either<EventNotFoundException, List<Participant>> {
     return connection.use { connection ->
-        checkIfEventExists(connection, id).flatMap {
+        checkIfEventExists(connection, id).map {
             val preparedStatement =
                 connection.prepareStatement(
                     """
@@ -96,7 +96,7 @@ WHERE  event_id = Uuid(?);
 """)
             preparedStatement.setString(1, id)
             val result = preparedStatement.executeQuery()
-            result.toList { Participant(email = getString(1)) }.right()
+            result.toList { Participant(email = getString(1)) }
         }
     }
 }
@@ -141,7 +141,7 @@ fun DatabaseInterface.registerForEvent(
             .flatMap { checkIfParticipantIsRegistered(connection, eventId, email) }
             .flatMap { checkIfEventIsFull(connection, eventId) }
             .flatMap { checkIfDeadlineIsPassed(connection, eventId) }
-            .flatMap {
+            .map {
                 val preparedStatement =
                     connection.prepareStatement(
                         """
@@ -156,7 +156,6 @@ VALUES      (Uuid(?),
 
                 preparedStatement.executeUpdate()
                 connection.commit()
-                Unit.right()
             }
     }
 }
