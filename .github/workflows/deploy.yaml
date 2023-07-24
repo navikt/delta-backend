@@ -1,7 +1,5 @@
 on:
   push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
@@ -60,5 +58,18 @@ jobs:
         env:
           APIKEY: ${{ secrets.NAIS_DEPLOY_APIKEY }}
           CLUSTER: dev-gcp
-          RESOURCE: nais-dev.yaml
+          RESOURCE: nais.yaml
+          VAR: image=${{ needs.build.outputs.image }}
+  deploy-prod:
+    name: Deploy to prod
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [build, deploy-dev]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: nais/deploy/actions/deploy@v1
+        env:
+          APIKEY: ${{ secrets.NAIS_DEPLOY_APIKEY }}
+          CLUSTER: prod-gcp
+          RESOURCE: nais.yaml
           VAR: image=${{ needs.build.outputs.image }}
