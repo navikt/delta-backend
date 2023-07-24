@@ -81,30 +81,6 @@ fun Route.eventApi(database: DatabaseInterface) {
                         .flatMap { "Success".right() }
                         .unwrapAndRespond(call)
                 }
-                patch {
-                    val originalEvent =
-                        call.getEventWithPrivilege(database).getOrElse {
-                            return@patch it.left().unwrapAndRespond(call)
-                        }
-
-                    val changedEvent = call.receive<ChangeEvent>()
-                    val newEvent =
-                        Event(
-                            id = originalEvent.id,
-                            ownerEmail = originalEvent.ownerEmail,
-                            title = changedEvent.title ?: originalEvent.title,
-                            description = changedEvent.description ?: originalEvent.description,
-                            startTime = changedEvent.startTime ?: originalEvent.startTime,
-                            endTime = changedEvent.endTime ?: originalEvent.endTime,
-                            location = changedEvent.location ?: originalEvent.location,
-                            public = changedEvent.public ?: originalEvent.public,
-                            participantLimit = changedEvent.participantLimit
-                                    ?: originalEvent.participantLimit,
-                            signupDeadline = changedEvent.signupDeadline
-                                    ?: originalEvent.signupDeadline,
-                        )
-                    database.updateEvent(newEvent).unwrapAndRespond(call)
-                }
                 post {
                     val originalEvent =
                         call.getEventWithPrivilege(database).getOrElse {
