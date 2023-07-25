@@ -56,7 +56,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
             }
         }
-        route("/admin") {
+        route("/admin/event") {
             put {
                 val createEvent = call.receive(CreateEvent::class)
                 val ownerEmail = call.principalEmail()
