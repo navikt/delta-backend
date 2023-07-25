@@ -8,20 +8,6 @@ servers:
   - url: "http://delta-backend"
 paths:
   /admin/event:
-    get:
-      tags:
-        - admin
-      description: "Get all events created by me"
-      operationId: getMyEvents
-      responses:
-        "200":
-          description: "All my events"
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Event"
     put:
       tags:
         - admin
@@ -103,21 +89,6 @@ paths:
       responses:
         "200":
           description: "Participant removed"
-  /user/event:
-    get:
-      tags:
-        - user
-      description: "Get all joined events"
-      operationId: getJoinedEvents
-      responses:
-        "200":
-          description: "All joined events"
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Event"
   /user/event/{id}:
     post:
       tags:
@@ -156,15 +127,21 @@ paths:
       description: "Get future events"
       operationId: getFutureEvents
       parameters:
-        - name: onlyPublic
-          in: query
-          description: "Public events only"
+        - in: query
+          name: onlyFuture
+          description: "Future events only"
           required: false
           schema:
             type: boolean
-        - name: onlyFuture
-          in: query
-          description: "Future events only"
+        - in: query
+          name: onlyMine
+          description: "Only my events"
+          required: false
+          schema:
+            type: boolean
+        - in: query
+          name: onlyJoined
+          description: "Only joined events"
           required: false
           schema:
             type: boolean
