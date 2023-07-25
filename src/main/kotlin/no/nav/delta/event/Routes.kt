@@ -4,6 +4,7 @@ import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.getOrElse
 import arrow.core.left
+import arrow.core.none
 import arrow.core.right
 import arrow.core.some
 import io.ktor.http.HttpStatusCode
@@ -20,39 +21,42 @@ import kotlin.reflect.jvm.jvmName
 import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.eventApi(database: DatabaseInterface) {
-    route("/event") {
-        get {
-            val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
-            val onlyPublic = call.parameters["onlyPublic"]?.toBoolean() ?: false
-            call.respond(database.getEvents(onlyFuture, onlyPublic))
-        }
-        route("/{id}") {
-            get {
-                val id =
-                    call.getUuidFromPath().getOrElse {
-                        return@get it.left().unwrapAndRespond(call)
-                    }
-
-                database
-                    .getEvent(id.toString())
-                    .flatMap { event ->
-                        database.getParticipants(id.toString()).map { participants ->
-                            EventWithParticipants(event, participants)
-                        }
-                    }
-                    .unwrapAndRespond(call)
-            }
-        }
-    }
-
     authenticate("jwt") {
-        route("/admin/event") {
+        route("/event") {
             get {
-                val ownerEmail = call.principalEmail()
+                val email = call.principalEmail()
 
-                call.respond(database.getEvents(byOwner = ownerEmail.some()))
+                val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
+
+                val onlyMine = call.parameters["onlyMine"]?.toBoolean() ?: false
+                val ownedBy = if (onlyMine) email.some() else none()
+
+                val onlyJoined = call.parameters["onlyJoined"]?.toBoolean() ?: false
+                val joinedBy = if (onlyJoined) email.some() else none()
+
+                val onlyPublic = !onlyMine && !onlyJoined
+
+                call.respond(database.getEvents(onlyFuture, onlyPublic, ownedBy, joinedBy))
             }
+            route("/{id}") {
+                get {
+                    val id =
+                        call.getUuidFromPath().getOrElse {
+                            return@get it.left().unwrapAndRespond(call)
+                        }
 
+                    database
+                        .getEvent(id.toString())
+                        .flatMap { event ->
+                            database.getParticipants(id.toString()).map { participants ->
+                                EventWithParticipants(event, participants)
+                            }
+                        }
+                        .unwrapAndRespond(call)
+                }
+            }
+        }
+        route("/admin/event") {
             put {
                 val createEvent = call.receive(CreateEvent::class)
                 val ownerEmail = call.principalEmail()
@@ -117,14 +121,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 }
             }
         }
-
         route("/user/event") {
-            get {
-                val principal = call.principal<JWTPrincipal>()!!
-                val email = principal["preferred_username"]!!.lowercase()
-
-                call.respond(database.getEvents(joinedBy = email.some()))
-            }
             route("/{id}") {
                 post {
                     val id =
