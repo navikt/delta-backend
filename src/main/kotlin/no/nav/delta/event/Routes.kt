@@ -61,7 +61,7 @@ fun Route.eventApi(database: DatabaseInterface) {
                 val createEvent = call.receive(CreateEvent::class)
                 val ownerEmail = call.principalEmail()
 
-                if (createEvent.startTime.after(createEvent.endTime)) {
+                if (createEvent.startTime.isAfter(createEvent.endTime)) {
                     return@put call.respond(
                         HttpStatusCode.BadRequest, "Start time must be before end time")
                 }

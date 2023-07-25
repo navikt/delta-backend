@@ -1,5 +1,6 @@
 package no.nav.delta.event
 
+import java.time.LocalDateTime
 import java.util.Date
 import java.util.UUID
 
@@ -8,12 +9,12 @@ data class Event(
     val ownerEmail: String,
     val title: String,
     val description: String,
-    val startTime: Date,
-    val endTime: Date,
+    val startTime: LocalDateTime,
+    val endTime: LocalDateTime,
     val location: String,
     val public: Boolean,
     val participantLimit: Int,
-    val signupDeadline: Date?,
+    val signupDeadline: LocalDateTime?,
 )
 
 data class EventWithParticipants(
@@ -28,10 +29,10 @@ data class Participant(
 data class CreateEvent(
     val title: String,
     val description: String,
-    val startTime: Date,
-    val endTime: Date,
+    val startTime: LocalDateTime,
+    val endTime: LocalDateTime,
     val location: String,
     val public: Boolean,
     val participantLimit: Int,
-    val signupDeadline: Date?,
+    val signupDeadline: LocalDateTime?,
 )

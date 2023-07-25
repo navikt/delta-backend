@@ -52,13 +52,13 @@ fun DatabaseInterface.addEvent(
         preparedStatement.setString(1, ownerEmail)
         preparedStatement.setString(2, createEvent.title)
         preparedStatement.setString(3, createEvent.description)
-        preparedStatement.setTimestamp(4, Timestamp.from(createEvent.startTime.toInstant()))
-        preparedStatement.setTimestamp(5, Timestamp.from(createEvent.endTime.toInstant()))
+        preparedStatement.setTimestamp(4, Timestamp.valueOf(createEvent.startTime))
+        preparedStatement.setTimestamp(5, Timestamp.valueOf(createEvent.endTime))
         preparedStatement.setString(6, createEvent.location)
         preparedStatement.setBoolean(7, createEvent.public)
         preparedStatement.setInt(8, createEvent.participantLimit)
         preparedStatement.setTimestamp(
-            9, createEvent.signupDeadline?.let { Timestamp.from(it.toInstant()) })
+            9, createEvent.signupDeadline?.let { Timestamp.valueOf(it) })
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -217,13 +217,13 @@ WHERE  id=Uuid(?) returning *;
 """)
         preparedStatement.setString(1, newEvent.title)
         preparedStatement.setString(2, newEvent.description)
-        preparedStatement.setTimestamp(3, Timestamp.from(newEvent.startTime.toInstant()))
-        preparedStatement.setTimestamp(4, Timestamp.from(newEvent.endTime.toInstant()))
+        preparedStatement.setTimestamp(3, Timestamp.valueOf(newEvent.startTime))
+        preparedStatement.setTimestamp(4, Timestamp.valueOf(newEvent.endTime))
         preparedStatement.setString(5, newEvent.location)
         preparedStatement.setBoolean(6, newEvent.public)
         preparedStatement.setInt(7, newEvent.participantLimit)
         preparedStatement.setTimestamp(
-            8, newEvent.signupDeadline?.let { Timestamp.from(it.toInstant()) })
+            8, newEvent.signupDeadline?.let { Timestamp.valueOf(it) })
         preparedStatement.setString(9, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
@@ -239,12 +239,12 @@ fun ResultSet.toEvent(): Event {
         ownerEmail = getString("owner"),
         title = getString("title"),
         description = getString("description"),
-        startTime = getTimestamp("start_time"),
-        endTime = getTimestamp("end_time"),
+        startTime = getTimestamp("start_time").toLocalDateTime(),
+        endTime = getTimestamp("end_time").toLocalDateTime(),
         location = getString("location"),
         public = getBoolean("public"),
         participantLimit = getInt("participant_limit"),
-        signupDeadline = getTimestamp("signup_deadline"),
+        signupDeadline = getTimestamp("signup_deadline")?.toLocalDateTime(),
     )
 }
 
