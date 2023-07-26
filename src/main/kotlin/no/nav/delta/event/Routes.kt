@@ -13,6 +13,7 @@ import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import no.nav.delta.email.sendJoinConfirmation
+import no.nav.delta.email.sendUpdateNotification
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.EmailClient
 
@@ -112,7 +113,17 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             participantLimit = changedEvent.participantLimit,
                             signupDeadline = changedEvent.signupDeadline,
                         )
-                    database.updateEvent(newEvent).unwrapAndRespond(call)
+                    database
+                        .updateEvent(newEvent)
+                        .map { event ->
+                            database.getParticipants(event.id.toString()).flatMap { participants ->
+                                database.getHosts(event.id.toString()).map { hosts ->
+                                    emailClient.sendUpdateNotification(event, participants, hosts)
+                                }
+                            }
+                            event
+                        }
+                        .unwrapAndRespond(call)
                 }
                 delete("/participant") {
                     val event =
