@@ -24,3 +24,5 @@ spec:
   env:
     - name: DEV_MODE
       value: !!string "false"
+    - name: DELTA_EMAIL_ADDRESS
+      value: "ikkesvar.delta@nav.no"

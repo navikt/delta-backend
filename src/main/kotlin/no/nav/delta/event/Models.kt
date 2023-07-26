@@ -1,7 +1,6 @@
 package no.nav.delta.event
 
 import java.time.LocalDateTime
-import java.util.Date
 import java.util.UUID
 
 data class Event(

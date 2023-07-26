@@ -57,8 +57,7 @@ fun DatabaseInterface.addEvent(
         preparedStatement.setString(6, createEvent.location)
         preparedStatement.setBoolean(7, createEvent.public)
         preparedStatement.setInt(8, createEvent.participantLimit)
-        preparedStatement.setTimestamp(
-            9, createEvent.signupDeadline?.let { Timestamp.valueOf(it) })
+        preparedStatement.setTimestamp(9, createEvent.signupDeadline?.let { Timestamp.valueOf(it) })
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -222,8 +221,7 @@ WHERE  id=Uuid(?) returning *;
         preparedStatement.setString(5, newEvent.location)
         preparedStatement.setBoolean(6, newEvent.public)
         preparedStatement.setInt(7, newEvent.participantLimit)
-        preparedStatement.setTimestamp(
-            8, newEvent.signupDeadline?.let { Timestamp.valueOf(it) })
+        preparedStatement.setTimestamp(8, newEvent.signupDeadline?.let { Timestamp.valueOf(it) })
         preparedStatement.setString(9, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
