@@ -8,6 +8,8 @@ val hikari_version: String by project
 val flyway_version: String by project
 val jackson_version: String by project
 val arrow_version: String by project
+val microsoft_sdk_version: String by project
+val microsoft_azure_version: String by project
 
 plugins {
     kotlin("jvm") version "1.8.22"
@@ -59,6 +61,9 @@ dependencies {
 
     implementation("io.arrow-kt:arrow-core:$arrow_version")
     implementation("io.arrow-kt:arrow-fx-coroutines:$arrow_version")
+
+    implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
+    implementation("com.microsoft.azure:msal4j:$microsoft_azure_version")
 }
 
 tasks {

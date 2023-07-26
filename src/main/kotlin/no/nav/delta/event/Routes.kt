@@ -19,8 +19,9 @@ import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.plugins.EmailClient
 
-fun Route.eventApi(database: DatabaseInterface) {
+fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
     authenticate("jwt") {
         route("/event") {
             get {
