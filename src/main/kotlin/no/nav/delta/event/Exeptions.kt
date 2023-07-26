@@ -16,7 +16,8 @@ sealed class ExceptionWithDefaultResponse(
 sealed interface RegisterForEventError
 
 object ParticipantAlreadyRegisteredException :
-    ExceptionWithDefaultResponse(HttpStatusCode.OK, "Success"), RegisterForEventError
+    ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Already registered"),
+    RegisterForEventError
 
 object EventFullException :
     ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Event full"), RegisterForEventError
