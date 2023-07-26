@@ -58,7 +58,7 @@ jobs:
         env:
           APIKEY: ${{ secrets.NAIS_DEPLOY_APIKEY }}
           CLUSTER: dev-gcp
-          RESOURCE: nais.yaml
+          RESOURCE: nais-dev.yaml
           VAR: image=${{ needs.build.outputs.image }}
   deploy-prod:
     name: Deploy to prod
@@ -71,5 +71,5 @@ jobs:
         env:
           APIKEY: ${{ secrets.NAIS_DEPLOY_APIKEY }}
           CLUSTER: prod-gcp
-          RESOURCE: nais.yaml
+          RESOURCE: nais-prod.yaml
           VAR: image=${{ needs.build.outputs.image }}

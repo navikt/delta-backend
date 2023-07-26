@@ -1,0 +1,26 @@
+apiVersion: "nais.io/v1alpha1"
+kind: "Application"
+metadata:
+  name: delta-backend
+  namespace: delta
+  labels:
+    team: delta
+spec:
+  accessPolicy:
+    inbound:
+      rules:
+        - application: delta-frontend
+  image: {{image}}
+  gcp:
+    sqlInstances:
+      - type: POSTGRES_14
+        databases:
+          - name: delta
+  azure:
+    application:
+      enabled: true
+      tenant: nav.no
+      allowAllUsers: true
+  env:
+    - name: DEV_MODE
+      value: !!string "false"
