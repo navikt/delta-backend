@@ -53,3 +53,18 @@ $footer
 
     sendEmail(subject = subject, body = email, bccRecipients = participants.map { it.email })
 }
+
+fun EmailClient.sendCancellationNotification(event: Event, participants: List<Participant>) {
+    val subject = "Avlysning av ${event.title}"
+    val email =
+        """Hei!
+
+Arrangementet ${event.title} har blitt avlyst.
+
+Vær på utkikk etter nye arrangementer på https://delta.nav.no.
+
+$footer
+"""
+
+    sendEmail(subject = subject, body = email, bccRecipients = participants.map { it.email })
+}

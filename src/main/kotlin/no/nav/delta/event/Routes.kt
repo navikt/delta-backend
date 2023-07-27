@@ -12,6 +12,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
+import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendJoinConfirmation
 import no.nav.delta.email.sendUpdateNotification
 import no.nav.delta.plugins.DatabaseInterface
@@ -91,7 +92,12 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                     database
                         .deleteEvent(event.id.toString())
-                        .map { "Success" }
+                        .map {
+                            database.getParticipants(event.id.toString()).map { participants ->
+                                emailClient.sendCancellationNotification(event, participants)
+                            }
+                            "Success"
+                        }
                         .unwrapAndRespond(call)
                 }
                 post {
