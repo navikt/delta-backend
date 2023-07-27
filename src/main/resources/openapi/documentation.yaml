@@ -134,6 +134,12 @@ paths:
           schema:
             type: boolean
         - in: query
+          name: onlyPast
+          description: "Past events only"
+          required: false
+          schema:
+            type: boolean
+        - in: query
           name: onlyMine
           description: "Only my events"
           required: false

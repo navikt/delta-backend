@@ -28,6 +28,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                 val email = call.principalEmail()
 
                 val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
+                val onlyPast = call.parameters["onlyPast"]?.toBoolean() ?: false
 
                 val onlyMine = call.parameters["onlyMine"]?.toBoolean() ?: false
                 val ownedBy = if (onlyMine) email.some() else none()
@@ -37,7 +38,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                 val onlyPublic = !onlyMine && !onlyJoined
 
-                call.respond(database.getEvents(onlyFuture, onlyPublic, ownedBy, joinedBy))
+                call.respond(database.getEvents(onlyFuture, onlyPast, onlyPublic, ownedBy, joinedBy))
             }
             route("/{id}") {
                 get {

@@ -102,6 +102,7 @@ WHERE  event_id = Uuid(?);
 
 fun DatabaseInterface.getEvents(
     onlyFuture: Boolean = false,
+    onlyPast: Boolean = false,
     onlyPublic: Boolean = false,
     byOwner: Option<String> = none(),
     joinedBy: Option<String> = none(),
@@ -111,6 +112,7 @@ fun DatabaseInterface.getEvents(
         val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
 
         if (onlyFuture) clauses.add("start_time > NOW()")
+        if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
         byOwner.onSome { owner ->
             clauses.add("owner = ?")
