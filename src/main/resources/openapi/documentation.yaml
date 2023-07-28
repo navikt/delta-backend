@@ -89,6 +89,27 @@ paths:
       responses:
         "200":
           description: "Participant removed"
+    post:
+      tags:
+        - admin
+      description: "Alter participant type"
+      operationId: alterParticipantType
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeParticipant'
+      responses:
+        "200":
+          description: "Participant type changed"
   /user/event/{id}:
     post:
       tags:
@@ -220,8 +241,6 @@ components:
           format: date-time
         location:
           type: string
-        ownerEmail:
-          type: string
         id:
           type: string
           format: uuid
@@ -247,6 +266,15 @@ components:
         email:
           type: string
           format: email
+    ChangeParticipant:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        type:
+          type: string
+          enum: [HOST, PARTICIPANT]
     LeaveEvent:
       properties:
         otp:
