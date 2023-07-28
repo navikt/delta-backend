@@ -29,8 +29,10 @@ fun Application.setupAuth(
             verifier(jwkProvider, issuer)
             validate { credentials ->
                 when {
-                    hasDeltaBackendClientAudience(credentials, environment) ->
+                    hasDeltaBackendClientAudience(credentials, environment) -> {
+                        println(credentials.payload.claims)
                         JWTPrincipal(credentials.payload)
+                    }
                     else -> {
                         unauthorized(credentials)
                     }
