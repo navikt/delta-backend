@@ -23,6 +23,7 @@ data class EventWithParticipants(
 
 data class Participant(
     val email: String,
+    val name: String,
 )
 
 data class CreateEvent(

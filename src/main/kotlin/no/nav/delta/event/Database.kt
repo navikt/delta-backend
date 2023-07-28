@@ -89,13 +89,13 @@ fun DatabaseInterface.getParticipants(
             val preparedStatement =
                 connection.prepareStatement(
                     """
-SELECT email
+SELECT email, name
 FROM   participant
 WHERE  event_id = Uuid(?);
 """)
             preparedStatement.setString(1, id)
             val result = preparedStatement.executeQuery()
-            result.toList { Participant(email = getString(1)) }
+            result.toList { Participant(email = getString(1), name=getString(2)) }
         }
     }
 }
@@ -135,7 +135,8 @@ fun DatabaseInterface.getEvents(
 
 fun DatabaseInterface.registerForEvent(
     eventId: String,
-    email: String
+    email: String,
+    name: String,
 ): Either<RegisterForEventError, Unit> {
     return connection.use { connection ->
         checkIfEventExists(connection, eventId)
@@ -148,12 +149,15 @@ fun DatabaseInterface.registerForEvent(
                         """
 INSERT INTO participant
             (event_id,
-             email)
+             email,
+             name)
 VALUES      (Uuid(?),
+             ?,
              ?);
 """)
                 preparedStatement.setString(1, eventId)
                 preparedStatement.setString(2, email)
+                preparedStatement.setString(3, name)
 
                 preparedStatement.executeUpdate()
                 connection.commit()

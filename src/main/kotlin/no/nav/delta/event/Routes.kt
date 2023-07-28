@@ -131,9 +131,10 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             return@post it.left().unwrapAndRespond(call)
                         }
                     val email = call.principalEmail()
+                    val name = call.principalName()
 
                     database
-                        .registerForEvent(id.toString(), email)
+                        .registerForEvent(id.toString(), email, name)
                         .map { "Success" }
                         .unwrapAndRespond(call)
                 }
@@ -201,3 +202,6 @@ fun ApplicationCall.getEventWithPrivilege(
 
 fun ApplicationCall.principalEmail() =
     principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+
+fun ApplicationCall.principalName() =
+    principal<JWTPrincipal>()!!["name"]!!
