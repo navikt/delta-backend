@@ -195,6 +195,13 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                 }
             }
         }
+        route("/category") {
+            get { call.respond(database.getCategories()) }
+            put {
+                val category = call.receive<CreateCategory>()
+                database.createCategory(category).unwrapAndRespond(call)
+            }
+        }
     }
 }
 

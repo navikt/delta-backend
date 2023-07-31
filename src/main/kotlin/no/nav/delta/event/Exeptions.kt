@@ -56,3 +56,13 @@ sealed interface EventAccessException
 
 object ForbiddenException :
     ExceptionWithDefaultResponse(HttpStatusCode.Forbidden, "No access"), EventAccessException
+
+sealed interface CreateCategoryError
+
+object CategoryAlreadyExistsException :
+    ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Category already exists"),
+    CreateCategoryError
+
+object CategoryNameTooLongException :
+    ExceptionWithDefaultResponse(HttpStatusCode.BadRequest, "Category name too long"),
+    CreateCategoryError

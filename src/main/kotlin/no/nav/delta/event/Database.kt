@@ -128,7 +128,7 @@ fun DatabaseInterface.getEvents(
         val clauses = mutableListOf("TRUE")
         val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
 
-        if (onlyFuture) clauses.add("start_time > NOW()")
+        if (onlyFuture) clauses.add("start_time > NOWz()")
         if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
         byHost.onSome { host ->
@@ -288,6 +288,47 @@ WHERE  id=Uuid(?) returning *;
     }
 }
 
+fun DatabaseInterface.getCategories(): List<Category> {
+    return connection.use { connection ->
+        val preparedStatement = connection.prepareStatement(""" 
+SELECT *
+FROM   category;
+""")
+        val result = preparedStatement.executeQuery()
+        result.toList { toCategory() }
+    }
+}
+
+fun DatabaseInterface.createCategory(
+    category: CreateCategory
+): Either<CreateCategoryError, Category> {
+    val name = category.name.lowercase()
+    return connection.use { connection ->
+        checkIfCategoryNameIsTooLong(name).flatMap {
+            checkIfCategoryExists(connection, name).map {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+INSERT INTO category
+            (
+                        name
+            )
+            VALUES
+            (
+                        ?
+            )
+            returning *;
+""")
+                preparedStatement.setString(1, name)
+                val result = preparedStatement.executeQuery()
+                connection.commit()
+                result.next()
+                result.toCategory()
+            }
+        }
+    }
+}
+
 fun ResultSet.toEvent(): Event {
     return Event(
         id = UUID.fromString(getString("id")),
@@ -299,6 +340,13 @@ fun ResultSet.toEvent(): Event {
         public = getBoolean("public"),
         participantLimit = getInt("participant_limit"),
         signupDeadline = getTimestamp("signup_deadline")?.toLocalDateTime(),
+    )
+}
+
+fun ResultSet.toCategory(): Category {
+    return Category(
+        id = getInt("id"),
+        name = getString("name"),
     )
 }
 
@@ -411,4 +459,25 @@ WHERE  p.event_id = Uuid(?)
                 if (result.next()) Unit.right() else EventWillHaveNoHostsException.left()
             }
     }
+}
+
+fun checkIfCategoryExists(
+    connection: Connection,
+    name: String,
+): Either<CategoryAlreadyExistsException, Unit> {
+    return connection.prepareStatement("""
+SELECT *
+FROM   category
+WHERE  NAME = ?;
+""").use {
+        preparedStatement ->
+        preparedStatement.setString(1, name)
+
+        val result = preparedStatement.executeQuery()
+        if (result.next()) CategoryAlreadyExistsException.left() else Unit.right()
+    }
+}
+
+fun checkIfCategoryNameIsTooLong(name: String): Either<CategoryNameTooLongException, Unit> {
+    return if (name.length > 25) CategoryNameTooLongException.left() else Unit.right()
 }

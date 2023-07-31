@@ -50,3 +50,12 @@ data class CreateEvent(
     val participantLimit: Int,
     val signupDeadline: LocalDateTime?,
 )
+
+data class Category(
+    val id: Int,
+    val name: String,
+)
+
+data class CreateCategory(
+    val name: String,
+)

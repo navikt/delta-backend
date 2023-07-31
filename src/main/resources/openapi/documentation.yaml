@@ -202,6 +202,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EventWithParticipants"
+  /category:
+    get:
+      tags:
+        - category
+      description: "Get all categories"
+      operationId: getCategories
+      responses:
+        "200":
+          description: "All categories"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+    put:
+        tags:
+            - category
+        description: "Create a category"
+        operationId: createCategory
+        requestBody:
+          content:
+            application/json:
+                schema:
+                  $ref: '#/components/schemas/CreateCategory'
+        responses:
+          "201":
+            description: "created category"
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/Category"
 components:
   schemas:
     CreateEvent:
@@ -280,3 +310,15 @@ components:
         otp:
           type: string
           format: uuid
+    Category:
+        type: object
+        properties:
+          id:
+            type: integer
+          name:
+            type: string
+    CreateCategory:
+        type: object
+        properties:
+          name:
+            type: string
