@@ -21,6 +21,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
+DELETE FROM participant WHERE participant IN (SELECT participant FROM event JOIN event ON participant.event_id = event.id WHERE event.owner = participant.email);
 INSERT INTO participant (event_id, name, type, email) SELECT id, tmp_email_to_name(owner), 'HOST', owner FROM event;
 
 ALTER TABLE event DROP COLUMN owner;
