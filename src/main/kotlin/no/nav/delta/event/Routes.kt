@@ -50,7 +50,8 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         .flatMap { event ->
                             database.getParticipants(id.toString()).flatMap { participants ->
                                 database.getHosts(id.toString()).map {
-                                    EventWithParticipants(event = event, hosts =  it, participants = participants)
+                                    EventWithParticipants(
+                                        event = event, hosts = it, participants = participants)
                                 }
                             }
                         }
