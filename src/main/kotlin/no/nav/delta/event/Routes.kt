@@ -137,7 +137,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         call.getEventWithPrivilege(database).getOrElse {
                             return@delete it.left().unwrapAndRespond(call)
                         }
-                    val participantEmail = call.receive<Participant>().email
+                    val participantEmail = call.receive<EmailToken>().email
 
                     database
                         .unregisterFromEvent(event.id.toString(), participantEmail)

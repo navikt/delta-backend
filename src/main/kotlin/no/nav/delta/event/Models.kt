@@ -26,6 +26,10 @@ data class Participant(
     val name: String,
 )
 
+data class EmailToken(
+    val email: String,
+)
+
 enum class ParticipantType {
     HOST,
     PARTICIPANT,
