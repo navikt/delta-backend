@@ -1,12 +1,6 @@
 package no.nav.delta.event
 
-import arrow.core.Either
-import arrow.core.flatMap
-import arrow.core.getOrElse
-import arrow.core.left
-import arrow.core.none
-import arrow.core.right
-import arrow.core.some
+import arrow.core.*
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
@@ -31,14 +25,15 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                 val onlyPast = call.parameters["onlyPast"]?.toBoolean() ?: false
 
                 val onlyMine = call.parameters["onlyMine"]?.toBoolean() ?: false
-                val ownedBy = if (onlyMine) email.some() else none()
+                val hostedBy = if (onlyMine) email.some() else none()
 
                 val onlyJoined = call.parameters["onlyJoined"]?.toBoolean() ?: false
                 val joinedBy = if (onlyJoined) email.some() else none()
 
                 val onlyPublic = !onlyMine && !onlyJoined
 
-                call.respond(database.getEvents(onlyFuture, onlyPast, onlyPublic, ownedBy, joinedBy))
+                call.respond(
+                    database.getEvents(onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy))
             }
             route("/{id}") {
                 get {
@@ -50,8 +45,10 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                     database
                         .getEvent(id.toString())
                         .flatMap { event ->
-                            database.getParticipants(id.toString()).map { participants ->
-                                EventWithParticipants(event, participants)
+                            database.getParticipants(id.toString()).flatMap { participants ->
+                                database.getHosts(id.toString()).map {
+                                    EventWithParticipants(event = event, hosts =  it, participants = participants)
+                                }
                             }
                         }
                         .unwrapAndRespond(call)
@@ -61,19 +58,27 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
         route("/admin/event") {
             put {
                 val createEvent = call.receive(CreateEvent::class)
-                val ownerEmail = call.principalEmail()
+                val email = call.principalEmail()
 
                 if (createEvent.startTime.isAfter(createEvent.endTime)) {
                     return@put call.respond(
                         HttpStatusCode.BadRequest, "Start time must be before end time")
                 }
 
-                call.respond(
+                val event =
                     database.addEvent(
-                        ownerEmail,
                         createEvent,
-                    ),
-                )
+                    )
+
+                database
+                    .registerForEvent(
+                        event.id.toString(),
+                        email,
+                        call.principalName(),
+                        ParticipantType.HOST,
+                    )
+                    .map { event }
+                    .unwrapAndRespond(call)
             }
             route("/{id}") {
                 delete {
@@ -97,7 +102,6 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                     val newEvent =
                         Event(
                             id = originalEvent.id,
-                            ownerEmail = originalEvent.ownerEmail,
                             title = changedEvent.title,
                             description = changedEvent.description,
                             startTime = changedEvent.startTime,
@@ -121,6 +125,18 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         .map { "Success" }
                         .unwrapAndRespond(call)
                 }
+                post("/participant") {
+                    val event =
+                        call.getEventWithPrivilege(database).getOrElse {
+                            return@post it.left().unwrapAndRespond(call)
+                        }
+                    val changeParticipant = call.receive<ChangeParticipant>()
+
+                    database
+                        .changeParticipant(event.id.toString(), changeParticipant)
+                        .map { "Success" }
+                        .unwrapAndRespond(call)
+                }
             }
         }
         route("/user/event") {
@@ -131,9 +147,10 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             return@post it.left().unwrapAndRespond(call)
                         }
                     val email = call.principalEmail()
+                    val name = call.principalName()
 
                     database
-                        .registerForEvent(id.toString(), email)
+                        .registerForEvent(id.toString(), email, name)
                         .map { "Success" }
                         .unwrapAndRespond(call)
                 }
@@ -180,24 +197,23 @@ fun ApplicationCall.getUuidFromPath(): Either<IdException, UUID> {
 
 fun ApplicationCall.getEventWithPrivilege(
     database: DatabaseInterface
-): Either<EventAccessException, Event> {
-    val id =
-        getUuidFromPath().getOrElse {
-            return it.left()
+): Either<EventAccessException, Event> =
+    getUuidFromPath()
+        .map { id -> Pair(id, principalEmail()) }
+        .flatMap {
+            val (id, email) = it
+            database.getEvent(id.toString()).flatMap { event ->
+                database.getHosts(id.toString()).flatMap { hosts ->
+                    if (hosts.find { p -> p.email == email } == null) {
+                        ForbiddenException.left()
+                    } else {
+                        event.right()
+                    }
+                }
+            }
         }
-    val email = principalEmail()
-
-    val event =
-        database.getEvent(id.toString()).getOrElse {
-            return it.left()
-        }
-
-    if (event.ownerEmail != email) {
-        return ForbiddenException.left()
-    }
-
-    return event.right()
-}
 
 fun ApplicationCall.principalEmail() =
     principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+
+fun ApplicationCall.principalName() = principal<JWTPrincipal>()!!["name"]!!

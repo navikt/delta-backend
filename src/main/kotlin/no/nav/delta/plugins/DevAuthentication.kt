@@ -32,6 +32,7 @@ fun addDummyPrincipal(call: ApplicationCall) {
                 override fun getClaims(): MutableMap<String, Claim> =
                     mutableMapOf(
                         "preferred_username" to DummyClaim("dev@localhost"),
+                        "name" to DummyClaim("User, Dev"),
                     )
             })
     call.authentication.principal("localhost", principal)

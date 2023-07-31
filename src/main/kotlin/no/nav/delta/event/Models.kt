@@ -5,7 +5,6 @@ import java.util.UUID
 
 data class Event(
     val id: UUID,
-    val ownerEmail: String,
     val title: String,
     val description: String,
     val startTime: LocalDateTime,
@@ -19,10 +18,22 @@ data class Event(
 data class EventWithParticipants(
     val event: Event,
     val participants: List<Participant>,
+    val hosts: List<Participant>,
 )
 
 data class Participant(
     val email: String,
+    val name: String,
+)
+
+enum class ParticipantType {
+    HOST,
+    PARTICIPANT,
+}
+
+data class ChangeParticipant(
+    val email: String,
+    val type: ParticipantType,
 )
 
 data class CreateEvent(

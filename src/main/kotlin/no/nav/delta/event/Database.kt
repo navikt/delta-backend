@@ -15,7 +15,6 @@ import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.toList
 
 fun DatabaseInterface.addEvent(
-    ownerEmail: String,
     createEvent: CreateEvent,
 ): Event {
     return connection.use { connection ->
@@ -24,7 +23,6 @@ fun DatabaseInterface.addEvent(
                 """
  INSERT INTO event
             (
-                        owner,
                         title,
                         description,
                         start_time,
@@ -43,21 +41,19 @@ fun DatabaseInterface.addEvent(
                         ?,
                         ?,
                         ?,
-                        ?,
                         ?
             )
             returning *;
 """)
 
-        preparedStatement.setString(1, ownerEmail)
-        preparedStatement.setString(2, createEvent.title)
-        preparedStatement.setString(3, createEvent.description)
-        preparedStatement.setTimestamp(4, Timestamp.valueOf(createEvent.startTime))
-        preparedStatement.setTimestamp(5, Timestamp.valueOf(createEvent.endTime))
-        preparedStatement.setString(6, createEvent.location)
-        preparedStatement.setBoolean(7, createEvent.public)
-        preparedStatement.setInt(8, createEvent.participantLimit)
-        preparedStatement.setTimestamp(9, createEvent.signupDeadline?.let { Timestamp.valueOf(it) })
+        preparedStatement.setString(1, createEvent.title)
+        preparedStatement.setString(2, createEvent.description)
+        preparedStatement.setTimestamp(3, Timestamp.valueOf(createEvent.startTime))
+        preparedStatement.setTimestamp(4, Timestamp.valueOf(createEvent.endTime))
+        preparedStatement.setString(5, createEvent.location)
+        preparedStatement.setBoolean(6, createEvent.public)
+        preparedStatement.setInt(7, createEvent.participantLimit)
+        preparedStatement.setTimestamp(8, createEvent.signupDeadline?.let { Timestamp.valueOf(it) })
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -89,13 +85,34 @@ fun DatabaseInterface.getParticipants(
             val preparedStatement =
                 connection.prepareStatement(
                     """
-SELECT email
+SELECT email,
+       name
 FROM   participant
-WHERE  event_id = Uuid(?);
+WHERE  event_id = Uuid(?)
+       AND type = 'PARTICIPANT';
 """)
             preparedStatement.setString(1, id)
             val result = preparedStatement.executeQuery()
-            result.toList { Participant(email = getString(1)) }
+            result.toList { Participant(email = getString(1), name = getString(2)) }
+        }
+    }
+}
+
+fun DatabaseInterface.getHosts(id: String): Either<EventNotFoundException, List<Participant>> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, id).map {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+SELECT email,
+       name
+FROM   participant
+WHERE  event_id = Uuid(?)
+       AND type = 'HOST';
+""")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            result.toList { Participant(email = getString(1), name = getString(2)) }
         }
     }
 }
@@ -104,7 +121,7 @@ fun DatabaseInterface.getEvents(
     onlyFuture: Boolean = false,
     onlyPast: Boolean = false,
     onlyPublic: Boolean = false,
-    byOwner: Option<String> = none(),
+    byHost: Option<String> = none(),
     joinedBy: Option<String> = none(),
 ): List<Event> {
     return connection.use { connection ->
@@ -114,12 +131,12 @@ fun DatabaseInterface.getEvents(
         if (onlyFuture) clauses.add("start_time > NOW()")
         if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
-        byOwner.onSome { owner ->
-            clauses.add("owner = ?")
-            values.add { setString(it, owner) }
+        byHost.onSome { host ->
+            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")
+            values.add { setString(it, host) }
         }
         joinedBy.onSome { joinedBy ->
-            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ?)")
+            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
             values.add { setString(it, joinedBy) }
         }
 
@@ -135,7 +152,9 @@ fun DatabaseInterface.getEvents(
 
 fun DatabaseInterface.registerForEvent(
     eventId: String,
-    email: String
+    email: String,
+    name: String,
+    type: ParticipantType = ParticipantType.PARTICIPANT,
 ): Either<RegisterForEventError, Unit> {
     return connection.use { connection ->
         checkIfEventExists(connection, eventId)
@@ -148,16 +167,50 @@ fun DatabaseInterface.registerForEvent(
                         """
 INSERT INTO participant
             (event_id,
-             email)
+             email,
+             name,
+             type)
 VALUES      (Uuid(?),
-             ?);
+             ?,
+             ?,
+             ?::participant_type);
 """)
                 preparedStatement.setString(1, eventId)
                 preparedStatement.setString(2, email)
+                preparedStatement.setString(3, name)
+                preparedStatement.setString(4, type.name)
+                println(type.name)
+                println(preparedStatement)
 
                 preparedStatement.executeUpdate()
                 connection.commit()
             }
+    }
+}
+
+fun DatabaseInterface.changeParticipant(
+    eventId: String,
+    changeParticipant: ChangeParticipant,
+): Either<ChangeParticipantError, Unit> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).flatMap {
+            checkIfEventWillHaveNoHosts(connection, eventId, changeParticipant)
+        }.map {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+UPDATE participant
+SET    type = ?::participant_type
+WHERE  event_id = Uuid(?)
+       AND email = ?;
+""")
+            preparedStatement.setString(1, changeParticipant.type.name)
+            preparedStatement.setString(2, eventId)
+            preparedStatement.setString(3, changeParticipant.email)
+
+            preparedStatement.executeUpdate()
+            connection.commit()
+        }
     }
 }
 
@@ -236,7 +289,6 @@ WHERE  id=Uuid(?) returning *;
 fun ResultSet.toEvent(): Event {
     return Event(
         id = UUID.fromString(getString("id")),
-        ownerEmail = getString("owner"),
         title = getString("title"),
         description = getString("description"),
         startTime = getTimestamp("start_time").toLocalDateTime(),
@@ -331,3 +383,30 @@ WHERE id = Uuid(?)
             if (result.next()) DeadlinePassedException.left() else Unit.right()
         }
 }
+
+fun checkIfEventWillHaveNoHosts(
+    connection: Connection,
+    eventId: String,
+    changeParticipant: ChangeParticipant,
+): Either<EventWillHaveNoHostsException, Unit> {
+    return if (changeParticipant.type == ParticipantType.HOST) {Unit.right()} else
+    {
+        connection
+            .prepareStatement(
+                """
+SELECT *
+FROM   participant p
+WHERE  p.event_id = Uuid(?)
+       AND p.type = 'HOST'
+       AND p.email <> ?;
+""")
+            .use { preparedStatement ->
+                preparedStatement.setString(1, eventId)
+                preparedStatement.setString(2, changeParticipant.email)
+
+                val result = preparedStatement.executeQuery()
+                if (result.next()) Unit.right() else EventWillHaveNoHostsException.left()
+            }
+    }
+}
+

@@ -24,6 +24,12 @@ object EventFullException :
 object DeadlinePassedException :
     ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Deadline passed"), RegisterForEventError
 
+sealed interface ChangeParticipantError
+
+object EventWillHaveNoHostsException :
+    ExceptionWithDefaultResponse(HttpStatusCode.Conflict, "Event will have no hosts"),
+    ChangeParticipantError
+
 sealed interface UnregisterFromEventError
 
 object EmailNotFoundException :
@@ -34,7 +40,8 @@ object EventNotFoundException :
     ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Event not found"),
     RegisterForEventError,
     UnregisterFromEventError,
-    EventAccessException
+    EventAccessException,
+    ChangeParticipantError
 
 sealed interface IdException : EventAccessException
 
