@@ -15,10 +15,11 @@ data class Event(
     val signupDeadline: LocalDateTime?,
 )
 
-data class EventWithParticipants(
+data class FullEvent(
     val event: Event,
     val participants: List<Participant>,
     val hosts: List<Participant>,
+    val categories: List<Category>,
 )
 
 data class Participant(

@@ -67,6 +67,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Event'
+  /admin/event/{id}/category:
+    post:
+      tags:
+        - admin
+        - category
+      description: "Set the categories of an event"
+      operationId: setCategories
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+              type: string
+              format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: integer
+      responses:
+        "200":
+          description: "Categories set"
   /admin/event/{id}/participant:
     delete:
       tags:

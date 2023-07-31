@@ -13,6 +13,7 @@ import java.sql.Timestamp
 import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.toList
+import no.nav.delta.plugins.toSet
 
 fun DatabaseInterface.addEvent(
     createEvent: CreateEvent,
@@ -255,7 +256,9 @@ WHERE  id = Uuid(?);
     }
 }
 
-fun DatabaseInterface.updateEvent(newEvent: Event): Either<EventNotFoundException, Event> {
+fun DatabaseInterface.updateEvent(
+    newEvent: Event,
+): Either<EventNotFoundException, Event> {
     return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
@@ -288,6 +291,98 @@ WHERE  id=Uuid(?) returning *;
     }
 }
 
+fun DatabaseInterface.setCategories(
+    eventId: String,
+    categories: List<Int>
+): Either<EventNotFoundException, Unit> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).map {
+            val categoriesSet = categories.toSet()
+
+            val categoriesToRemove =
+                if (categoriesSet.isEmpty()) {
+                    connection
+                        .prepareStatement(
+                            """
+SELECT id FROM category JOIN event_has_category ehc ON category.id = ehc.category_id WHERE event_id = Uuid(?);
+""")
+                        .use {
+                            it.setString(1, eventId)
+                            val result = it.executeQuery()
+                            result.toSet { getInt(1) }
+                        }
+                } else {
+                    connection
+                        .prepareStatement(
+                            """
+SELECT id FROM category JOIN event_has_category ehc ON category.id = ehc.category_id
+WHERE event_id = Uuid(?)
+  AND category_id NOT IN (${categoriesSet.joinToString(",") { "?" }});
+""")
+                        .use {
+                            it.setString(1, eventId)
+                            categoriesSet.forEachIndexed { index, category ->
+                                it.setInt(index + 2, category)
+                            }
+                            val result = it.executeQuery()
+                            result.toSet { getInt(1) }
+                        }
+                }
+            val fakeCategories =
+                if (categoriesSet.isEmpty()) emptySet()
+                else
+                    connection
+                        .prepareStatement(
+                            """
+SELECT * FROM (VALUES ${categoriesSet.joinToString(",") { " (?)" }}) AS t1 (id) WHERE id NOT IN (SELECT id FROM category);
+""")
+                        .use {
+                            categoriesSet.forEachIndexed { index, category ->
+                                it.setInt(index + 1, category)
+                            }
+                            val result = it.executeQuery()
+                            result.toSet { getInt(1) }
+                        }
+
+            val categoriesToAdd =
+                categoriesSet
+                    .filter { !categoriesToRemove.contains(it) }
+                    .filter { !fakeCategories.contains(it) }
+
+            if (categoriesToRemove.isNotEmpty()) {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+DELETE FROM event_has_category
+WHERE event_id = Uuid(?)
+  AND category_id IN (${categoriesToRemove.joinToString(",") { "?" }});
+""")
+                preparedStatement.setString(1, eventId)
+                categoriesToRemove.forEachIndexed { index, category ->
+                    preparedStatement.setInt(index + 2, category)
+                }
+                preparedStatement.executeUpdate()
+            }
+            if (categoriesToAdd.isNotEmpty()) {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+INSERT INTO event_has_category
+            (event_id,
+             category_id)
+VALUES      ${categoriesToAdd.joinToString(",") { "(Uuid(?), ?)" }};
+""")
+                categoriesToAdd.forEachIndexed { index, category ->
+                    preparedStatement.setString(index * 2 + 1, eventId)
+                    preparedStatement.setInt(index * 2 + 2, category)
+                }
+                preparedStatement.executeUpdate()
+            }
+            connection.commit()
+        }
+    }
+}
+
 fun DatabaseInterface.getCategories(): List<Category> {
     return connection.use { connection ->
         val preparedStatement = connection.prepareStatement(""" 
@@ -296,6 +391,25 @@ FROM   category;
 """)
         val result = preparedStatement.executeQuery()
         result.toList { toCategory() }
+    }
+}
+
+fun DatabaseInterface.getCategories(id: String): Either<EventNotFoundException, List<Category>> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, id).map {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+SELECT *
+FROM   category
+       JOIN event_has_category
+         ON category.id = event_has_category.category_id
+WHERE  event_id = Uuid(?); 
+""")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            result.toList { toCategory() }
+        }
     }
 }
 

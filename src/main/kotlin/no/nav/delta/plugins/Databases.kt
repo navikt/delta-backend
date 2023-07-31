@@ -70,6 +70,13 @@ fun <T> ResultSet.toList(mapper: ResultSet.() -> T) =
         }
     }
 
+fun <T> ResultSet.toSet(mapper: ResultSet.() -> T) =
+    mutableSetOf<T>().apply {
+        while (next()) {
+            add(mapper())
+        }
+    }
+
 interface DatabaseInterface {
     val connection: Connection
 }
