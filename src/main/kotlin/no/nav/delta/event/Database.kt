@@ -304,7 +304,11 @@ fun DatabaseInterface.setCategories(
                     connection
                         .prepareStatement(
                             """
-SELECT id FROM category JOIN event_has_category ehc ON category.id = ehc.category_id WHERE event_id = Uuid(?);
+SELECT id
+FROM   category
+       JOIN event_has_category ehc
+         ON category.id = ehc.category_id
+WHERE  event_id = Uuid(?);
 """)
                         .use {
                             it.setString(1, eventId)
@@ -315,9 +319,12 @@ SELECT id FROM category JOIN event_has_category ehc ON category.id = ehc.categor
                     connection
                         .prepareStatement(
                             """
-SELECT id FROM category JOIN event_has_category ehc ON category.id = ehc.category_id
-WHERE event_id = Uuid(?)
-  AND category_id NOT IN (${categoriesSet.joinToString(",") { "?" }});
+SELECT id
+FROM   category
+JOIN   event_has_category ehc
+ON     category.id = ehc.category_id
+WHERE  event_id = Uuid(?)
+AND    category_id NOT IN (${categoriesSet.joinToString(",") { "?" }}); 
 """)
                         .use {
                             it.setString(1, eventId)
@@ -334,7 +341,10 @@ WHERE event_id = Uuid(?)
                     connection
                         .prepareStatement(
                             """
-SELECT * FROM (VALUES ${categoriesSet.joinToString(",") { " (?)" }}) AS t1 (id) WHERE id NOT IN (SELECT id FROM category);
+SELECT *
+FROM   (VALUES ${categoriesSet.joinToString(",") { " (?)" }}) AS t1 (id)
+WHERE  id NOT IN (SELECT id
+                  FROM   category);
 """)
                         .use {
                             categoriesSet.forEachIndexed { index, category ->
@@ -363,6 +373,7 @@ WHERE event_id = Uuid(?)
                 }
                 preparedStatement.executeUpdate()
             }
+
             if (categoriesToAdd.isNotEmpty()) {
                 val preparedStatement =
                     connection.prepareStatement(
@@ -378,6 +389,7 @@ VALUES      ${categoriesToAdd.joinToString(",") { "(Uuid(?), ?)" }};
                 }
                 preparedStatement.executeUpdate()
             }
+
             connection.commit()
         }
     }
