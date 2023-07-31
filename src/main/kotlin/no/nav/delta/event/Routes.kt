@@ -12,6 +12,9 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
+import no.nav.delta.email.sendCancellationNotification
+import no.nav.delta.email.sendJoinConfirmation
+import no.nav.delta.email.sendUpdateNotification
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.EmailClient
 
@@ -47,7 +50,8 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         .flatMap { event ->
                             database.getParticipants(id.toString()).flatMap { participants ->
                                 database.getHosts(id.toString()).map {
-                                    EventWithParticipants(event = event, hosts =  it, participants = participants)
+                                    EventWithParticipants(
+                                        event = event, hosts = it, participants = participants)
                                 }
                             }
                         }
@@ -89,7 +93,12 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                     database
                         .deleteEvent(event.id.toString())
-                        .map { "Success" }
+                        .map {
+                            database.getParticipants(event.id.toString()).map { participants ->
+                                emailClient.sendCancellationNotification(event, participants)
+                            }
+                            "Success"
+                        }
                         .unwrapAndRespond(call)
                 }
                 post {
@@ -111,7 +120,17 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             participantLimit = changedEvent.participantLimit,
                             signupDeadline = changedEvent.signupDeadline,
                         )
-                    database.updateEvent(newEvent).unwrapAndRespond(call)
+                    database
+                        .updateEvent(newEvent)
+                        .map { event ->
+                            database.getParticipants(event.id.toString()).flatMap { participants ->
+                                database.getHosts(event.id.toString()).map { hosts ->
+                                    emailClient.sendUpdateNotification(event, participants, hosts)
+                                }
+                            }
+                            event
+                        }
+                        .unwrapAndRespond(call)
                 }
                 delete("/participant") {
                     val event =
@@ -151,7 +170,15 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                     database
                         .registerForEvent(id.toString(), email, name)
-                        .map { "Success" }
+                        .map {
+                            database.getEvent(id.toString()).flatMap { event ->
+                                database.getHosts(id.toString()).map { hosts ->
+                                    emailClient.sendJoinConfirmation(
+                                        event, Participant(email, name), hosts)
+                                }
+                            }
+                            "Success"
+                        }
                         .unwrapAndRespond(call)
                 }
                 delete {

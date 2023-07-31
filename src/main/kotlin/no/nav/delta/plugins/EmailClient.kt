@@ -24,10 +24,10 @@ interface EmailClient {
             val azureAppClientId = env.azureAppClientId
             val azureAppTenantId = env.azureAppTenantId
             val azureAppClientSecret = env.azureAppClientSecret
-            if (email.isNullOrEmpty() ||
-                azureAppClientId.isNullOrEmpty() ||
-                azureAppTenantId.isNullOrEmpty() ||
-                azureAppClientSecret.isNullOrEmpty()) {
+            if (email.isEmpty() ||
+                azureAppClientId.isEmpty() ||
+                azureAppTenantId.isEmpty() ||
+                azureAppClientSecret.isEmpty()) {
                 return DummyEmailClient()
             }
 
@@ -92,7 +92,7 @@ class AzureEmailClient(
         ccRecipients: List<String>,
         bccRecipients: List<String>
     ) {
-        if (applicationEmailAddress.isNullOrBlank() ||
+        if (applicationEmailAddress.isBlank() ||
             (toRecipients.isEmpty() && ccRecipients.isEmpty() && bccRecipients.isEmpty())) {
             return
         }
