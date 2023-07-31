@@ -132,11 +132,13 @@ fun DatabaseInterface.getEvents(
         if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
         byHost.onSome { host ->
-            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")
+            clauses.add(
+                "id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")
             values.add { setString(it, host) }
         }
         joinedBy.onSome { joinedBy ->
-            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
+            clauses.add(
+                "id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
             values.add { setString(it, joinedBy) }
         }
 
@@ -193,24 +195,24 @@ fun DatabaseInterface.changeParticipant(
     changeParticipant: ChangeParticipant,
 ): Either<ChangeParticipantError, Unit> {
     return connection.use { connection ->
-        checkIfEventExists(connection, eventId).flatMap {
-            checkIfEventWillHaveNoHosts(connection, eventId, changeParticipant)
-        }.map {
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
+        checkIfEventExists(connection, eventId)
+            .flatMap { checkIfEventWillHaveNoHosts(connection, eventId, changeParticipant) }
+            .map {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
 UPDATE participant
 SET    type = ?::participant_type
 WHERE  event_id = Uuid(?)
        AND email = ?;
 """)
-            preparedStatement.setString(1, changeParticipant.type.name)
-            preparedStatement.setString(2, eventId)
-            preparedStatement.setString(3, changeParticipant.email)
+                preparedStatement.setString(1, changeParticipant.type.name)
+                preparedStatement.setString(2, eventId)
+                preparedStatement.setString(3, changeParticipant.email)
 
-            preparedStatement.executeUpdate()
-            connection.commit()
-        }
+                preparedStatement.executeUpdate()
+                connection.commit()
+            }
     }
 }
 
@@ -389,8 +391,9 @@ fun checkIfEventWillHaveNoHosts(
     eventId: String,
     changeParticipant: ChangeParticipant,
 ): Either<EventWillHaveNoHostsException, Unit> {
-    return if (changeParticipant.type == ParticipantType.HOST) {Unit.right()} else
-    {
+    return if (changeParticipant.type == ParticipantType.HOST) {
+        Unit.right()
+    } else {
         connection
             .prepareStatement(
                 """
@@ -409,4 +412,3 @@ WHERE  p.event_id = Uuid(?)
             }
     }
 }
-
