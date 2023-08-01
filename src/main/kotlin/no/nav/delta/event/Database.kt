@@ -129,7 +129,7 @@ fun DatabaseInterface.getEvents(
         val clauses = mutableListOf("TRUE")
         val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
 
-        if (onlyFuture) clauses.add("start_time > NOWz()")
+        if (onlyFuture) clauses.add("start_time > NOW()")
         if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
         byHost.onSome { host ->
