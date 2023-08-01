@@ -49,9 +49,14 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         .getEvent(id.toString())
                         .flatMap { event ->
                             database.getParticipants(id.toString()).flatMap { participants ->
-                                database.getHosts(id.toString()).map {
-                                    EventWithParticipants(
-                                        event = event, hosts = it, participants = participants)
+                                database.getHosts(id.toString()).flatMap { hosts ->
+                                    database.getCategories(id.toString()).map { categories ->
+                                        FullEvent(
+                                            event = event,
+                                            hosts = hosts,
+                                            participants = participants,
+                                            categories = categories)
+                                    }
                                 }
                             }
                         }
@@ -156,6 +161,17 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         .map { "Success" }
                         .unwrapAndRespond(call)
                 }
+                post("/category") {
+                    val event =
+                        call.getEventWithPrivilege(database).getOrElse {
+                            return@post it.left().unwrapAndRespond(call)
+                        }
+                    val categories = call.receive<List<Int>>()
+                    database
+                        .setCategories(event.id.toString(), categories)
+                        .map { "Success" }
+                        .unwrapAndRespond(call)
+                }
             }
         }
         route("/user/event") {
@@ -193,6 +209,13 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         .map { "Success" }
                         .unwrapAndRespond(call)
                 }
+            }
+        }
+        route("/category") {
+            get { call.respond(database.getCategories()) }
+            put {
+                val category = call.receive<CreateCategory>()
+                database.createCategory(category).unwrapAndRespond(call)
             }
         }
     }

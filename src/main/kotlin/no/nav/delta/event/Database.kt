@@ -13,6 +13,7 @@ import java.sql.Timestamp
 import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.toList
+import no.nav.delta.plugins.toSet
 
 fun DatabaseInterface.addEvent(
     createEvent: CreateEvent,
@@ -128,7 +129,7 @@ fun DatabaseInterface.getEvents(
         val clauses = mutableListOf("TRUE")
         val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
 
-        if (onlyFuture) clauses.add("start_time > NOW()")
+        if (onlyFuture) clauses.add("start_time > NOWz()")
         if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
         byHost.onSome { host ->
@@ -255,7 +256,9 @@ WHERE  id = Uuid(?);
     }
 }
 
-fun DatabaseInterface.updateEvent(newEvent: Event): Either<EventNotFoundException, Event> {
+fun DatabaseInterface.updateEvent(
+    newEvent: Event,
+): Either<EventNotFoundException, Event> {
     return connection.use { connection ->
         val preparedStatement =
             connection.prepareStatement(
@@ -288,6 +291,170 @@ WHERE  id=Uuid(?) returning *;
     }
 }
 
+fun DatabaseInterface.setCategories(
+    eventId: String,
+    categories: List<Int>
+): Either<EventNotFoundException, Unit> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).map {
+            val categoriesSet = categories.toSet()
+
+            val categoriesToRemove =
+                if (categoriesSet.isEmpty()) {
+                    connection
+                        .prepareStatement(
+                            """
+SELECT id
+FROM   category
+       JOIN event_has_category ehc
+         ON category.id = ehc.category_id
+WHERE  event_id = Uuid(?);
+""")
+                        .use {
+                            it.setString(1, eventId)
+                            val result = it.executeQuery()
+                            result.toSet { getInt(1) }
+                        }
+                } else {
+                    connection
+                        .prepareStatement(
+                            """
+SELECT id
+FROM   category
+JOIN   event_has_category ehc
+ON     category.id = ehc.category_id
+WHERE  event_id = Uuid(?)
+AND    category_id NOT IN (${categoriesSet.joinToString(",") { "?" }}); 
+""")
+                        .use {
+                            it.setString(1, eventId)
+                            categoriesSet.forEachIndexed { index, category ->
+                                it.setInt(index + 2, category)
+                            }
+                            val result = it.executeQuery()
+                            result.toSet { getInt(1) }
+                        }
+                }
+            val fakeCategories =
+                if (categoriesSet.isEmpty()) emptySet()
+                else
+                    connection
+                        .prepareStatement(
+                            """
+SELECT *
+FROM   (VALUES ${categoriesSet.joinToString(",") { " (?)" }}) AS t1 (id)
+WHERE  id NOT IN (SELECT id
+                  FROM   category);
+""")
+                        .use {
+                            categoriesSet.forEachIndexed { index, category ->
+                                it.setInt(index + 1, category)
+                            }
+                            val result = it.executeQuery()
+                            result.toSet { getInt(1) }
+                        }
+
+            val categoriesToAdd =
+                categoriesSet
+                    .filter { !categoriesToRemove.contains(it) }
+                    .filter { !fakeCategories.contains(it) }
+
+            if (categoriesToRemove.isNotEmpty()) {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+DELETE FROM event_has_category
+WHERE event_id = Uuid(?)
+  AND category_id IN (${categoriesToRemove.joinToString(",") { "?" }});
+""")
+                preparedStatement.setString(1, eventId)
+                categoriesToRemove.forEachIndexed { index, category ->
+                    preparedStatement.setInt(index + 2, category)
+                }
+                preparedStatement.executeUpdate()
+            }
+
+            if (categoriesToAdd.isNotEmpty()) {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+INSERT INTO event_has_category
+            (event_id,
+             category_id)
+VALUES      ${categoriesToAdd.joinToString(",") { "(Uuid(?), ?)" }};
+""")
+                categoriesToAdd.forEachIndexed { index, category ->
+                    preparedStatement.setString(index * 2 + 1, eventId)
+                    preparedStatement.setInt(index * 2 + 2, category)
+                }
+                preparedStatement.executeUpdate()
+            }
+
+            connection.commit()
+        }
+    }
+}
+
+fun DatabaseInterface.getCategories(): List<Category> {
+    return connection.use { connection ->
+        val preparedStatement = connection.prepareStatement(""" 
+SELECT *
+FROM   category;
+""")
+        val result = preparedStatement.executeQuery()
+        result.toList { toCategory() }
+    }
+}
+
+fun DatabaseInterface.getCategories(id: String): Either<EventNotFoundException, List<Category>> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, id).map {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+SELECT *
+FROM   category
+       JOIN event_has_category
+         ON category.id = event_has_category.category_id
+WHERE  event_id = Uuid(?); 
+""")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            result.toList { toCategory() }
+        }
+    }
+}
+
+fun DatabaseInterface.createCategory(
+    category: CreateCategory
+): Either<CreateCategoryError, Category> {
+    val name = category.name.lowercase()
+    return connection.use { connection ->
+        checkIfCategoryNameIsTooLong(name).flatMap {
+            checkIfCategoryExists(connection, name).map {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+INSERT INTO category
+            (
+                        name
+            )
+            VALUES
+            (
+                        ?
+            )
+            returning *;
+""")
+                preparedStatement.setString(1, name)
+                val result = preparedStatement.executeQuery()
+                connection.commit()
+                result.next()
+                result.toCategory()
+            }
+        }
+    }
+}
+
 fun ResultSet.toEvent(): Event {
     return Event(
         id = UUID.fromString(getString("id")),
@@ -299,6 +466,13 @@ fun ResultSet.toEvent(): Event {
         public = getBoolean("public"),
         participantLimit = getInt("participant_limit"),
         signupDeadline = getTimestamp("signup_deadline")?.toLocalDateTime(),
+    )
+}
+
+fun ResultSet.toCategory(): Category {
+    return Category(
+        id = getInt("id"),
+        name = getString("name"),
     )
 }
 
@@ -411,4 +585,25 @@ WHERE  p.event_id = Uuid(?)
                 if (result.next()) Unit.right() else EventWillHaveNoHostsException.left()
             }
     }
+}
+
+fun checkIfCategoryExists(
+    connection: Connection,
+    name: String,
+): Either<CategoryAlreadyExistsException, Unit> {
+    return connection.prepareStatement("""
+SELECT *
+FROM   category
+WHERE  NAME = ?;
+""").use {
+        preparedStatement ->
+        preparedStatement.setString(1, name)
+
+        val result = preparedStatement.executeQuery()
+        if (result.next()) CategoryAlreadyExistsException.left() else Unit.right()
+    }
+}
+
+fun checkIfCategoryNameIsTooLong(name: String): Either<CategoryNameTooLongException, Unit> {
+    return if (name.length > 25) CategoryNameTooLongException.left() else Unit.right()
 }
