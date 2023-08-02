@@ -119,6 +119,7 @@ WHERE  event_id = Uuid(?)
 }
 
 fun DatabaseInterface.getEvents(
+    categories: List<Int> = listOf(),
     onlyFuture: Boolean = false,
     onlyPast: Boolean = false,
     onlyPublic: Boolean = false,
@@ -132,6 +133,11 @@ fun DatabaseInterface.getEvents(
         if (onlyFuture) clauses.add("start_time > NOW()")
         if (onlyPast) clauses.add("end_time < NOW()")
         if (onlyPublic) clauses.add("public = TRUE")
+
+        categories.forEach { categoryId ->
+            clauses.add("id IN (SELECT event_id FROM event_has_category WHERE category_id=?)")
+            values.add { setInt(it, categoryId) }
+        }
         byHost.onSome { host ->
             clauses.add(
                 "id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")

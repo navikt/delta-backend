@@ -35,8 +35,10 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                 val onlyPublic = !onlyMine && !onlyJoined
 
+                val categories = call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
+
                 call.respond(
-                    database.getEvents(onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy).fold(
+                    database.getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy).fold(
                         mutableListOf<FullEvent>()) { acc, event ->
                             database
                                 .getParticipants(event.id.toString())
