@@ -354,10 +354,25 @@ WHERE  id NOT IN (SELECT id
                             result.toSet { getInt(1) }
                         }
 
+            val currentCategories =
+                connection
+                    .prepareStatement(
+                        """
+SELECT category_id
+FROM   event_has_category
+WHERE  event_id = Uuid(?);
+""")
+                    .use {
+                        it.setString(1, eventId)
+                        val result = it.executeQuery()
+                        result.toSet { getInt(1) }
+                    }
+
             val categoriesToAdd =
                 categoriesSet
                     .filter { !categoriesToRemove.contains(it) }
                     .filter { !fakeCategories.contains(it) }
+                    .filter { !currentCategories.contains(it) }
 
             if (categoriesToRemove.isNotEmpty()) {
                 val preparedStatement =
