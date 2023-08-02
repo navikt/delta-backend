@@ -36,24 +36,25 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                 val onlyPublic = !onlyMine && !onlyJoined
 
                 call.respond(
-                database
-                    .getEvents(onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
-                    .map { event ->
-                        database.getParticipants(event.id.toString()).flatMap { participants ->
-                            database.getHosts(event.id.toString()).flatMap { hosts ->
-                                database.getCategories(event.id.toString()).map { categories ->
-                                    FullEvent(
-                                        event = event,
-                                        hosts = hosts,
-                                        participants = participants,
-                                        categories = categories
-                                    )
+                    database
+                        .getEvents(onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
+                        .map { event ->
+                            database.getParticipants(event.id.toString()).flatMap { participants ->
+                                database.getHosts(event.id.toString()).flatMap { hosts ->
+                                    database.getCategories(event.id.toString()).map { categories ->
+                                        FullEvent(
+                                            event = event,
+                                            hosts = hosts,
+                                            participants = participants,
+                                            categories = categories)
+                                    }
                                 }
                             }
                         }
-                    }.map { it -> it.getOrElse { return@get it.left().unwrapAndRespond(call) } })
-
-
+                        .fold(mutableListOf<FullEvent>()) { acc, event ->
+                            event.map { acc.add(it) }
+                            acc
+                        })
             }
             route("/{id}") {
                 get {
