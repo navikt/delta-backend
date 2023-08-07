@@ -12,9 +12,10 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import no.nav.delta.email.sendCancellationNotification
-import no.nav.delta.email.sendJoinConfirmation
-import no.nav.delta.email.sendUpdateNotification
+import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.plugins.EmailClient
 
@@ -42,9 +43,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                     database
                         .getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
                         .fold(mutableListOf<FullEvent>()) { acc, event ->
-                            database
-                                .getFullEvent(event.id.toString())
-                                .map { acc.add(it) }
+                            database.getFullEvent(event.id.toString()).map { acc.add(it) }
                             acc
                         })
             }
@@ -55,9 +54,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             return@get it.left().unwrapAndRespond(call)
                         }
 
-                    database
-                        .getFullEvent(id.toString())
-                        .unwrapAndRespond(call)
+                    database.getFullEvent(id.toString()).unwrapAndRespond(call)
                 }
             }
         }
@@ -76,6 +73,9 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         createEvent,
                     )
 
+                emailClient.createEvent(
+                    event, listOf(), listOf(Participant(email, call.principalName())))
+
                 database
                     .registerForEvent(
                         event.id.toString(),
@@ -93,12 +93,32 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             return@delete it.left().unwrapAndRespond(call)
                         }
 
+                    // I don't care if this fails...
+                    val sendCancellationFuture =
+                        database
+                            .getFullEvent(event.id.toString())
+                            .flatMap { fullEvent ->
+                                database
+                                    .getCalendarEventId(event.id.toString())
+                                    .flatMap {
+                                        it.toOption().toEither { "No calendar event id found" }
+                                    }
+                                    .map { calendarEventId ->
+                                        async(start = CoroutineStart.LAZY) {
+                                            emailClient.sendCancellationNotification(
+                                                calendarEventId,
+                                                fullEvent.event,
+                                                fullEvent.participants,
+                                                fullEvent.hosts)
+                                        }
+                                    }
+                            }
+                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+
                     database
                         .deleteEvent(event.id.toString())
                         .map {
-                            database.getParticipants(event.id.toString()).map { participants ->
-                                emailClient.sendCancellationNotification(event, participants)
-                            }
+                            sendCancellationFuture.start()
                             "Success"
                         }
                         .unwrapAndRespond(call)
@@ -122,10 +142,33 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             participantLimit = changedEvent.participantLimit,
                             signupDeadline = changedEvent.signupDeadline,
                         )
+
+                    val sendUpdateFuture =
+                        database
+                            .getParticipants(newEvent.id.toString())
+                            .flatMap { participants ->
+                                database.getHosts(newEvent.id.toString()).flatMap { hosts ->
+                                    database.getCalendarEventId(originalEvent.id.toString()).map {
+                                        calendarEventId ->
+                                        async(start = CoroutineStart.LAZY) {
+                                            emailClient.sendUpdateOrCreationNotification(
+                                                newEvent,
+                                                participants,
+                                                hosts,
+                                                database,
+                                                calendarEventId)
+                                        }
+                                    }
+                                }
+                            }
+                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+
                     database
                         .updateEvent(newEvent)
-                        .flatMap { event ->
-                            database.getFullEvent(event.id.toString())
+                        .flatMap { event -> database.getFullEvent(event.id.toString()) }
+                        .map {
+                            sendUpdateFuture.start()
+                            "Success"
                         }
                         .unwrapAndRespond(call)
                 }
@@ -173,18 +216,30 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         call.getUuidFromPath().getOrElse {
                             return@post it.left().unwrapAndRespond(call)
                         }
-                    val email = call.principalEmail()
-                    val name = call.principalName()
+                    val user = Participant(call.principalEmail(), call.principalName())
 
-                    database
-                        .registerForEvent(id.toString(), email, name)
-                        .map {
-                            database.getEvent(id.toString()).flatMap { event ->
-                                database.getHosts(id.toString()).map { hosts ->
-                                    emailClient.sendJoinConfirmation(
-                                        event, Participant(email, name), hosts)
+                    val updateCalendarEventFuture =
+                        database
+                            .getCalendarEventId(id.toString())
+                            .flatMap { calendarEventId ->
+                                database.getFullEvent(id.toString()).map { fullEvent ->
+                                    async(start = CoroutineStart.LAZY) {
+                                        emailClient.sendUpdateOrCreationNotification(
+                                            fullEvent.event,
+                                            listOf(fullEvent.participants, listOf(user)).flatten(),
+                                            fullEvent.hosts,
+                                            database,
+                                            calendarEventId,
+                                        )
+                                    }
                                 }
                             }
+                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+
+                    database
+                        .registerForEvent(id.toString(), user.email, user.name)
+                        .map {
+                            updateCalendarEventFuture.start()
                             "Success"
                         }
                         .unwrapAndRespond(call)

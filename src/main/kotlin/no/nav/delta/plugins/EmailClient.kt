@@ -1,13 +1,22 @@
 package no.nav.delta.plugins
 
+import arrow.core.Either
+import arrow.core.flatMap
+import arrow.core.left
+import arrow.core.right
 import com.microsoft.aad.msal4j.ClientCredentialFactory
 import com.microsoft.aad.msal4j.ClientCredentialParameters
 import com.microsoft.aad.msal4j.ConfidentialClientApplication
 import com.microsoft.graph.models.*
 import com.microsoft.graph.requests.GraphServiceClient
+import java.lang.RuntimeException
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import no.nav.delta.Environment
+import no.nav.delta.event.Event
+import no.nav.delta.event.Participant
 
 interface EmailClient {
     fun sendEmail(
@@ -17,6 +26,21 @@ interface EmailClient {
         ccRecipients: List<String> = emptyList(),
         bccRecipients: List<String> = emptyList()
     )
+
+    fun createEvent(
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, String>
+
+    fun updateEvent(
+        calendarEventId: String,
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, Unit>
+
+    fun deleteEvent(calendarEventId: String): Either<Throwable, Unit>
 
     companion object {
         fun fromEnvironment(env: Environment): EmailClient {
@@ -71,6 +95,9 @@ class AzureEmailClient(
     private fun emailAsRecipient(email: String) =
         Recipient().apply { emailAddress = EmailAddress().apply { address = email } }
 
+    private fun emailAsAttendee(email: String) =
+        Attendee().apply { emailAddress = EmailAddress().apply { address = email } }
+
     private fun refreshTokenIfNeeded() {
         val currentToken = azureToken
         if (currentToken != null && currentToken.isActive(Date())) {
@@ -116,6 +143,110 @@ class AzureEmailClient(
             .buildRequest()
             .post()
     }
+
+    private fun prepareCalendarEvent(
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, com.microsoft.graph.models.Event> {
+        if (applicationEmailAddress.isBlank()) {
+            return RuntimeException("Missing application email address").left()
+        }
+        if (participants.isEmpty()) {
+            return IllegalArgumentException("Missing recipients").left()
+        }
+        refreshTokenIfNeeded()
+
+        val calendarEvent =
+            Event().apply {
+                subject = event.title
+                body =
+                    event.description.let {
+                        ItemBody().apply {
+                            contentType = BodyType.TEXT
+                            content =
+                                """${event.description}
+
+Arrangører:
+${hosts.joinToString("\n") { host -> "${host.name}: ${host.email}" }}
+
+Detaljert og oppdatert informasjon om arrangementet finner du her:
+https://delta.nav.no/event/${event.id}/
+"""
+                        }
+                    }
+                start = event.startTime.toDateTimeTimeZone()
+                end = event.endTime.toDateTimeTimeZone()
+                location = Location().apply { displayName = event.location }
+                attendees = listOf(participants, hosts).flatten().map { emailAsAttendee(it.email) }
+            }
+
+        return calendarEvent.right()
+    }
+
+    override fun createEvent(
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, String> {
+        return prepareCalendarEvent(event, participants, hosts).flatMap { calendarEvent ->
+            try {
+                graphClient
+                    .users(applicationEmailAddress)
+                    .calendar()
+                    .events()
+                    .buildRequest()
+                    .post(calendarEvent)
+                    .id
+                    ?.right()
+                    ?: RuntimeException("Failed to create event").left()
+            } catch (e: Exception) {
+                RuntimeException("Failed to create event", e).left()
+            }
+        }
+    }
+
+    override fun updateEvent(
+        calendarEventId: String,
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, Unit> {
+        return prepareCalendarEvent(event, participants, hosts)
+            .map { calendarEvent ->
+                calendarEvent.id = calendarEventId
+                calendarEvent
+            }
+            .flatMap { calendarEvent ->
+                try {
+                    graphClient
+                        .users(applicationEmailAddress)
+                        .calendar()
+                        .events(calendarEventId)
+                        .buildRequest()
+                        .patch(calendarEvent)
+                    Unit.right()
+                } catch (e: Exception) {
+                    RuntimeException("Failed to update event", e).left()
+                }
+            }
+    }
+
+    override fun deleteEvent(calendarEventId: String): Either<Throwable, Unit> {
+        if (applicationEmailAddress.isBlank()) {
+            return RuntimeException("Missing application email address").left()
+        }
+        refreshTokenIfNeeded()
+
+        graphClient
+            .users(applicationEmailAddress)
+            .calendar()
+            .events(calendarEventId)
+            .buildRequest()
+            .delete()
+
+        return Unit.right()
+    }
 }
 
 private data class AzureToken(val accessToken: String, val expiresOnDate: Date?) {
@@ -133,4 +264,35 @@ class DummyEmailClient : EmailClient {
         println(
             "DummyEmailClient: Sending e-mail: subject='$subject' to=$toRecipients, cc=$ccRecipients, bcc=$bccRecipients")
     }
+
+    override fun createEvent(
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, String> {
+        println("DummyEmailClient: Creating event: subject='${event.title}' to=$participants")
+        return "dummy-id".right()
+    }
+
+    override fun updateEvent(
+        calendarEventId: String,
+        event: Event,
+        participants: List<Participant>,
+        hosts: List<Participant>
+    ): Either<Throwable, Unit> {
+        println(
+            "DummyEmailClient: Updating event: id='$calendarEventId' subject='${event.title}' to=$participants")
+        return Unit.right()
+    }
+
+    override fun deleteEvent(calendarEventId: String): Either<Throwable, Unit> {
+        println("DummyEmailClient: Deleting event: id='$calendarEventId'")
+        return Unit.right()
+    }
 }
+
+fun LocalDateTime.toDateTimeTimeZone(): DateTimeTimeZone =
+    DateTimeTimeZone().apply {
+        timeZone = "Europe/Oslo"
+        dateTime = toInstant(ZoneOffset.of("Europe/Oslo")).toString()
+    }
