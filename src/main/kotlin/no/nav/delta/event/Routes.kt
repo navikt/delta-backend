@@ -177,7 +177,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
                             Thread(sendUpdateFuture).start()
-                            "Success"
+                            it
                         }
                         .unwrapAndRespond(call)
                 }
