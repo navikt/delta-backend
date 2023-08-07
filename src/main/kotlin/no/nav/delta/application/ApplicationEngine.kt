@@ -23,22 +23,22 @@ import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
 import no.nav.delta.event.eventApi
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.plugins.EmailClient
+import no.nav.delta.email.CloudClient
 
 fun createApplicationEngine(
     env: Environment,
     // applicationState: ApplicationState,
     database: DatabaseInterface,
-    emailClient: EmailClient,
+    cloudClient: CloudClient,
     jwkProvider: JwkProvider,
 ): ApplicationEngine =
     embeddedServer(
-        Netty, env.applicationPort, module = { mySetup(env, database, emailClient, jwkProvider) })
+        Netty, env.applicationPort, module = { mySetup(env, database, cloudClient, jwkProvider) })
 
 fun Application.mySetup(
     env: Environment,
     database: DatabaseInterface,
-    emailClient: EmailClient,
+    cloudClient: CloudClient,
     jwkProvider: JwkProvider
 ) {
     setupAuth(env, jwkProvider, env.jwtIssuer)
@@ -62,6 +62,6 @@ fun Application.mySetup(
 
     routing {
         swaggerUI(path = "openapi")
-        eventApi(database, emailClient)
+        eventApi(database, cloudClient)
     }
 }

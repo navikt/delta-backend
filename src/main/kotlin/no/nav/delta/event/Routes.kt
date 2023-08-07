@@ -12,13 +12,14 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import no.nav.delta.email.sendCancellationNotification
-import no.nav.delta.email.sendJoinConfirmation
-import no.nav.delta.email.sendUpdateNotification
+import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.plugins.EmailClient
+import no.nav.delta.email.CloudClient
 
-fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
+fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
     authenticate("jwt") {
         route("/event") {
             get {
@@ -35,26 +36,14 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                 val onlyPublic = !onlyMine && !onlyJoined
 
-                val categories = call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
+                val categories =
+                    call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
 
                 call.respond(
-                    database.getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy).fold(
-                        mutableListOf<FullEvent>()) { acc, event ->
-                            database
-                                .getParticipants(event.id.toString())
-                                .flatMap { participants ->
-                                    database.getHosts(event.id.toString()).flatMap { hosts ->
-                                        database.getCategories(event.id.toString()).map { categories
-                                            ->
-                                            FullEvent(
-                                                event = event,
-                                                hosts = hosts,
-                                                participants = participants,
-                                                categories = categories)
-                                        }
-                                    }
-                                }
-                                .map { acc.add(it) }
+                    database
+                        .getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
+                        .fold(mutableListOf<FullEvent>()) { acc, event ->
+                            database.getFullEvent(event.id.toString()).map { acc.add(it) }
                             acc
                         })
             }
@@ -65,22 +54,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             return@get it.left().unwrapAndRespond(call)
                         }
 
-                    database
-                        .getEvent(id.toString())
-                        .flatMap { event ->
-                            database.getParticipants(id.toString()).flatMap { participants ->
-                                database.getHosts(id.toString()).flatMap { hosts ->
-                                    database.getCategories(id.toString()).map { categories ->
-                                        FullEvent(
-                                            event = event,
-                                            hosts = hosts,
-                                            participants = participants,
-                                            categories = categories)
-                                    }
-                                }
-                            }
-                        }
-                        .unwrapAndRespond(call)
+                    database.getFullEvent(id.toString()).unwrapAndRespond(call)
                 }
             }
         }
@@ -99,6 +73,9 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         createEvent,
                     )
 
+                cloudClient.createEvent(
+                    event, listOf(), listOf(Participant(email, call.principalName())))
+
                 database
                     .registerForEvent(
                         event.id.toString(),
@@ -106,7 +83,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         call.principalName(),
                         ParticipantType.HOST,
                     )
-                    .map { event }
+                    .flatMap { database.getFullEvent(event.id.toString()) }
                     .unwrapAndRespond(call)
             }
             route("/{id}") {
@@ -116,12 +93,32 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             return@delete it.left().unwrapAndRespond(call)
                         }
 
+                    // I don't care if this fails...
+                    val sendCancellationFuture =
+                        database
+                            .getFullEvent(event.id.toString())
+                            .flatMap { fullEvent ->
+                                database
+                                    .getCalendarEventId(event.id.toString())
+                                    .flatMap {
+                                        it.toOption().toEither { "No calendar event id found" }
+                                    }
+                                    .map { calendarEventId ->
+                                        async(start = CoroutineStart.LAZY) {
+                                            cloudClient.sendCancellationNotification(
+                                                calendarEventId,
+                                                fullEvent.event,
+                                                fullEvent.participants,
+                                                fullEvent.hosts)
+                                        }
+                                    }
+                            }
+                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+
                     database
                         .deleteEvent(event.id.toString())
                         .map {
-                            database.getParticipants(event.id.toString()).map { participants ->
-                                emailClient.sendCancellationNotification(event, participants)
-                            }
+                            sendCancellationFuture.start()
                             "Success"
                         }
                         .unwrapAndRespond(call)
@@ -145,15 +142,33 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             participantLimit = changedEvent.participantLimit,
                             signupDeadline = changedEvent.signupDeadline,
                         )
-                    database
-                        .updateEvent(newEvent)
-                        .map { event ->
-                            database.getParticipants(event.id.toString()).flatMap { participants ->
-                                database.getHosts(event.id.toString()).map { hosts ->
-                                    emailClient.sendUpdateNotification(event, participants, hosts)
+
+                    val sendUpdateFuture =
+                        database
+                            .getParticipants(newEvent.id.toString())
+                            .flatMap { participants ->
+                                database.getHosts(newEvent.id.toString()).flatMap { hosts ->
+                                    database.getCalendarEventId(originalEvent.id.toString()).map {
+                                        calendarEventId ->
+                                        async(start = CoroutineStart.LAZY) {
+                                            cloudClient.sendUpdateOrCreationNotification(
+                                                newEvent,
+                                                participants,
+                                                hosts,
+                                                database,
+                                                calendarEventId)
+                                        }
+                                    }
                                 }
                             }
-                            event
+                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+
+                    database
+                        .updateEvent(newEvent)
+                        .flatMap { event -> database.getFullEvent(event.id.toString()) }
+                        .map {
+                            sendUpdateFuture.start()
+                            "Success"
                         }
                         .unwrapAndRespond(call)
                 }
@@ -201,18 +216,30 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         call.getUuidFromPath().getOrElse {
                             return@post it.left().unwrapAndRespond(call)
                         }
-                    val email = call.principalEmail()
-                    val name = call.principalName()
+                    val user = Participant(call.principalEmail(), call.principalName())
 
-                    database
-                        .registerForEvent(id.toString(), email, name)
-                        .map {
-                            database.getEvent(id.toString()).flatMap { event ->
-                                database.getHosts(id.toString()).map { hosts ->
-                                    emailClient.sendJoinConfirmation(
-                                        event, Participant(email, name), hosts)
+                    val updateCalendarEventFuture =
+                        database
+                            .getCalendarEventId(id.toString())
+                            .flatMap { calendarEventId ->
+                                database.getFullEvent(id.toString()).map { fullEvent ->
+                                    async(start = CoroutineStart.LAZY) {
+                                        cloudClient.sendUpdateOrCreationNotification(
+                                            fullEvent.event,
+                                            listOf(fullEvent.participants, listOf(user)).flatten(),
+                                            fullEvent.hosts,
+                                            database,
+                                            calendarEventId,
+                                        )
+                                    }
                                 }
                             }
+                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+
+                    database
+                        .registerForEvent(id.toString(), user.email, user.name)
+                        .map {
+                            updateCalendarEventFuture.start()
                             "Success"
                         }
                         .unwrapAndRespond(call)

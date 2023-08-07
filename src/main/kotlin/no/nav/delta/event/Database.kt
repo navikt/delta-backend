@@ -78,6 +78,61 @@ WHERE  id = Uuid(?);
     }
 }
 
+fun DatabaseInterface.getFullEvent(id: String): Either<EventNotFoundException, FullEvent> {
+    return getCategories(id).map {categories ->
+        connection.use { connection ->
+            val preparedStatement =
+                connection.prepareStatement("""
+SELECT *
+FROM   event
+       LEFT JOIN participant
+              ON event.id = participant.event_id
+WHERE  id = Uuid(?);
+""")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            if (!result.next()) return EventNotFoundException.left()
+
+            val event = result.toEvent()
+            val participant = result.let {
+                if (result.getString("email") != null) {
+                    Pair(
+                        ParticipantType.valueOf(result.getString("type")),
+                        Participant(
+                            email = result.getString("email"),
+                            name = result.getString("name"),
+                        )
+                    )
+                } else {
+                    null
+                }
+            }
+
+            val participants = if (participant != null) mutableListOf(participant) else mutableListOf()
+            result.apply {
+                while (next()) {
+                    participants.add(
+                        Pair(
+                            ParticipantType.valueOf(getString("type")),
+                            Participant(
+                                email = getString("email"),
+                                name = getString("name"),
+                            )
+                        )
+                    )
+                }
+            }
+
+            FullEvent(
+                event = event,
+                participants = participants.filter { it.first == ParticipantType.PARTICIPANT }.map { it.second },
+                hosts = participants.filter { it.first == ParticipantType.HOST }.map { it.second },
+                categories = categories,
+            )
+        }
+    }
+}
+
 fun DatabaseInterface.getParticipants(
     id: String
 ): Either<EventNotFoundException, List<Participant>> {
@@ -114,6 +169,46 @@ WHERE  event_id = Uuid(?)
             preparedStatement.setString(1, id)
             val result = preparedStatement.executeQuery()
             result.toList { Participant(email = getString(1), name = getString(2)) }
+        }
+    }
+}
+
+fun DatabaseInterface.getCalendarEventId(eventId: String): Either<EventNotFoundException, String?> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).flatMap {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+SELECT calendar_event_id
+FROM   event
+WHERE  id = Uuid(?);
+""")
+            preparedStatement.setString(1, eventId)
+            val result = preparedStatement.executeQuery()
+            if (!result.next()) EventNotFoundException.left() else result.getString(1).right()
+        }
+    }
+}
+
+fun DatabaseInterface.setCalendarEventId(
+    eventId: String,
+    calendarEventId: String
+): Either<EventNotFoundException, Unit> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, eventId).flatMap {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+UPDATE event
+SET    calendar_event_id = ?
+WHERE  id = Uuid(?);
+""")
+            preparedStatement.setString(1, calendarEventId)
+            preparedStatement.setString(2, eventId)
+            val rows = preparedStatement.executeUpdate()
+
+            connection.commit()
+            if (rows == 0) EventNotFoundException.left() else Unit.right()
         }
     }
 }
