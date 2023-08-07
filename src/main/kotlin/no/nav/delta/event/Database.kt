@@ -78,6 +78,20 @@ WHERE  id = Uuid(?);
     }
 }
 
+fun DatabaseInterface.getFullEvent(id: String): Either<EventNotFoundException, FullEvent> {
+    // TODO: Do it in one query
+    return getEvent(id).flatMap { event ->
+        getParticipants(id).flatMap { participants ->
+            getHosts(id).flatMap { hosts ->
+                getCategories(id).map { categories ->
+                    FullEvent(event, participants, hosts, categories)
+                }
+            }
+        }
+    }
+}
+
+
 fun DatabaseInterface.getParticipants(
     id: String
 ): Either<EventNotFoundException, List<Participant>> {

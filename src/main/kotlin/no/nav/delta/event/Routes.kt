@@ -35,25 +35,15 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
 
                 val onlyPublic = !onlyMine && !onlyJoined
 
-                val categories = call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
+                val categories =
+                    call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
 
                 call.respond(
-                    database.getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy).fold(
-                        mutableListOf<FullEvent>()) { acc, event ->
+                    database
+                        .getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
+                        .fold(mutableListOf<FullEvent>()) { acc, event ->
                             database
-                                .getParticipants(event.id.toString())
-                                .flatMap { participants ->
-                                    database.getHosts(event.id.toString()).flatMap { hosts ->
-                                        database.getCategories(event.id.toString()).map { categories
-                                            ->
-                                            FullEvent(
-                                                event = event,
-                                                hosts = hosts,
-                                                participants = participants,
-                                                categories = categories)
-                                        }
-                                    }
-                                }
+                                .getFullEvent(event.id.toString())
                                 .map { acc.add(it) }
                             acc
                         })
@@ -66,20 +56,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         }
 
                     database
-                        .getEvent(id.toString())
-                        .flatMap { event ->
-                            database.getParticipants(id.toString()).flatMap { participants ->
-                                database.getHosts(id.toString()).flatMap { hosts ->
-                                    database.getCategories(id.toString()).map { categories ->
-                                        FullEvent(
-                                            event = event,
-                                            hosts = hosts,
-                                            participants = participants,
-                                            categories = categories)
-                                    }
-                                }
-                            }
-                        }
+                        .getFullEvent(id.toString())
                         .unwrapAndRespond(call)
                 }
             }
@@ -106,7 +83,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         call.principalName(),
                         ParticipantType.HOST,
                     )
-                    .map { event }
+                    .flatMap { database.getFullEvent(event.id.toString()) }
                     .unwrapAndRespond(call)
             }
             route("/{id}") {
@@ -147,13 +124,8 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         )
                     database
                         .updateEvent(newEvent)
-                        .map { event ->
-                            database.getParticipants(event.id.toString()).flatMap { participants ->
-                                database.getHosts(event.id.toString()).map { hosts ->
-                                    emailClient.sendUpdateNotification(event, participants, hosts)
-                                }
-                            }
-                            event
+                        .flatMap { event ->
+                            database.getFullEvent(event.id.toString())
                         }
                         .unwrapAndRespond(call)
                 }
