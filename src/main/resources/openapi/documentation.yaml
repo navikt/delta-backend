@@ -24,7 +24,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Event"
+                $ref: "#/components/schemas/FullEvent"
   /admin/event/{id}:
     delete:
       tags:
@@ -66,7 +66,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Event'
+                $ref: '#/components/schemas/FullEvent'
   /admin/event/{id}/category:
     post:
       tags:
@@ -211,7 +211,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Event"
+                  $ref: "#/components/schemas/FullEvent"
   /event/{id}:
     get:
       tags:
@@ -232,7 +232,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EventWithParticipants"
+                $ref: "#/components/schemas/FullEvent"
   /category:
     get:
       tags:
@@ -312,7 +312,7 @@ components:
           format: date-time
         participantLimit:
           type: integer
-    EventWithParticipants:
+    FullEvent:
       type: object
       properties:
         event:
@@ -320,13 +320,29 @@ components:
         participants:
           type: array
           items:
-            $ref: "#/components/schemas/EmailObject"
+            $ref: "#/components/schemas/Participant"
+        hosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Participant"
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/Category"
     EmailObject:
       type: object
       properties:
         email:
           type: string
           format: email
+    Participant:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
     ChangeParticipant:
       type: object
       properties:
