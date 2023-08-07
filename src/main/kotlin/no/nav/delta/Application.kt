@@ -5,12 +5,12 @@ import java.net.URL
 import java.util.concurrent.TimeUnit
 import no.nav.delta.application.createApplicationEngine
 import no.nav.delta.plugins.Database
-import no.nav.delta.plugins.EmailClient
+import no.nav.delta.email.CloudClient
 
 fun main() {
     val environment = Environment()
     val database = Database(environment)
-    val emailClient = EmailClient.fromEnvironment(environment)
+    val cloudClient = CloudClient.fromEnvironment(environment)
 
     val jwkProvider =
         JwkProviderBuilder(URL(environment.jwkKeysUrl))
@@ -18,5 +18,5 @@ fun main() {
             .rateLimited(10, 1, TimeUnit.MINUTES)
             .build()
 
-    createApplicationEngine(environment, database, emailClient, jwkProvider).start(wait = true)
+    createApplicationEngine(environment, database, cloudClient, jwkProvider).start(wait = true)
 }

@@ -1,4 +1,4 @@
-package no.nav.delta.plugins
+package no.nav.delta.email
 
 import arrow.core.Either
 import arrow.core.flatMap
@@ -18,7 +18,7 @@ import no.nav.delta.Environment
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
 
-interface EmailClient {
+interface CloudClient {
     fun sendEmail(
         subject: String,
         body: String,
@@ -43,7 +43,7 @@ interface EmailClient {
     fun deleteEvent(calendarEventId: String): Either<Throwable, Unit>
 
     companion object {
-        fun fromEnvironment(env: Environment): EmailClient {
+        fun fromEnvironment(env: Environment): CloudClient {
             val email = env.deltaEmailAddress
             val azureAppClientId = env.azureAppClientId
             val azureAppTenantId = env.azureAppTenantId
@@ -52,10 +52,10 @@ interface EmailClient {
                 azureAppClientId.isEmpty() ||
                 azureAppTenantId.isEmpty() ||
                 azureAppClientSecret.isEmpty()) {
-                return DummyEmailClient()
+                return DummyCloudClient()
             }
 
-            return AzureEmailClient(
+            return AzureCloudClient(
                 applicationEmailAddress = email,
                 azureAppClientId = azureAppClientId,
                 azureAppTenantId = azureAppTenantId,
@@ -64,12 +64,12 @@ interface EmailClient {
     }
 }
 
-class AzureEmailClient(
+class AzureCloudClient(
     private val applicationEmailAddress: String,
     azureAppClientId: String,
     azureAppTenantId: String,
     azureAppClientSecret: String
-) : EmailClient {
+) : CloudClient {
     private val tokenClient: ConfidentialClientApplication
     private val scopes = setOf("https://graph.microsoft.com/.default")
 
@@ -253,7 +253,7 @@ private data class AzureToken(val accessToken: String, val expiresOnDate: Date?)
     fun isActive(currentDate: Date) = expiresOnDate == null || currentDate.before(expiresOnDate)
 }
 
-class DummyEmailClient : EmailClient {
+class DummyCloudClient : CloudClient {
     override fun sendEmail(
         subject: String,
         body: String,

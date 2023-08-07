@@ -17,9 +17,9 @@ import kotlinx.coroutines.async
 import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.plugins.EmailClient
+import no.nav.delta.email.CloudClient
 
-fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
+fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
     authenticate("jwt") {
         route("/event") {
             get {
@@ -73,7 +73,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                         createEvent,
                     )
 
-                emailClient.createEvent(
+                cloudClient.createEvent(
                     event, listOf(), listOf(Participant(email, call.principalName())))
 
                 database
@@ -105,7 +105,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                                     }
                                     .map { calendarEventId ->
                                         async(start = CoroutineStart.LAZY) {
-                                            emailClient.sendCancellationNotification(
+                                            cloudClient.sendCancellationNotification(
                                                 calendarEventId,
                                                 fullEvent.event,
                                                 fullEvent.participants,
@@ -151,7 +151,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                                     database.getCalendarEventId(originalEvent.id.toString()).map {
                                         calendarEventId ->
                                         async(start = CoroutineStart.LAZY) {
-                                            emailClient.sendUpdateOrCreationNotification(
+                                            cloudClient.sendUpdateOrCreationNotification(
                                                 newEvent,
                                                 participants,
                                                 hosts,
@@ -224,7 +224,7 @@ fun Route.eventApi(database: DatabaseInterface, emailClient: EmailClient) {
                             .flatMap { calendarEventId ->
                                 database.getFullEvent(id.toString()).map { fullEvent ->
                                     async(start = CoroutineStart.LAZY) {
-                                        emailClient.sendUpdateOrCreationNotification(
+                                        cloudClient.sendUpdateOrCreationNotification(
                                             fullEvent.event,
                                             listOf(fullEvent.participants, listOf(user)).flatten(),
                                             fullEvent.hosts,

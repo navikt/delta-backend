@@ -4,13 +4,12 @@ import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
 import no.nav.delta.event.setCalendarEventId
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.plugins.EmailClient
 
 const val footer = """Vennlig hilsen,
 Team ΔDelta
 """
 
-fun EmailClient.sendUpdateOrCreationNotification(
+fun CloudClient.sendUpdateOrCreationNotification(
     event: Event,
     participants: List<Participant>,
     hosts: List<Participant>,
@@ -36,7 +35,7 @@ fun EmailClient.sendUpdateOrCreationNotification(
     }
 }
 
-fun EmailClient.sendCancellationNotification(
+fun CloudClient.sendCancellationNotification(
     calendarEventId: String,
     event: Event,
     participants: List<Participant>,
