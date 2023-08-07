@@ -79,14 +79,56 @@ WHERE  id = Uuid(?);
 }
 
 fun DatabaseInterface.getFullEvent(id: String): Either<EventNotFoundException, FullEvent> {
-    // TODO: Do it in one query
-    return getEvent(id).flatMap { event ->
-        getParticipants(id).flatMap { participants ->
-            getHosts(id).flatMap { hosts ->
-                getCategories(id).map { categories ->
-                    FullEvent(event, participants, hosts, categories)
+    return getCategories(id).map {categories ->
+        connection.use { connection ->
+            val preparedStatement =
+                connection.prepareStatement("""
+SELECT *
+FROM   event
+       LEFT JOIN participant
+              ON event.id = participant.event_id
+WHERE  id = Uuid(?);
+""")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            if (!result.next()) return EventNotFoundException.left()
+
+            val event = result.toEvent()
+            val participant = result.let {
+                if (result.getString("email") != null) {
+                    Pair(
+                        ParticipantType.valueOf(result.getString("type")),
+                        Participant(
+                            email = result.getString("email"),
+                            name = result.getString("name"),
+                        )
+                    )
+                } else {
+                    null
                 }
             }
+
+            val participants = if (participant != null) mutableListOf(participant) else mutableListOf()
+            result.apply {
+                while (next()) {
+                    participants.add(
+                        Pair(
+                            ParticipantType.valueOf(getString("type")),
+                            Participant(
+                                email = getString("email"),
+                                name = getString("name"),
+                            )
+                        )
+                    )
+                }
+            }
+
+            FullEvent(
+                event = event,
+                participants = participants.filter { it.first == ParticipantType.PARTICIPANT }.map { it.second },
+                hosts = participants.filter { it.first == ParticipantType.HOST }.map { it.second },
+                categories = categories,
+            )
         }
     }
 }
