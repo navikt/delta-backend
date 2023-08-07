@@ -14,10 +14,10 @@ import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import no.nav.delta.email.CloudClient
 import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.email.CloudClient
 
 fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
     authenticate("jwt") {
@@ -73,8 +73,14 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         createEvent,
                     )
 
-                cloudClient.createEvent(
-                    event, listOf(), listOf(Participant(email, call.principalName())))
+                val createEventFuture = {
+                    cloudClient.sendUpdateOrCreationNotification(
+                        event,
+                        listOf(),
+                        listOf(Participant(email, call.principalName())),
+                        database,
+                        null)
+                }
 
                 database
                     .registerForEvent(
@@ -83,7 +89,10 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         call.principalName(),
                         ParticipantType.HOST,
                     )
-                    .flatMap { database.getFullEvent(event.id.toString()) }
+                    .flatMap {
+                        Thread(createEventFuture).start()
+                        database.getFullEvent(event.id.toString())
+                    }
                     .unwrapAndRespond(call)
             }
             route("/{id}") {
@@ -104,7 +113,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                         it.toOption().toEither { "No calendar event id found" }
                                     }
                                     .map { calendarEventId ->
-                                        async(start = CoroutineStart.LAZY) {
+                                        {
                                             cloudClient.sendCancellationNotification(
                                                 calendarEventId,
                                                 fullEvent.event,
@@ -113,12 +122,12 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                         }
                                     }
                             }
-                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+                            .getOrElse { {} }
 
                     database
                         .deleteEvent(event.id.toString())
                         .map {
-                            sendCancellationFuture.start()
+                            Thread(sendCancellationFuture).start()
                             "Success"
                         }
                         .unwrapAndRespond(call)
@@ -150,7 +159,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                 database.getHosts(newEvent.id.toString()).flatMap { hosts ->
                                     database.getCalendarEventId(originalEvent.id.toString()).map {
                                         calendarEventId ->
-                                        async(start = CoroutineStart.LAZY) {
+                                        {
                                             cloudClient.sendUpdateOrCreationNotification(
                                                 newEvent,
                                                 participants,
@@ -161,13 +170,13 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                     }
                                 }
                             }
-                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+                            .getOrElse { {} }
 
                     database
                         .updateEvent(newEvent)
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
-                            sendUpdateFuture.start()
+                            Thread(sendUpdateFuture).start()
                             "Success"
                         }
                         .unwrapAndRespond(call)

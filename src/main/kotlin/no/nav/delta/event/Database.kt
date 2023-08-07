@@ -79,10 +79,11 @@ WHERE  id = Uuid(?);
 }
 
 fun DatabaseInterface.getFullEvent(id: String): Either<EventNotFoundException, FullEvent> {
-    return getCategories(id).map {categories ->
+    return getCategories(id).map { categories ->
         connection.use { connection ->
             val preparedStatement =
-                connection.prepareStatement("""
+                connection.prepareStatement(
+                    """
 SELECT *
 FROM   event
        LEFT JOIN participant
@@ -94,21 +95,22 @@ WHERE  id = Uuid(?);
             if (!result.next()) return EventNotFoundException.left()
 
             val event = result.toEvent()
-            val participant = result.let {
-                if (result.getString("email") != null) {
-                    Pair(
-                        ParticipantType.valueOf(result.getString("type")),
-                        Participant(
-                            email = result.getString("email"),
-                            name = result.getString("name"),
-                        )
-                    )
-                } else {
-                    null
+            val participant =
+                result.let {
+                    if (result.getString("email") != null) {
+                        Pair(
+                            ParticipantType.valueOf(result.getString("type")),
+                            Participant(
+                                email = result.getString("email"),
+                                name = result.getString("name"),
+                            ))
+                    } else {
+                        null
+                    }
                 }
-            }
 
-            val participants = if (participant != null) mutableListOf(participant) else mutableListOf()
+            val participants =
+                if (participant != null) mutableListOf(participant) else mutableListOf()
             result.apply {
                 while (next()) {
                     participants.add(
@@ -117,15 +119,16 @@ WHERE  id = Uuid(?);
                             Participant(
                                 email = getString("email"),
                                 name = getString("name"),
-                            )
-                        )
-                    )
+                            )))
                 }
             }
 
             FullEvent(
                 event = event,
-                participants = participants.filter { it.first == ParticipantType.PARTICIPANT }.map { it.second },
+                participants =
+                    participants
+                        .filter { it.first == ParticipantType.PARTICIPANT }
+                        .map { it.second },
                 hosts = participants.filter { it.first == ParticipantType.HOST }.map { it.second },
                 categories = categories,
             )

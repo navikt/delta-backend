@@ -4,8 +4,8 @@ import com.auth0.jwk.JwkProviderBuilder
 import java.net.URL
 import java.util.concurrent.TimeUnit
 import no.nav.delta.application.createApplicationEngine
-import no.nav.delta.plugins.Database
 import no.nav.delta.email.CloudClient
+import no.nav.delta.plugins.Database
 
 fun main() {
     val environment = Environment()

@@ -21,9 +21,9 @@ import io.ktor.server.routing.routing
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
+import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.email.CloudClient
 
 fun createApplicationEngine(
     env: Environment,
