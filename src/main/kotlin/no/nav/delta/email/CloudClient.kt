@@ -11,7 +11,6 @@ import com.microsoft.graph.models.*
 import com.microsoft.graph.requests.GraphServiceClient
 import java.lang.RuntimeException
 import java.time.LocalDateTime
-import java.time.ZoneOffset
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import no.nav.delta.Environment
