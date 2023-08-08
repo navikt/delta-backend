@@ -24,3 +24,14 @@ spec:
   env:
     - name: DEV_MODE
       value: !!string "false"
+  liveness:
+    path: /internal/is_alive
+    initialDelay: 10
+    timeout: 5
+    periodSeconds: 5
+    failureThreshold: 30
+  readiness:
+    path: /internal/is_ready
+    initialDelay: 10
+    periodSeconds: 5
+    timeout: 5

@@ -8,15 +8,19 @@ import com.fasterxml.jackson.datatype.jsr310.ser.LocalDateTimeSerializer
 import com.fasterxml.jackson.module.kotlin.addDeserializer
 import com.fasterxml.jackson.module.kotlin.addSerializer
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.jackson.jackson
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -63,5 +67,28 @@ fun Application.mySetup(
     routing {
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient)
+        get("/internal/is_alive") {
+            if (alivenessCheck()) {
+                call.respondText("I'm alive! :)")
+            } else {
+                call.respondText("I'm dead x_x", status = HttpStatusCode.InternalServerError)
+            }
+        }
+        get("/internal/is_ready") {
+            if (readinessCheck()) {
+                call.respondText("I'm ready! :)")
+            } else {
+                call.respondText(
+                    "Please wait! I'm not ready :(", status = HttpStatusCode.InternalServerError)
+            }
+        }
     }
+}
+
+fun alivenessCheck(): Boolean {
+    return true
+}
+
+fun readinessCheck(): Boolean {
+    return true
 }
