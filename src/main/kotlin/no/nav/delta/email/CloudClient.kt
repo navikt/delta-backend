@@ -294,5 +294,5 @@ class DummyCloudClient : CloudClient {
 fun LocalDateTime.toDateTimeTimeZone(): DateTimeTimeZone =
     DateTimeTimeZone().apply {
         timeZone = "Europe/Oslo"
-        dateTime = toInstant(ZoneOffset.of("Europe/Oslo")).toString()
+        dateTime = this@toDateTimeTimeZone.toString()
     }
