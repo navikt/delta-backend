@@ -157,6 +157,32 @@ WHERE  event_id = Uuid(?)
     }
 }
 
+fun DatabaseInterface.getAllParticipantsAndCalendarEventIds(
+    id: String
+): Either<EventNotFoundException, List<Pair<Participant, Option<String>>>> {
+    return connection.use { connection ->
+        checkIfEventExists(connection, id).map {
+            val preparedStatement =
+                connection.prepareStatement(
+                    """
+SELECT email,
+       NAME,
+       calendar_event_id
+FROM   participant
+WHERE  event_id = Uuid(?)
+""")
+            preparedStatement.setString(1, id)
+            val result = preparedStatement.executeQuery()
+            result.toList {
+                Pair(
+                    Participant(email = getString(1), name = getString(2)),
+                    Option.fromNullable(getString(3)),
+                )
+            }
+        }
+    }
+}
+
 fun DatabaseInterface.getHosts(id: String): Either<EventNotFoundException, List<Participant>> {
     return connection.use { connection ->
         checkIfEventExists(connection, id).map {
@@ -176,43 +202,63 @@ WHERE  event_id = Uuid(?)
     }
 }
 
-fun DatabaseInterface.getCalendarEventId(eventId: String): Either<EventNotFoundException, String?> {
+fun DatabaseInterface.getCalendarEventId(
+    eventId: String,
+    participantEmail: String
+): Either<RegisterCalendarEventIdError, String?> {
     return connection.use { connection ->
-        checkIfEventExists(connection, eventId).flatMap {
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
+        checkIfEventExists(connection, eventId)
+            .flatMap {
+                if (checkIfParticipantIsRegistered(connection, eventId, participantEmail).isLeft())
+                    Unit.right()
+                else EmailNotFoundException.left()
+            }
+            .flatMap {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
 SELECT calendar_event_id
-FROM   event
-WHERE  id = Uuid(?);
+FROM   participant
+WHERE  event_id = Uuid(?) 
+       AND email = ?;
 """)
-            preparedStatement.setString(1, eventId)
-            val result = preparedStatement.executeQuery()
-            if (!result.next()) EventNotFoundException.left() else result.getString(1).right()
-        }
+                preparedStatement.setString(1, eventId)
+                preparedStatement.setString(2, participantEmail)
+                val result = preparedStatement.executeQuery()
+                if (!result.next()) EventNotFoundException.left() else result.getString(1).right()
+            }
     }
 }
 
 fun DatabaseInterface.setCalendarEventId(
     eventId: String,
+    participantEmail: String,
     calendarEventId: String
-): Either<EventNotFoundException, Unit> {
+): Either<RegisterCalendarEventIdError, Unit> {
     return connection.use { connection ->
-        checkIfEventExists(connection, eventId).flatMap {
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
-UPDATE event
+        checkIfEventExists(connection, eventId)
+            .flatMap {
+                if (checkIfParticipantIsRegistered(connection, eventId, participantEmail).isLeft())
+                    Unit.right()
+                else EmailNotFoundException.left()
+            }
+            .flatMap {
+                val preparedStatement =
+                    connection.prepareStatement(
+                        """
+UPDATE participant
 SET    calendar_event_id = ?
-WHERE  id = Uuid(?);
+WHERE  event_id = Uuid(?) 
+       AND email = ?;
 """)
-            preparedStatement.setString(1, calendarEventId)
-            preparedStatement.setString(2, eventId)
-            val rows = preparedStatement.executeUpdate()
+                preparedStatement.setString(1, calendarEventId)
+                preparedStatement.setString(2, eventId)
+                preparedStatement.setString(3, participantEmail)
+                val rows = preparedStatement.executeUpdate()
 
-            connection.commit()
-            if (rows == 0) EventNotFoundException.left() else Unit.right()
-        }
+                connection.commit()
+                if (rows == 0) EventNotFoundException.left() else Unit.right()
+            }
     }
 }
 
