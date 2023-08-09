@@ -11,37 +11,33 @@ Team ΔDelta
 
 fun CloudClient.sendUpdateOrCreationNotification(
     event: Event,
-    participants: List<Participant>,
-    hosts: List<Participant>,
     database: DatabaseInterface,
+    participant: Participant,
     calendarEventId: String?,
 ) {
     if (calendarEventId != null) {
         updateEvent(
             event = event,
-            participants = participants,
-            hosts = hosts,
+            participant = participant,
             calendarEventId = calendarEventId,
         )
     } else {
         createEvent(
                 event = event,
-                participants = participants,
-                hosts = hosts,
+                participant = participant,
             )
             .map { calendarEventId ->
-                database.setCalendarEventId(event.id.toString(), calendarEventId)
+                database.setCalendarEventId(event.id.toString(), participant.email, calendarEventId)
             }
     }
 }
 
 fun CloudClient.sendCancellationNotification(
-    calendarEventId: String,
+    calendarEventId: String?,
     event: Event,
-    participants: List<Participant>,
-    hosts: List<Participant>
+    participant: Participant,
 ) {
-    deleteEvent(calendarEventId = calendarEventId)
+    if (calendarEventId != null) deleteEvent(calendarEventId = calendarEventId)
 
     val subject = "Avlysning av ${event.title}"
     val email =
@@ -57,6 +53,6 @@ $footer
     sendEmail(
         subject = subject,
         body = email,
-        bccRecipients =
-            listOf(participants, hosts).flatMap { it.map { participant -> participant.email } })
+        toRecipients = listOf(participant.email),
+    )
 }

@@ -12,8 +12,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.async
 import no.nav.delta.email.CloudClient
 import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendUpdateOrCreationNotification
@@ -76,10 +74,10 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                 val createEventFuture = {
                     cloudClient.sendUpdateOrCreationNotification(
                         event,
-                        listOf(),
-                        listOf(Participant(email, call.principalName())),
                         database,
-                        null)
+                        Participant(email, call.principalName()),
+                        null,
+                    )
                 }
 
                 database
@@ -105,22 +103,15 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                     // I don't care if this fails...
                     val sendCancellationFuture =
                         database
-                            .getFullEvent(event.id.toString())
-                            .flatMap { fullEvent ->
-                                database
-                                    .getCalendarEventId(event.id.toString())
-                                    .flatMap {
-                                        it.toOption().toEither { "No calendar event id found" }
+                            .getAllParticipantsAndCalendarEventIds(event.id.toString())
+                            .map { pairs ->
+                                {
+                                    pairs.map { (participant, calendarEventId) ->
+                                        cloudClient.sendCancellationNotification(
+                                            calendarEventId.getOrNull(), event, participant)
                                     }
-                                    .map { calendarEventId ->
-                                        {
-                                            cloudClient.sendCancellationNotification(
-                                                calendarEventId,
-                                                fullEvent.event,
-                                                fullEvent.participants,
-                                                fullEvent.hosts)
-                                        }
-                                    }
+                                    Unit
+                                }
                             }
                             .getOrElse { {} }
 
@@ -154,20 +145,18 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
 
                     val sendUpdateFuture =
                         database
-                            .getParticipants(newEvent.id.toString())
-                            .flatMap { participants ->
-                                database.getHosts(newEvent.id.toString()).flatMap { hosts ->
-                                    database.getCalendarEventId(originalEvent.id.toString()).map {
-                                        calendarEventId ->
-                                        {
-                                            cloudClient.sendUpdateOrCreationNotification(
-                                                newEvent,
-                                                participants,
-                                                hosts,
-                                                database,
-                                                calendarEventId)
-                                        }
+                            .getAllParticipantsAndCalendarEventIds(newEvent.id.toString())
+                            .map { pairs ->
+                                {
+                                    pairs.map { (participant, calendarEventId) ->
+                                        cloudClient.sendUpdateOrCreationNotification(
+                                            newEvent,
+                                            database,
+                                            participant,
+                                            calendarEventId.getOrNull(),
+                                        )
                                     }
+                                    Unit
                                 }
                             }
                             .getOrElse { {} }
@@ -187,10 +176,24 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                             return@delete it.left().unwrapAndRespond(call)
                         }
                     val participantEmail = call.receive<EmailToken>().email
+                    val deleteCalendarEventFuture =
+                        database
+                            .getCalendarEventId(event.id.toString(), participantEmail)
+                            .map {
+                                {
+                                    if (it != null) {
+                                        cloudClient.deleteEvent(it)
+                                    }
+                                }
+                            }
+                            .getOrElse { {} }
 
                     database
                         .unregisterFromEvent(event.id.toString(), participantEmail)
-                        .map { "Success" }
+                        .map {
+                            Thread(deleteCalendarEventFuture).start()
+                            "Success"
+                        }
                         .unwrapAndRespond(call)
                 }
                 post("/participant") {
@@ -229,26 +232,19 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
 
                     val updateCalendarEventFuture =
                         database
-                            .getCalendarEventId(id.toString())
-                            .flatMap { calendarEventId ->
-                                database.getFullEvent(id.toString()).map { fullEvent ->
-                                    async(start = CoroutineStart.LAZY) {
-                                        cloudClient.sendUpdateOrCreationNotification(
-                                            fullEvent.event,
-                                            listOf(fullEvent.participants, listOf(user)).flatten(),
-                                            fullEvent.hosts,
-                                            database,
-                                            calendarEventId,
-                                        )
-                                    }
+                            .getEvent(id.toString())
+                            .map { event ->
+                                {
+                                    cloudClient.sendUpdateOrCreationNotification(
+                                        event, database, user, null)
                                 }
                             }
-                            .getOrElse { async(start = CoroutineStart.LAZY) {} }
+                            .getOrElse { {} }
 
                     database
                         .registerForEvent(id.toString(), user.email, user.name)
                         .map {
-                            updateCalendarEventFuture.start()
+                            Thread(updateCalendarEventFuture).start()
                             "Success"
                         }
                         .unwrapAndRespond(call)
@@ -259,10 +255,24 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                             return@delete it.left().unwrapAndRespond(call)
                         }
                     val email = call.principalEmail()
+                    val deleteCalendarEventFuture =
+                        database
+                            .getCalendarEventId(id.toString(), email)
+                            .map {
+                                {
+                                    if (it != null) {
+                                        cloudClient.deleteEvent(it)
+                                    }
+                                }
+                            }
+                            .getOrElse { {} }
 
                     database
                         .unregisterFromEvent(id.toString(), email)
-                        .map { "Success" }
+                        .map {
+                            Thread(deleteCalendarEventFuture).start()
+                            "Success"
+                        }
                         .unwrapAndRespond(call)
                 }
             }

@@ -26,17 +26,12 @@ interface CloudClient {
         bccRecipients: List<String> = emptyList()
     )
 
-    fun createEvent(
-        event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
-    ): Either<Throwable, String>
+    fun createEvent(event: Event, participant: Participant): Either<Throwable, String>
 
     fun updateEvent(
         calendarEventId: String,
         event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
+        participant: Participant
     ): Either<Throwable, Unit>
 
     fun deleteEvent(calendarEventId: String): Either<Throwable, Unit>
@@ -145,14 +140,10 @@ class AzureCloudClient(
 
     private fun prepareCalendarEvent(
         event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
+        participant: Participant,
     ): Either<Throwable, com.microsoft.graph.models.Event> {
         if (applicationEmailAddress.isBlank()) {
             return RuntimeException("Missing application email address").left()
-        }
-        if (participants.isEmpty()) {
-            return IllegalArgumentException("Missing recipients").left()
         }
         refreshTokenIfNeeded()
 
@@ -166,9 +157,6 @@ class AzureCloudClient(
                             content =
                                 """${event.description}
 
-Arrangører:
-${hosts.joinToString("\n") { host -> "${host.name}: ${host.email}" }}
-
 Detaljert og oppdatert informasjon om arrangementet finner du her:
 https://delta.nav.no/event/${event.id}/
 """
@@ -177,7 +165,7 @@ https://delta.nav.no/event/${event.id}/
                 start = event.startTime.toDateTimeTimeZone()
                 end = event.endTime.toDateTimeTimeZone()
                 location = Location().apply { displayName = event.location }
-                attendees = listOf(participants, hosts).flatten().map { emailAsAttendee(it.email) }
+                attendees = listOf(emailAsAttendee(participant.email))
             }
 
         return calendarEvent.right()
@@ -185,10 +173,9 @@ https://delta.nav.no/event/${event.id}/
 
     override fun createEvent(
         event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
+        participant: Participant,
     ): Either<Throwable, String> {
-        return prepareCalendarEvent(event, participants, hosts).flatMap { calendarEvent ->
+        return prepareCalendarEvent(event, participant).flatMap { calendarEvent ->
             try {
                 graphClient
                     .users(applicationEmailAddress)
@@ -208,10 +195,9 @@ https://delta.nav.no/event/${event.id}/
     override fun updateEvent(
         calendarEventId: String,
         event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
+        participant: Participant
     ): Either<Throwable, Unit> {
-        return prepareCalendarEvent(event, participants, hosts)
+        return prepareCalendarEvent(event, participant)
             .map { calendarEvent ->
                 calendarEvent.id = calendarEventId
                 calendarEvent
@@ -264,23 +250,18 @@ class DummyCloudClient : CloudClient {
             "DummyEmailClient: Sending e-mail: subject='$subject' to=$toRecipients, cc=$ccRecipients, bcc=$bccRecipients")
     }
 
-    override fun createEvent(
-        event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
-    ): Either<Throwable, String> {
-        println("DummyEmailClient: Creating event: subject='${event.title}' to=$participants")
+    override fun createEvent(event: Event, participant: Participant): Either<Throwable, String> {
+        println("DummyEmailClient: Creating event: subject='${event.title}' to=$participant")
         return "dummy-id".right()
     }
 
     override fun updateEvent(
         calendarEventId: String,
         event: Event,
-        participants: List<Participant>,
-        hosts: List<Participant>
+        participant: Participant
     ): Either<Throwable, Unit> {
         println(
-            "DummyEmailClient: Updating event: id='$calendarEventId' subject='${event.title}' to=$participants")
+            "DummyEmailClient: Updating event: id='$calendarEventId' subject='${event.title}' to=$participant")
         return Unit.right()
     }
 

@@ -13,6 +13,8 @@ sealed class ExceptionWithDefaultResponse(
     }
 }
 
+sealed interface RegisterCalendarEventIdError
+
 sealed interface RegisterForEventError
 
 object ParticipantAlreadyRegisteredException :
@@ -35,14 +37,16 @@ sealed interface UnregisterFromEventError
 
 object EmailNotFoundException :
     ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Email not found"),
-    UnregisterFromEventError
+    UnregisterFromEventError,
+    RegisterCalendarEventIdError
 
 object EventNotFoundException :
     ExceptionWithDefaultResponse(HttpStatusCode.NotFound, "Event not found"),
     RegisterForEventError,
     UnregisterFromEventError,
     EventAccessException,
-    ChangeParticipantError
+    ChangeParticipantError,
+    RegisterCalendarEventIdError
 
 sealed interface IdException : EventAccessException
 
