@@ -26,10 +26,7 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
-import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.event.eventApi
-import no.nav.delta.event.getAllParticipantsAndCalendarEventIds
-import no.nav.delta.event.toEvent
 import no.nav.delta.plugins.DatabaseInterface
 
 fun createApplicationEngine(
@@ -65,36 +62,6 @@ fun Application.mySetup(
             configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false)
         }
         json()
-    }
-
-    // Migrate to individual calendar events
-    database.connection.apply {
-        val statement =
-            prepareStatement(
-                """
-SELECT * FROM event WHERE calendar_event_id IS NOT NULL FOR UPDATE;
-""")
-        statement.executeQuery().use { rs ->
-            while (rs.next()) {
-                rs.toEvent().let { event ->
-                    val calendarEventId = rs.getString("calendar_event_id")!!
-                    cloudClient.deleteEvent(calendarEventId)
-                    database.getAllParticipantsAndCalendarEventIds(event.id.toString()).map { pairs
-                        ->
-                        pairs.forEach { (participant, _) ->
-                            cloudClient.sendUpdateOrCreationNotification(
-                                event = event,
-                                database = database,
-                                participant = participant,
-                                calendarEventId = null,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        prepareStatement("UPDATE event SET calendar_event_id = NULL").executeUpdate()
-        commit()
     }
 
     routing {
