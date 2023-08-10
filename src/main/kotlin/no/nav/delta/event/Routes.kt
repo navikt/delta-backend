@@ -147,8 +147,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         database
                             .getAllParticipantsAndCalendarEventIds(newEvent.id.toString())
                             .map { pairs ->
-                                {
-                                    pairs.map { (participant, calendarEventId) ->
+                                pairs.map { (participant, calendarEventId) ->
+                                    {
                                         cloudClient.sendUpdateOrCreationNotification(
                                             newEvent,
                                             database,
@@ -156,16 +156,15 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                             calendarEventId.getOrNull(),
                                         )
                                     }
-                                    Unit
                                 }
                             }
-                            .getOrElse { {} }
+                            .getOrElse { listOf() }
 
                     database
                         .updateEvent(newEvent)
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
-                            Thread(sendUpdateFuture).start()
+                            sendUpdateFuture.forEach { future -> Thread(future).start() }
                             it
                         }
                         .unwrapAndRespond(call)
