@@ -274,8 +274,8 @@ fun DatabaseInterface.getEvents(
         val clauses = mutableListOf("TRUE")
         val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
 
-        if (onlyFuture) clauses.add("start_time > NOW()")
-        if (onlyPast) clauses.add("end_time < NOW()")
+        if (onlyFuture) clauses.add("end_time > DATE_TRUNC('day', NOW())")
+        if (onlyPast) clauses.add("start_time < DATE_TRUNC('day', NOW()) + MAKE_INTERVAL(days => 1)")
         if (onlyPublic) clauses.add("public = TRUE")
 
         categories.forEach { categoryId ->
