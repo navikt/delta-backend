@@ -39,6 +39,9 @@ jobs:
   deploy-dev:
     name: Deploy to dev
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +55,9 @@ jobs:
     name: Deploy to prod
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     needs: [build, deploy-dev]
     steps:
       - uses: actions/checkout@v4
