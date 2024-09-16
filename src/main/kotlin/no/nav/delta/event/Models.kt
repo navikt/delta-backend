@@ -50,6 +50,7 @@ data class CreateEvent(
     val public: Boolean,
     val participantLimit: Int,
     val signupDeadline: LocalDateTime?,
+    val sendNotificationEmail: Boolean? = true
 )
 
 data class Category(
