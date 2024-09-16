@@ -18,6 +18,10 @@ plugins {
     id("com.diffplug.spotless") version "6.19.0"
 }
 
+kotlin {
+    jvmToolchain(17)
+}
+
 spotless {
     kotlin {
         ktfmt().dropboxStyle()
@@ -64,10 +68,4 @@ dependencies {
 
     implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
     implementation("com.microsoft.azure:msal4j:$microsoft_azure_version")
-}
-
-tasks {
-    withType<KotlinCompile> {
-        kotlinOptions.jvmTarget = "17"
-    }
 }
