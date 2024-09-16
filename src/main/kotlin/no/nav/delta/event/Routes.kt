@@ -88,7 +88,9 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         ParticipantType.HOST,
                     )
                     .flatMap {
-                        Thread(createEventFuture).start()
+                        if(createEvent.sendNotificationEmail == true) {
+                            Thread(createEventFuture).start()
+                        }
                         database.getFullEvent(event.id.toString())
                     }
                     .unwrapAndRespond(call)
@@ -164,7 +166,9 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         .updateEvent(newEvent)
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
-                            sendUpdateFuture.forEach { future -> Thread(future).start() }
+                            if(changedEvent.sendNotificationEmail == true) {
+                                sendUpdateFuture.forEach { future -> Thread(future).start() }
+                            }
                             it
                         }
                         .unwrapAndRespond(call)
