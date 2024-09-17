@@ -287,6 +287,8 @@ components:
           format: date-time
         participantLimit:
           type: integer
+        sendNotificationEmail:
+          type: boolean
     Event:
       type: object
       properties:
