@@ -7,9 +7,8 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     permissions:
-      packages: write
-      contents: read
-      id-token: write
+      contents: write # required for dep graph
+      id-token: write # required by gar 
     outputs:
       image: ${{ steps.docker-build-push.outputs.image }}
     steps:
