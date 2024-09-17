@@ -1,3 +1,3 @@
-FROM ghcr.io/navikt/baseimages/temurin:17
-COPY build/libs/*-all.jar app.jar
-ENV JAVA_OPTS='-Dlogback.configurationFile=logback.xml'
+FROM gcr.io/distroless/java21-debian12
+COPY build/libs/*.jar app.jar
+CMD [ "app.jar" ]
