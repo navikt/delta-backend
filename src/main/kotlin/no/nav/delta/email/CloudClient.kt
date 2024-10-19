@@ -157,8 +157,7 @@ class AzureCloudClient(
                             content =
                                 """${event.description}
 
-Detaljert og oppdatert informasjon om arrangementet finner du her:
-https://delta.nav.no/event/${event.id}/
+Merk: Hvis du ikke kan delta, må du melde deg av via <a href="https://delta.nav.no/event/${event.id}/">arrangementsiden i Delta</a>. Det er ikke nok å avvise invitasjonen i Outlook. På arrangementsiden finner du også oppdatert informasjon om arrangementet.
 """
                         }
                     }
