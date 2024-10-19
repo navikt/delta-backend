@@ -157,7 +157,7 @@ class AzureCloudClient(
                             content =
                                 """<p>${event.description.replace("\n", "<br>")}</p>
 
-<p>Merk: Hvis du ikke kan delta, må du melde deg av via <a href="https://delta.nav.no/event/${event.id}/">arrangementsiden i Delta</a>. Det er ikke nok å avvise invitasjonen i Outlook. På arrangementsiden finner du også oppdatert informasjon om arrangementet.</p>
+<p><strong>Merk:</strong> Hvis du ikke kan delta, må du melde deg av via <a href="https://delta.nav.no/event/${event.id}/">arrangementsiden i Delta</a>. Det er ikke nok å avvise invitasjonen i Outlook.</p>
 """
                         }
                     }
