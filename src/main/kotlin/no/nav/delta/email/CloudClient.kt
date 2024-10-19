@@ -153,7 +153,7 @@ class AzureCloudClient(
                 body =
                     event.description.let {
                         ItemBody().apply {
-                            contentType = BodyType.TEXT
+                            contentType = BodyType.HTML
                             content =
                                 """${event.description}
 
