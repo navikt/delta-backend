@@ -4,7 +4,7 @@ Backenden som hører til [delta-frontend](https://github.com/navikt/delta-fronte
 
 ## Avhengigheter
 
-- Java 17 (Med [SDKMAN](https://sdkman.io/): `sdk install java 17.0.7-tem`)
+- Java 21 (Med [SDKMAN](https://sdkman.io/): `sdk install java 17.0.7-tem`)
 - Docker (På Mac anbefales [Colima](https://github.com/abiosoft/colima))
 - docker-compose (Mac: `brew install docker-compose`, Ubuntu: `apt install docker-compose`)
 
