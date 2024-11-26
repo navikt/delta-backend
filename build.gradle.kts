@@ -5,8 +5,8 @@ val hikari_version = "5.1.0"
 val flyway_version = "10.18.0"
 val jackson_version = "2.17.2"
 val arrow_version = "1.2.4"
-val microsoft_sdk_version = "5.65.0"
-val microsoft_azure_version = "1.13.9"
+val microsoft_sdk_version = "6.16.0"
+val microsoft_azure_version = "1.17.1"
 
 val appMainClass = "no.nav.delta.ApplicationKt"
 
