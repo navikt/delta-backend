@@ -1,6 +1,6 @@
 # delta-backend
 
-Backenden som hører til [delta-frontend](https://github.com/navikt/delta-frontend)
+Backenden som hører til [delta-frontend](https://github.com/navikt/delta-frontend).
 
 ## Avhengigheter
 
