@@ -25,6 +25,7 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
     init {
         Flyway.configure().run {
             dataSource(dataSource)
+            locations("db/migration")
             load().migrate()
         }
     }
