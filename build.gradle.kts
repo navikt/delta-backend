@@ -1,21 +1,21 @@
-val ktor_version = "2.3.12"
-val logback_version = "1.5.8"
-val postgres_version = "42.7.4"
-val hikari_version = "5.1.0"
-val flyway_version = "10.18.0"
-val jackson_version = "2.17.2"
-val arrow_version = "1.2.4"
-val microsoft_sdk_version = "5.65.0"
-val microsoft_azure_version = "1.13.9"
+val ktor_version = "3.1.1"
+val logback_version = "1.5.18"
+val postgres_version = "42.7.5"
+val hikari_version = "6.3.0"
+val flyway_version = "11.5.0"
+val jackson_version = "2.18.3"
+val arrow_version = "2.0.1"
+val microsoft_sdk_version = "6.33.0"
+val microsoft_azure_version = "1.19.1"
 
 val appMainClass = "no.nav.delta.ApplicationKt"
 
 plugins {
-    kotlin("jvm") version "2.0.20"
-    id("io.ktor.plugin") version "2.3.12"
-    id("com.gradleup.shadow") version "8.3.1"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20"
-    id("com.diffplug.spotless") version "6.25.0"
+    kotlin("jvm") version "2.1.20"
+    id("io.ktor.plugin") version "3.1.1"
+    id("com.gradleup.shadow") version "8.3.6"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.1.20"
+    id("com.diffplug.spotless") version "7.0.2"
 }
 
 kotlin {
