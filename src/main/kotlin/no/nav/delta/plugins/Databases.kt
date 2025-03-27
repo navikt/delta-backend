@@ -4,23 +4,20 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import java.sql.Connection
 import no.nav.delta.Environment
-import no.nav.delta.getEnvVar
 import org.flywaydb.core.Flyway
+import org.slf4j.LoggerFactory
 
-class Database(private val env: Environment) :
-    DatabaseInterface {
-    private val dataSource: HikariDataSource = HikariDataSource(
-        HikariConfig().apply {
-            jdbcUrl = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_JDBC_URL", null)
-            maximumPoolSize = 3
-            minimumIdle = 3
-            idleTimeout = 10000
-            maxLifetime = 300000
-            isAutoCommit = false
-            transactionIsolation = "TRANSACTION_REPEATABLE_READ"
-            validate()
-        },
-    )
+class DatabaseConfig(private val env: Environment) : DatabaseInterface {
+    private val logger = LoggerFactory.getLogger(javaClass)
+    private val hikariConfig = HikariConfig().apply {
+        if(env.azureAppClientId.isBlank()) {
+            logger.info("Setting up local database connection with jdbcUrl = ${env.dbJdbcUrl}")
+        }
+        jdbcUrl = env.dbJdbcUrl
+    }
+
+
+    private val dataSource: HikariDataSource = HikariDataSource(hikariConfig)
 
     override val connection: Connection
         get() = dataSource.connection

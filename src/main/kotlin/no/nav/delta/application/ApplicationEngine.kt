@@ -34,7 +34,10 @@ fun createApplicationEngine(
     jwkProvider: JwkProvider,
 ): EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration> =
     embeddedServer(
-        Netty, env.applicationPort, module = { mySetup(env, database, cloudClient, jwkProvider) })
+        factory = Netty,
+        port = env.applicationPort,
+        module = { mySetup(env, database, cloudClient, jwkProvider) }
+    )
 
 fun Application.mySetup(
     env: Environment,
@@ -42,7 +45,7 @@ fun Application.mySetup(
     cloudClient: CloudClient,
     jwkProvider: JwkProvider
 ) {
-    setupAuth(env, jwkProvider, env.jwtIssuer)
+    setupAuth(jwkProvider, env.jwtIssuer)
     install(ContentNegotiation) {
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)
