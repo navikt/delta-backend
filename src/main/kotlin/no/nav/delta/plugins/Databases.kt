@@ -23,11 +23,11 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
         get() = dataSource.connection
 
     init {
-        /*Flyway.configure().run {
+        Flyway.configure().run {
             dataSource(dataSource)
             locations("db/migration")
             load().migrate()
-        }*/
+        }
     }
 }
 
