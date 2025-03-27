@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: daily
+      interval: weekly
     groups:
       github:
         patterns:
@@ -12,7 +12,7 @@ updates:
   - package-ecosystem: gradle
     directory: "/"
     schedule:
-      interval: daily
+      interval: weekly
     groups:
       gradle:
         patterns:
@@ -21,4 +21,4 @@ updates:
   - package-ecosystem: docker
     directory: "/"
     schedule:
-      interval: daily
+      interval: weekly
