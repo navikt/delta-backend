@@ -13,7 +13,6 @@ val appMainClass = "no.nav.delta.ApplicationKt"
 plugins {
     kotlin("jvm") version "2.0.20"
     id("io.ktor.plugin") version "2.3.12"
-    id("com.gradleup.shadow") version "8.3.1"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20"
     id("com.diffplug.spotless") version "6.25.0"
 }
@@ -66,4 +65,29 @@ dependencies {
 
     implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
     implementation("com.microsoft.azure:msal4j:$microsoft_azure_version")
+}
+
+tasks {
+    withType<Jar> {
+        archiveBaseName.set("app")
+
+        manifest {
+            attributes["Main-Class"] = mainClassName
+            attributes["Class-Path"] = configurations.runtimeClasspath.get().joinToString(separator = " ") {
+                it.name
+            }
+        }
+
+        doLast {
+            configurations.runtimeClasspath.get().forEach {
+                val file = File("${layout.buildDirectory.get()}/libs/${it.name}")
+                if (!file.exists())
+                    it.copyTo(file)
+            }
+        }
+    }
+
+    withType<Wrapper> {
+        gradleVersion = "8.10.1"
+    }
 }
