@@ -55,7 +55,7 @@ jobs:
         env:
           CLUSTER: dev-gcp
           RESOURCE: nais-dev.yaml
-          VAR: image=${{ needs.build.outputs.image }}
+          IMAGE: ${{ needs.build.outputs.image }}
 
   deploy-prod:
     name: Deploy to prod
@@ -71,4 +71,4 @@ jobs:
         env:
           CLUSTER: prod-gcp
           RESOURCE: nais-prod.yaml
-          VAR: image=${{ needs.build.outputs.image }}
+          IMAGE: ${{ needs.build.outputs.image }}
