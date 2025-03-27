@@ -27,8 +27,6 @@ class Database(private val env: Environment) :
 
     init {
         Flyway.configure().run {
-            locations("db")
-            configuration(mapOf("flyway.postgresql.transactional.lock" to "false"))
             dataSource(dataSource)
             load().migrate()
         }
