@@ -8,9 +8,10 @@ import java.net.SocketException
 import java.sql.Connection
 import java.sql.ResultSet
 import no.nav.delta.Environment
+import no.nav.delta.getEnvVar
 import org.flywaydb.core.Flyway
 
-class Database(private val env: Environment, retries: Long = 30, sleepTime: Long = 10_000) :
+class Database(private val env: Environment) :
     DatabaseInterface {
     private val dataSource: HikariDataSource
 
@@ -21,14 +22,12 @@ class Database(private val env: Environment, retries: Long = 30, sleepTime: Long
         var current = 0
         var connected = false
         var tempDatasource: HikariDataSource? = null
-        while (!connected && current++ < retries) {
+        while (!connected && current++ < 30) {
             try {
                 tempDatasource =
                     HikariDataSource(
                         HikariConfig().apply {
-                            jdbcUrl = env.jdbcUrl()
-                            username = env.dbUsername
-                            password = env.dbPassword
+                            jdbcUrl = getEnvVar("NAIS_DATABASE_DELTA_BACKEND_DELTA_JDBC_URL", null)
                             maximumPoolSize = 3
                             minimumIdle = 3
                             idleTimeout = 10000
@@ -41,7 +40,7 @@ class Database(private val env: Environment, retries: Long = 30, sleepTime: Long
                 connected = true
             } catch (ex: HikariPool.PoolInitializationException) {
                 if (ex.cause?.cause is ConnectException || ex.cause?.cause is SocketException) {
-                    Thread.sleep(sleepTime)
+                    Thread.sleep(10_000)
                 } else {
                     throw ex
                 }
