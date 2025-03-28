@@ -13,7 +13,6 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
         password = env.dbPassword
         maximumPoolSize = 3
         minimumIdle = 3
-        idleTimeout = 10000
         maxLifetime = 300000
         isAutoCommit = false
         transactionIsolation = "TRANSACTION_REPEATABLE_READ"

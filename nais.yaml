@@ -22,9 +22,15 @@ spec:
       enabled: true
       tenant: nav.no
       allowAllUsers: true
+  observability:
+    autoInstrumentation:
+      enabled: true
+      runtime: java
   env:
     - name: DEV_MODE
       value: !!string "false"
+    - name: DELTA_EMAIL_ADDRESS
+      value: "ikkesvar.delta@nav.no"
   liveness:
     path: /internal/is_alive
     initialDelay: 10
