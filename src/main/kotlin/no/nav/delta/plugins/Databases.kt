@@ -5,15 +5,19 @@ import com.zaxxer.hikari.HikariDataSource
 import java.sql.Connection
 import no.nav.delta.Environment
 import org.flywaydb.core.Flyway
-import org.slf4j.LoggerFactory
 
 class DatabaseConfig(private val env: Environment) : DatabaseInterface {
-    private val logger = LoggerFactory.getLogger(javaClass)
     private val hikariConfig = HikariConfig().apply {
-        if(env.azureAppClientId.isBlank()) {
-            logger.info("Setting up local database connection with jdbcUrl = ${env.dbJdbcUrl}")
-        }
         jdbcUrl = env.dbJdbcUrl
+        username = env.dbUsername
+        password = env.dbPassword
+        maximumPoolSize = 3
+        minimumIdle = 3
+        idleTimeout = 10000
+        maxLifetime = 300000
+        isAutoCommit = false
+        transactionIsolation = "TRANSACTION_REPEATABLE_READ"
+        validate()
     }
 
 
@@ -24,7 +28,7 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
 
     init {
         Flyway.configure().run {
-            dataSource(dataSource)
+            dataSource(env.dbJdbcUrl, env.dbUsername, env.dbPassword)
             locations("db/migration")
             load().migrate()
         }
