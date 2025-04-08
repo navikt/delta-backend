@@ -16,6 +16,7 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
+import org.slf4j.LoggerFactory
 
 fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
     authenticate("jwt") {
@@ -332,7 +333,12 @@ fun ApplicationCall.getEventWithPrivilege(
             }
         }
 
-fun ApplicationCall.principalEmail() =
-    principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+fun ApplicationCall.principalEmail(): String {
+    return principal<JWTPrincipal>()?.get("preferred_username")?.lowercase()
+        ?: "username_not_found".also {
+        LoggerFactory.getLogger("routes").warn("preferred_username found in JWT token")
+    }
+}
+
 
 fun ApplicationCall.principalName() = principal<JWTPrincipal>()!!["name"]!!
