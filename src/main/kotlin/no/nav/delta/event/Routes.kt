@@ -64,7 +64,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
 
                 if (createEvent.startTime.isAfter(createEvent.endTime)) {
                     return@put call.respond(
-                        HttpStatusCode.BadRequest, "Start time must be before end time")
+                        HttpStatusCode.BadRequest, "Start time must be before end time"
+                    )
                 }
 
                 val event =
@@ -89,7 +90,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         ParticipantType.HOST,
                     )
                     .flatMap {
-                        if(createEvent.sendNotificationEmail == true) {
+                        if (createEvent.sendNotificationEmail == true) {
                             Thread(createEventFuture).start()
                         }
                         database.getFullEvent(event.id.toString())
@@ -111,7 +112,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                 {
                                     pairs.map { (participant, calendarEventId) ->
                                         cloudClient.sendCancellationNotification(
-                                            calendarEventId.getOrNull(), event, participant)
+                                            calendarEventId.getOrNull(), event, participant
+                                        )
                                     }
                                     Unit
                                 }
@@ -167,7 +169,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         .updateEvent(newEvent)
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
-                            if(changedEvent.sendNotificationEmail == true) {
+                            if (changedEvent.sendNotificationEmail == true) {
                                 sendUpdateFuture.forEach { future -> Thread(future).start() }
                             }
                             it
@@ -240,7 +242,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                             .map { event ->
                                 {
                                     cloudClient.sendUpdateOrCreationNotification(
-                                        event, database, user, null)
+                                        event, database, user, null
+                                    )
                                 }
                             }
                             .getOrElse { {} }
@@ -336,9 +339,13 @@ fun ApplicationCall.getEventWithPrivilege(
 fun ApplicationCall.principalEmail(): String {
     return principal<JWTPrincipal>()?.get("preferred_username")?.lowercase()
         ?: "username_not_found".also {
-        LoggerFactory.getLogger("routes").warn("preferred_username found in JWT token")
-    }
+            LoggerFactory.getLogger("routes").warn("preferred_username found in JWT token")
+        }
 }
 
 
-fun ApplicationCall.principalName() = principal<JWTPrincipal>()!!["name"]!!
+fun ApplicationCall.principalName(): String {
+    return principal<JWTPrincipal>()?.get("name") ?: "name_not_found".also {
+            LoggerFactory.getLogger("routes").warn("name found in JWT token")
+        }
+}
