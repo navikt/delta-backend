@@ -11,7 +11,8 @@ data class Environment(
     val azureTokenEndpoint: String = getEnvVar("AZURE_OPENID_CONFIG_TOKEN_ENDPOINT", "tokenEndpoint"),
     val jwkKeysUrl: String = getEnvVar("AZURE_OPENID_CONFIG_JWKS_URI", "http://localhost/"),
     val jwtIssuer: String = getEnvVar("AZURE_OPENID_CONFIG_ISSUER", "configIssuer"),
-    val deltaEmailAddress: String = getEnvVar("DELTA_EMAIL_ADDRESS", "email")
+    val deltaEmailAddress: String = getEnvVar("DELTA_EMAIL_ADDRESS", "email"),
+    val isDev: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "dev-gcp",
 ) {
     companion object {
         fun getEnvVar(varName: String, defaultValue: String? = null) =
