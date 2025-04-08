@@ -336,16 +336,7 @@ fun ApplicationCall.getEventWithPrivilege(
             }
         }
 
-fun ApplicationCall.principalEmail(): String {
-    return principal<JWTPrincipal>()?.get("preferred_username")?.lowercase()
-        ?: "username_not_found".also {
-            LoggerFactory.getLogger("routes").warn("preferred_username found in JWT token")
-        }
-}
+fun ApplicationCall.principalEmail() =
+    principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
 
-
-fun ApplicationCall.principalName(): String {
-    return principal<JWTPrincipal>()?.get("name") ?: "name_not_found".also {
-            LoggerFactory.getLogger("routes").warn("name found in JWT token")
-        }
-}
+fun ApplicationCall.principalName() = principal<JWTPrincipal>()!!["name"]!!
