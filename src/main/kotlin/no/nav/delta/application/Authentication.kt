@@ -14,7 +14,7 @@ fun Application.setupAuth(
         jwt(name = "jwt") {
             verifier(jwkProvider, issuer)
             validate { credentials ->
-                JWTCredential(credentials.payload)
+                JWTPrincipal(credentials.payload)
             }
         }
     }
