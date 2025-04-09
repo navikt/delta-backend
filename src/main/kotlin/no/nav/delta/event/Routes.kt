@@ -16,6 +16,7 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
+import org.slf4j.LoggerFactory
 
 fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
     authenticate("jwt") {
@@ -63,7 +64,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
 
                 if (createEvent.startTime.isAfter(createEvent.endTime)) {
                     return@put call.respond(
-                        HttpStatusCode.BadRequest, "Start time must be before end time")
+                        HttpStatusCode.BadRequest, "Start time must be before end time"
+                    )
                 }
 
                 val event =
@@ -88,7 +90,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         ParticipantType.HOST,
                     )
                     .flatMap {
-                        if(createEvent.sendNotificationEmail == true) {
+                        if (createEvent.sendNotificationEmail == true) {
                             Thread(createEventFuture).start()
                         }
                         database.getFullEvent(event.id.toString())
@@ -110,7 +112,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                                 {
                                     pairs.map { (participant, calendarEventId) ->
                                         cloudClient.sendCancellationNotification(
-                                            calendarEventId.getOrNull(), event, participant)
+                                            calendarEventId.getOrNull(), event, participant
+                                        )
                                     }
                                     Unit
                                 }
@@ -166,7 +169,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         .updateEvent(newEvent)
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
-                            if(changedEvent.sendNotificationEmail == true) {
+                            if (changedEvent.sendNotificationEmail == true) {
                                 sendUpdateFuture.forEach { future -> Thread(future).start() }
                             }
                             it
@@ -239,7 +242,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                             .map { event ->
                                 {
                                     cloudClient.sendUpdateOrCreationNotification(
-                                        event, database, user, null)
+                                        event, database, user, null
+                                    )
                                 }
                             }
                             .getOrElse { {} }

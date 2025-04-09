@@ -12,8 +12,20 @@ import java.sql.ResultSet
 import java.sql.Timestamp
 import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
-import no.nav.delta.plugins.toList
-import no.nav.delta.plugins.toSet
+
+fun <T> ResultSet.toList(mapper: ResultSet.() -> T) =
+    mutableListOf<T>().apply {
+        while (next()) {
+            add(mapper())
+        }
+    }
+
+fun <T> ResultSet.toSet(mapper: ResultSet.() -> T) =
+    mutableSetOf<T>().apply {
+        while (next()) {
+            add(mapper())
+        }
+    }
 
 fun DatabaseInterface.addEvent(
     createEvent: CreateEvent,

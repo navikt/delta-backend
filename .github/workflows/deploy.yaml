@@ -8,32 +8,39 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # required for dep graph
+      security-events: write # push sarif to github security
       id-token: write # required by gar 
     outputs:
       image: ${{ steps.docker-build-push.outputs.image }}
     steps:
     - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
     - uses: actions/setup-java@v4
-      id: setup-java
       with:
         distribution: 'temurin'
         java-version: '21'
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
-      with:
-        dependency-graph: generate-and-submit
-        validate-wrappers: true
-        cache-encryption-key: ${{ secrets.GradleEncryptionKey }}
-    - name: Build jar
-      run: ./gradlew shadowJar --configuration-cache
+    - uses: gradle/actions/setup-gradle@06832c7b30a0129d7fb559bcc6e43d26f6374244
+    - name: Build jar files
+      run: ./gradlew build
     - name: Push docker image to GAR
       uses: nais/docker-build-push@v0
       id: docker-build-push
       with:
         team: delta
         pull: true
-        identity_provider: ${{ secrets.NAIS_WORKLOAD_IDENTITY_PROVIDER }} # Provided as Organization Secret
-        project_id: ${{ vars.NAIS_MANAGEMENT_PROJECT_ID }} # Provided as Organization Variable
+    - name: Generate and submit dependency graph
+      uses: gradle/actions/dependency-submission@06832c7b30a0129d7fb559bcc6e43d26f6374244
+    - name: Scan docker image for secrets
+      uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5
+      with:
+        image-ref: '${{ steps.docker-build-push.outputs.image }}'
+        format: 'sarif'
+        scanners: 'secret'
+        output: 'trivy.sarif'
+    - uses: github/codeql-action/upload-sarif@5f8171a638ada777af81d42b55959a643bb29017
+      with:
+        sarif_file: 'trivy.sarif'
 
   deploy-dev:
     name: Deploy to dev
@@ -47,8 +54,8 @@ jobs:
       - uses: nais/deploy/actions/deploy@v2
         env:
           CLUSTER: dev-gcp
-          RESOURCE: nais-dev.yaml
-          VAR: image=${{ needs.build.outputs.image }}
+          RESOURCE: nais.yaml
+          IMAGE: ${{ needs.build.outputs.image }}
 
   deploy-prod:
     name: Deploy to prod
@@ -63,5 +70,5 @@ jobs:
       - uses: nais/deploy/actions/deploy@v2
         env:
           CLUSTER: prod-gcp
-          RESOURCE: nais-prod.yaml
-          VAR: image=${{ needs.build.outputs.image }}
+          RESOURCE: nais.yaml
+          IMAGE: ${{ needs.build.outputs.image }}

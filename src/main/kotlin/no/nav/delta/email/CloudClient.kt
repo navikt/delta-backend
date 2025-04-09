@@ -38,16 +38,13 @@ interface CloudClient {
 
     companion object {
         fun fromEnvironment(env: Environment): CloudClient {
+            if (env.isDev) {
+                return DummyCloudClient()
+            }
             val email = env.deltaEmailAddress
             val azureAppClientId = env.azureAppClientId
             val azureAppTenantId = env.azureAppTenantId
             val azureAppClientSecret = env.azureAppClientSecret
-            if (email.isEmpty() ||
-                azureAppClientId.isEmpty() ||
-                azureAppTenantId.isEmpty() ||
-                azureAppClientSecret.isEmpty()) {
-                return DummyCloudClient()
-            }
 
             return AzureCloudClient(
                 applicationEmailAddress = email,

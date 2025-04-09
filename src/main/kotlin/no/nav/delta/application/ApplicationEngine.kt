@@ -12,11 +12,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.jackson.jackson
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
-import io.ktor.server.application.call
 import io.ktor.server.application.install
-import io.ktor.server.engine.ApplicationEngine
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
 import io.ktor.server.response.respondText
@@ -31,13 +29,15 @@ import no.nav.delta.plugins.DatabaseInterface
 
 fun createApplicationEngine(
     env: Environment,
-    // applicationState: ApplicationState,
     database: DatabaseInterface,
     cloudClient: CloudClient,
     jwkProvider: JwkProvider,
-): ApplicationEngine =
+): EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration> =
     embeddedServer(
-        Netty, env.applicationPort, module = { mySetup(env, database, cloudClient, jwkProvider) })
+        factory = Netty,
+        port = env.applicationPort,
+        module = { mySetup(env, database, cloudClient, jwkProvider) }
+    )
 
 fun Application.mySetup(
     env: Environment,
@@ -45,7 +45,7 @@ fun Application.mySetup(
     cloudClient: CloudClient,
     jwkProvider: JwkProvider
 ) {
-    setupAuth(env, jwkProvider, env.jwtIssuer)
+    setupAuth(jwkProvider, env.jwtIssuer)
     install(ContentNegotiation) {
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)
@@ -68,27 +68,10 @@ fun Application.mySetup(
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient)
         get("/internal/is_alive") {
-            if (alivenessCheck()) {
-                call.respondText("I'm alive! :)")
-            } else {
-                call.respondText("I'm dead x_x", status = HttpStatusCode.InternalServerError)
-            }
+            call.respondText("I'm alive! :)")
         }
         get("/internal/is_ready") {
-            if (readinessCheck()) {
-                call.respondText("I'm ready! :)")
-            } else {
-                call.respondText(
-                    "Please wait! I'm not ready :(", status = HttpStatusCode.InternalServerError)
+            call.respondText("I'm ready! :)")
             }
-        }
     }
-}
-
-fun alivenessCheck(): Boolean {
-    return true
-}
-
-fun readinessCheck(): Boolean {
-    return true
 }

@@ -1,9 +1,10 @@
-val ktor_version = "2.3.12"
-val logback_version = "1.5.8"
-val postgres_version = "42.7.4"
-val hikari_version = "5.1.0"
-val flyway_version = "10.18.0"
-val jackson_version = "2.17.2"
+val ktor_version = "3.1.1"
+val logback_version = "1.5.18"
+val logstash_version = "8.0"
+val postgres_version = "42.7.5"
+val hikari_version = "6.3.0"
+val flyway_version = "11.5.0"
+val jackson_version = "2.18.3"
 val arrow_version = "1.2.4"
 val microsoft_sdk_version = "5.65.0"
 val microsoft_azure_version = "1.13.9"
@@ -11,31 +12,15 @@ val microsoft_azure_version = "1.13.9"
 val appMainClass = "no.nav.delta.ApplicationKt"
 
 plugins {
-    kotlin("jvm") version "2.0.20"
-    id("io.ktor.plugin") version "2.3.12"
-    id("com.gradleup.shadow") version "8.3.1"
+    kotlin("jvm") version "2.1.20"
     id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20"
-    id("com.diffplug.spotless") version "6.25.0"
 }
 
 kotlin {
     jvmToolchain(21)
 }
 
-spotless {
-    kotlin {
-        ktfmt().dropboxStyle()
-    }
-}
-
 group = "no.nav.delta"
-version = "0.0.1"
-application {
-    mainClass.set(appMainClass)
-
-    val isDevelopment: Boolean = project.ext.has("development")
-    applicationDefaultJvmArgs = listOf("-Dio.ktor.development=$isDevelopment")
-}
 
 repositories {
     mavenCentral()
@@ -50,7 +35,9 @@ dependencies {
     implementation("io.ktor:ktor-serialization-jackson-jvm:$ktor_version")
     implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktor_version")
     implementation("io.ktor:ktor-server-netty-jvm:$ktor_version")
+
     implementation("ch.qos.logback:logback-classic:$logback_version")
+    implementation("net.logstash.logback:logstash-logback-encoder:$logstash_version")
 
     //Database
     implementation("org.postgresql:postgresql:$postgres_version")
@@ -66,4 +53,29 @@ dependencies {
 
     implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
     implementation("com.microsoft.azure:msal4j:$microsoft_azure_version")
+}
+
+tasks {
+    withType<Jar> {
+        archiveBaseName.set("app")
+
+        manifest {
+            attributes["Main-Class"] = appMainClass
+            attributes["Class-Path"] = configurations.runtimeClasspath.get().joinToString(separator = " ") {
+                it.name
+            }
+        }
+
+        doLast {
+            configurations.runtimeClasspath.get().forEach {
+                val file = File("${layout.buildDirectory.get()}/libs/${it.name}")
+                if (!file.exists())
+                    it.copyTo(file)
+            }
+        }
+    }
+
+    withType<Wrapper> {
+        gradleVersion = "8.13"
+    }
 }
