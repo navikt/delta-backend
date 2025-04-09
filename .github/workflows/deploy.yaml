@@ -56,6 +56,7 @@ jobs:
           CLUSTER: dev-gcp
           RESOURCE: nais.yaml
           IMAGE: ${{ needs.build.outputs.image }}
+          TENANT: trygdeetaten.no
 
   deploy-prod:
     name: Deploy to prod
@@ -72,3 +73,4 @@ jobs:
           CLUSTER: prod-gcp
           RESOURCE: nais.yaml
           IMAGE: ${{ needs.build.outputs.image }}
+          TENANT: nav.no
