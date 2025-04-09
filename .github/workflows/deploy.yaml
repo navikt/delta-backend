@@ -56,7 +56,6 @@ jobs:
           CLUSTER: dev-gcp
           RESOURCE: nais.yaml
           IMAGE: ${{ needs.build.outputs.image }}
-          VAR: tenant=trygdeetaten.no
 
   deploy-prod:
     name: Deploy to prod
@@ -73,4 +72,3 @@ jobs:
           CLUSTER: prod-gcp
           RESOURCE: nais.yaml
           IMAGE: ${{ needs.build.outputs.image }}
-          VAR: tenant=nav.no

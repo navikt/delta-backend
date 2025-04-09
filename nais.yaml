@@ -20,7 +20,6 @@ spec:
   azure:
     application:
       enabled: true
-      tenant: {{tenant}}
       allowAllUsers: true
   observability:
     autoInstrumentation:
