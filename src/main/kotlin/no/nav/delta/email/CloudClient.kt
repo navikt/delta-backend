@@ -38,7 +38,7 @@ interface CloudClient {
 
     companion object {
         fun fromEnvironment(env: Environment): CloudClient {
-            if (env.isDev) {
+            if (env.isDev || env.isLocal) {
                 return DummyCloudClient()
             }
             val email = env.deltaEmailAddress

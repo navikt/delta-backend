@@ -15,6 +15,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
+import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
 import io.ktor.server.response.respondText
@@ -26,6 +27,7 @@ import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.plugins.DatabaseInterface
+import org.slf4j.event.Level
 
 fun createApplicationEngine(
     env: Environment,
@@ -45,7 +47,11 @@ fun Application.mySetup(
     cloudClient: CloudClient,
     jwkProvider: JwkProvider
 ) {
-    setupAuth(jwkProvider, env.jwtIssuer)
+    setupAuth(jwkProvider, env)
+    install(CallLogging) {
+        level = Level.INFO
+        disableDefaultColors()
+    }
     install(ContentNegotiation) {
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)

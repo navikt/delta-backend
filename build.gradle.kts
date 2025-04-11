@@ -9,6 +9,9 @@ val arrow_version = "1.2.4"
 val microsoft_sdk_version = "5.80.0"
 val microsoft_azure_version = "1.20.0"
 
+val junit_version = "5.12.1"
+val testcontainers_version = "1.20.0"
+
 val appMainClass = "no.nav.delta.ApplicationKt"
 
 plugins {
@@ -28,6 +31,7 @@ repositories {
 
 dependencies {
     implementation("io.ktor:ktor-server-core-jvm:$ktor_version")
+    implementation("io.ktor:ktor-server-call-logging:$ktor_version")
     implementation("io.ktor:ktor-server-auth-jvm:$ktor_version")
     implementation("io.ktor:ktor-server-auth-jwt-jvm:$ktor_version")
     implementation("io.ktor:ktor-server-swagger-jvm:$ktor_version")
@@ -53,6 +57,11 @@ dependencies {
 
     implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
     implementation("com.microsoft.azure:msal4j:$microsoft_azure_version")
+
+    testImplementation("org.testcontainers:postgresql:$testcontainers_version")
+    testImplementation(platform("org.junit:junit-bom:$junit_version"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks {
@@ -77,5 +86,12 @@ tasks {
 
     withType<Wrapper> {
         gradleVersion = "8.13"
+    }
+
+    withType<Test> {
+        useJUnitPlatform()
+        testLogging {
+            showExceptions = true
+        }
     }
 }
