@@ -3,7 +3,6 @@ package no.nav.delta.event
 import arrow.core.*
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.principal
@@ -336,7 +335,18 @@ fun ApplicationCall.getEventWithPrivilege(
             }
         }
 
-fun ApplicationCall.principalEmail() =
-    principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+fun ApplicationCall.principalEmail(): String {
+    return if(System.getenv("NAIS_CLUSTER_NAME").isNullOrEmpty()) {
+        "test@localhost"
+    } else {
+        principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+    }
+}
 
-fun ApplicationCall.principalName() = principal<JWTPrincipal>()!!["name"]!!
+fun ApplicationCall.principalName(): String {
+    return if(System.getenv("NAIS_CLUSTER_NAME").isNullOrEmpty()) {
+        return "test@localhost"
+    } else {
+        principal<JWTPrincipal>()!!["name"]!!
+    }
+}
