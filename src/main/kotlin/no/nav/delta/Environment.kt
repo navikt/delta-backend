@@ -13,6 +13,7 @@ data class Environment(
     val jwtIssuer: String = getEnvVar("AZURE_OPENID_CONFIG_ISSUER", "configIssuer"),
     val deltaEmailAddress: String = getEnvVar("DELTA_EMAIL_ADDRESS", "email"),
     val isDev: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "dev-gcp",
+    val isLocal: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "localhost",
 ) {
     companion object {
         fun getEnvVar(varName: String, defaultValue: String? = null) =
