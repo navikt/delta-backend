@@ -4,15 +4,15 @@ import arrow.core.Either
 import arrow.core.flatMap
 import arrow.core.left
 import arrow.core.right
-import com.azure.identity.ClientSecretCredentialBuilder
-import com.microsoft.graph.core.authentication.AzureIdentityAuthenticationProvider
-import com.microsoft.graph.core.requests.GraphClientFactory
-import com.microsoft.graph.serviceclient.GraphServiceClient
+import com.microsoft.aad.msal4j.ClientCredentialFactory
+import com.microsoft.aad.msal4j.ClientCredentialParameters
+import com.microsoft.aad.msal4j.ConfidentialClientApplication
 import com.microsoft.graph.models.*
-import com.microsoft.graph.users.item.sendmail.SendMailPostRequestBody
+import com.microsoft.graph.requests.GraphServiceClient
 import java.lang.RuntimeException
 import java.time.LocalDateTime
 import java.util.*
+import java.util.concurrent.CompletableFuture
 import no.nav.delta.Environment
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
@@ -61,23 +61,26 @@ class AzureCloudClient(
     azureAppTenantId: String,
     azureAppClientSecret: String
 ) : CloudClient {
-    private val graphClient: GraphServiceClient
+    private val tokenClient: ConfidentialClientApplication
+    private val scopes = setOf("https://graph.microsoft.com/.default")
+
+    private var azureToken: AzureToken? = null
+    private val graphClient: GraphServiceClient<okhttp3.Request>
 
     init {
-        val authProvider = AzureIdentityAuthenticationProvider(
-            ClientSecretCredentialBuilder()
-                .clientId(azureAppClientId)
-                .clientSecret(azureAppClientSecret)
-                .tenantId(azureAppTenantId)
-                .build(),
-            arrayOf<String>(),
-            "https://graph.microsoft.com/.default"
-        )
+        val authorityUrl = "https://login.microsoftonline.com/${azureAppTenantId}"
+        val clientSecret = ClientCredentialFactory.createFromSecret(azureAppClientSecret)
 
-        this.graphClient = GraphServiceClient(
-            authProvider,
-            GraphClientFactory.create().build()
-        )
+        this.tokenClient =
+            ConfidentialClientApplication.builder(azureAppClientId, clientSecret)
+                .authority(authorityUrl)
+                .build()
+        this.graphClient =
+            GraphServiceClient.builder()
+                .authenticationProvider {
+                    CompletableFuture.completedFuture(this.azureToken?.accessToken)
+                }
+                .buildClient()
     }
 
     private fun emailAsRecipient(email: String) =
@@ -85,6 +88,20 @@ class AzureCloudClient(
 
     private fun emailAsAttendee(email: String) =
         Attendee().apply { emailAddress = EmailAddress().apply { address = email } }
+
+    private fun refreshTokenIfNeeded() {
+        val currentToken = azureToken
+        if (currentToken != null && currentToken.isActive(Date())) {
+            return
+        }
+        refreshToken()
+    }
+
+    private fun refreshToken() {
+        val authResult =
+            tokenClient.acquireToken(ClientCredentialParameters.builder(scopes).build()).get()
+        this.azureToken = AzureToken(authResult.accessToken(), authResult.expiresOnDate())
+    }
 
     override fun sendEmail(
         subject: String,
@@ -97,6 +114,7 @@ class AzureCloudClient(
             (toRecipients.isEmpty() && ccRecipients.isEmpty() && bccRecipients.isEmpty())) {
             return
         }
+        refreshTokenIfNeeded()
 
         val message = Message()
         message.toRecipients = toRecipients.map(this::emailAsRecipient)
@@ -106,18 +124,15 @@ class AzureCloudClient(
         message.subject = subject
         message.body =
             ItemBody().apply {
-                contentType = BodyType.Text
+                contentType = BodyType.TEXT
                 content = body
             }
 
         graphClient
-            .users()
-            .byUserId(applicationEmailAddress)
-            .sendMail()
-            .post(SendMailPostRequestBody().apply {
-                this.message = message
-                saveToSentItems = false
-            })
+            .users(applicationEmailAddress)
+            .sendMail(UserSendMailParameterSet.newBuilder().withMessage(message).build())
+            .buildRequest()
+            .post()
     }
 
     private fun prepareCalendarEvent(
@@ -127,6 +142,7 @@ class AzureCloudClient(
         if (applicationEmailAddress.isBlank()) {
             return RuntimeException("Missing application email address").left()
         }
+        refreshTokenIfNeeded()
 
         val calendarEvent =
             Event().apply {
@@ -134,7 +150,7 @@ class AzureCloudClient(
                 body =
                     event.description.let {
                         ItemBody().apply {
-                            contentType = BodyType.Html
+                            contentType = BodyType.HTML
                             content =
                                 """<p>${event.description.replace("\n", "<br>")}</p>
 
@@ -158,10 +174,10 @@ class AzureCloudClient(
         return prepareCalendarEvent(event, participant).flatMap { calendarEvent ->
             try {
                 graphClient
-                    .users()
-                    .byUserId(applicationEmailAddress)
+                    .users(applicationEmailAddress)
                     .calendar()
                     .events()
+                    .buildRequest()
                     .post(calendarEvent)
                     .id
                     ?.right()
@@ -185,11 +201,11 @@ class AzureCloudClient(
             .flatMap { calendarEvent ->
                 try {
                     graphClient
-                        .users()
-                        .byUserId(applicationEmailAddress)
-                        .calendars()
-                        .byCalendarId(calendarEventId)
-                        .patch(calendarEvent.calendar)
+                        .users(applicationEmailAddress)
+                        .calendar()
+                        .events(calendarEventId)
+                        .buildRequest()
+                        .patch(calendarEvent)
                     Unit.right()
                 } catch (e: Exception) {
                     RuntimeException("Failed to update event", e).left()
@@ -201,15 +217,21 @@ class AzureCloudClient(
         if (applicationEmailAddress.isBlank()) {
             return RuntimeException("Missing application email address").left()
         }
+        refreshTokenIfNeeded()
+
         graphClient
-            .users()
-            .byUserId(applicationEmailAddress)
-            .calendars()
-            .byCalendarId(calendarEventId)
+            .users(applicationEmailAddress)
+            .calendar()
+            .events(calendarEventId)
+            .buildRequest()
             .delete()
 
         return Unit.right()
     }
+}
+
+private data class AzureToken(val accessToken: String, val expiresOnDate: Date?) {
+    fun isActive(currentDate: Date) = expiresOnDate == null || currentDate.before(expiresOnDate)
 }
 
 class DummyCloudClient : CloudClient {
