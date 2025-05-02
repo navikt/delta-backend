@@ -6,8 +6,8 @@ val hikari_version = "6.3.0"
 val flyway_version = "11.5.0"
 val jackson_version = "2.18.3"
 val arrow_version = "1.2.4"
-val microsoft_sdk_version = "5.80.0"
-val microsoft_azure_version = "1.20.0"
+val microsoft_sdk_version = "6.36.0"
+val azure_identity_version = "1.12.2"
 
 val junit_version = "5.12.1"
 val testcontainers_version = "1.20.0"
@@ -56,7 +56,7 @@ dependencies {
     implementation("io.arrow-kt:arrow-fx-coroutines:$arrow_version")
 
     implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
-    implementation("com.microsoft.azure:msal4j:$microsoft_azure_version")
+    implementation("com.azure:azure-identity:$azure_identity_version")
 
     testImplementation("org.testcontainers:postgresql:$testcontainers_version")
     testImplementation(platform("org.junit:junit-bom:$junit_version"))
