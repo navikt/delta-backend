@@ -162,6 +162,7 @@ class AzureCloudClient(
                 end = event.endTime.toDateTimeTimeZone()
                 location = Location().apply { displayName = event.location }
                 attendees = listOf(emailAsAttendee(participant.email))
+                responseRequested = false
             }
 
         return calendarEvent.right()
