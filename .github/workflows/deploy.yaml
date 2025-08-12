@@ -13,14 +13,14 @@ jobs:
     outputs:
       image: ${{ steps.docker-build-push.outputs.image }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         persist-credentials: false
     - uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '21'
-    - uses: gradle/actions/setup-gradle@06832c7b30a0129d7fb559bcc6e43d26f6374244
+    - uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3
     - name: Run tests & build jar files
       run: ./gradlew test build
     - name: Build & push docker image to GAR
@@ -30,15 +30,15 @@ jobs:
         team: delta
         pull: true
     - name: Generate and submit dependency graph
-      uses: gradle/actions/dependency-submission@06832c7b30a0129d7fb559bcc6e43d26f6374244
+      uses: gradle/actions/dependency-submission@017a9effdb900e5b5b2fddfb590a105619dca3c3
     - name: Scan docker image for secrets
-      uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5
+      uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4
       with:
         image-ref: '${{ steps.docker-build-push.outputs.image }}'
         format: 'sarif'
         scanners: 'secret'
         output: 'trivy.sarif'
-    - uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47
+    - uses: github/codeql-action/upload-sarif@76621b61decf072c1cee8dd1ce2d2a82d33c17ed
       with:
         sarif_file: 'trivy.sarif'
 
@@ -50,7 +50,7 @@ jobs:
       id-token: write
     needs: build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: nais/deploy/actions/deploy@v2
         env:
           CLUSTER: dev-gcp
@@ -66,7 +66,7 @@ jobs:
       id-token: write
     needs: [build, deploy-dev]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: nais/deploy/actions/deploy@v2
         env:
           CLUSTER: prod-gcp
