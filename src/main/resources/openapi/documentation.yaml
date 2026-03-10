@@ -355,6 +355,27 @@ paths:
           description: "Forbidden — not an owner or admin"
         "404":
           description: "Faggruppe not found"
+    delete:
+      tags:
+        - faggrupper
+      description: "Delete a faggruppe and all its owners. Requires owner or admin."
+      operationId: deleteFaggruppe
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: "Faggruppe deleted"
+        "403":
+          description: "Forbidden — not an owner or admin"
+        "404":
+          description: "Faggruppe not found"
   /api/faggrupper/{id}/eier:
     get:
       tags:

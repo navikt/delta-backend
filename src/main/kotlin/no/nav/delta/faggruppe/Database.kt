@@ -181,6 +181,16 @@ fun DatabaseInterface.removeEier(faggruppeId: UUID, epost: String): Boolean {
     }
 }
 
+fun DatabaseInterface.deleteFaggruppe(id: UUID): Boolean {
+    return connection.use { connection ->
+        val count = connection.prepareStatement(
+            "DELETE FROM faggrupper WHERE id = ?::uuid"
+        ).also { it.setString(1, id.toString()) }.executeUpdate()
+        connection.commit()
+        count > 0
+    }
+}
+
 fun DatabaseInterface.fagruppeExists(id: UUID): Boolean {
     return connection.use { connection ->
         connection.prepareStatement(

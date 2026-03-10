@@ -65,6 +65,15 @@ fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, en
                     call.respond(updated)
                 }
 
+                delete {
+                    val id = call.faggruppeId() ?: return@delete
+                    if (!database.fagruppeExists(id)) return@delete call.respond(HttpStatusCode.NotFound)
+                    if (!call.isOwnerOrAdmin(database, id, env)) return@delete call.respond(HttpStatusCode.Forbidden)
+
+                    database.deleteFaggruppe(id)
+                    call.respond(HttpStatusCode.NoContent)
+                }
+
                 get("/eier") {
                     val id = call.faggruppeId() ?: return@get
                     val email = call.principalEmail()

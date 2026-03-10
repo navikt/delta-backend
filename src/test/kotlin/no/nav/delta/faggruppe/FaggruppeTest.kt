@@ -164,4 +164,21 @@ class FaggruppeTest {
         assertTrue(db.eierExists(created.id, "owner@nav.no"))
         assertFalse(db.eierExists(created.id, "stranger@nav.no"))
     }
+
+    @Test
+    fun `delete faggruppe removes it and its eiere`() {
+        val created = db.createFaggruppe(createDto("Slett meg"), "owner@nav.no", null)
+        db.addEier(created.id, "other@nav.no", null)
+
+        assertTrue(db.fagruppeExists(created.id))
+        assertTrue(db.deleteFaggruppe(created.id))
+        assertFalse(db.fagruppeExists(created.id))
+        assertNull(db.getFaggruppe(created.id))
+        assertTrue(db.getEiere(created.id).isEmpty())
+    }
+
+    @Test
+    fun `delete non-existent faggruppe returns false`() {
+        assertFalse(db.deleteFaggruppe(UUID.randomUUID()))
+    }
 }
