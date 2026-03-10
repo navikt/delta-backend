@@ -26,6 +26,7 @@ import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
+import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.plugins.DatabaseInterface
 import org.slf4j.event.Level
 
@@ -78,6 +79,7 @@ fun Application.mySetup(
     routing {
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient)
+        faggruppeApi(database, cloudClient, env)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")
         }

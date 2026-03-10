@@ -14,6 +14,7 @@ data class Environment(
     val deltaEmailAddress: String = getEnvVar("DELTA_EMAIL_ADDRESS", "email"),
     val isDev: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "dev-gcp",
     val isLocal: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "localhost",
+    val faggruppeAdminGroupId: String = getEnvVar("FAGGRUPPE_ADMIN_GROUP_ID", ""),
 ) {
     companion object {
         fun getEnvVar(varName: String, defaultValue: String? = null) =
