@@ -214,8 +214,7 @@ class AzureCloudClient(
 
     override fun getUserDisplayName(email: String): String? {
         return try {
-            refreshTokenIfNeeded()
-            graphClient.users(email).buildRequest().get()?.displayName
+            graphClient.users().byUserId(email).get()?.displayName
         } catch (e: Exception) {
             null
         }
