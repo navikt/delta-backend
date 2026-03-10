@@ -28,6 +28,8 @@ spec:
   env:
     - name: DELTA_EMAIL_ADDRESS
       value: "ikkesvar.delta@nav.no"
+    - name: FAGGRUPPE_ADMIN_GROUP_ID
+      value: "{{faggruppe_admin_group_id}}"
   liveness:
     path: /internal/is_alive
     initialDelay: 10

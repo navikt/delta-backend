@@ -80,8 +80,8 @@ paths:
           description: "Event id"
           required: true
           schema:
-              type: string
-              format: uuid
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -247,23 +247,208 @@ paths:
               schema:
                 $ref: "#/components/schemas/Category"
     put:
-        tags:
-            - category
-        description: "Create a category"
-        operationId: createCategory
-        requestBody:
+      tags:
+        - category
+      description: "Create a category"
+      operationId: createCategory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCategory'
+      responses:
+        "201":
+          description: "created category"
           content:
             application/json:
-                schema:
-                  $ref: '#/components/schemas/CreateCategory'
-        responses:
-          "201":
-            description: "created category"
-            content:
-              application/json:
-                schema:
-                  $ref: "#/components/schemas/Category"
+              schema:
+                $ref: "#/components/schemas/Category"
+  /api/faggrupper:
+    get:
+      tags:
+        - faggrupper
+      description: "Get all active faggrupper"
+      operationId: getFaggrupper
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "All active faggrupper"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FaggruppeDTO"
+    post:
+      tags:
+        - faggrupper
+      description: "Create a faggruppe. Caller is added as the first owner."
+      operationId: createFaggruppe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaggruppeCreateDTO'
+      responses:
+        "201":
+          description: "Faggruppe created"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaggruppeDTO"
+  /api/faggrupper/{id}:
+    get:
+      tags:
+        - faggrupper
+      description: "Get a single faggruppe by ID"
+      operationId: getFaggruppe
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: "Faggruppe found"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaggruppeDTO"
+        "404":
+          description: "Faggruppe not found"
+    put:
+      tags:
+        - faggrupper
+      description: "Update a faggruppe. Requires owner or admin."
+      operationId: updateFaggruppe
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaggruppeUpdateDTO'
+      responses:
+        "200":
+          description: "Faggruppe updated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaggruppeDTO"
+        "403":
+          description: "Forbidden — not an owner or admin"
+        "404":
+          description: "Faggruppe not found"
+  /api/faggrupper/{id}/eier:
+    get:
+      tags:
+        - faggrupper
+      description: "Check if the authenticated user is an owner"
+      operationId: isEier
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: "Owner status"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isOwner:
+                    type: boolean
+  /api/faggrupper/{id}/eiere:
+    post:
+      tags:
+        - faggrupper
+      description: "Add an owner to the faggruppe. Requires owner or admin."
+      operationId: addEier
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddEierDTO'
+      responses:
+        "200":
+          description: "Owner added"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EierDTO"
+        "403":
+          description: "Forbidden — not an owner or admin"
+        "404":
+          description: "Faggruppe not found"
+        "409":
+          description: "Conflict — email is already an owner"
+  /api/faggrupper/{id}/eiere/{epost}:
+    delete:
+      tags:
+        - faggrupper
+      description: "Remove an owner. Requires owner or admin."
+      operationId: removeEier
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: epost
+          in: path
+          required: true
+          description: "URL-encoded email address of the owner to remove"
+          schema:
+            type: string
+            format: email
+      responses:
+        "204":
+          description: "Owner removed"
+        "403":
+          description: "Forbidden — not an owner or admin"
+        "404":
+          description: "Faggruppe or owner not found"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     CreateEvent:
       type: object
@@ -360,14 +545,147 @@ components:
           type: string
           format: uuid
     Category:
-        type: object
-        properties:
-          id:
-            type: integer
-          name:
-            type: string
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
     CreateCategory:
-        type: object
-        properties:
-          name:
-            type: string
+      type: object
+      properties:
+        name:
+          type: string
+    FaggruppeDTO:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        navn:
+          type: string
+        beskrivelse:
+          type: string
+          nullable: true
+        undertittel:
+          type: string
+          nullable: true
+        malgruppe:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [faggruppe, møteplass]
+        tidspunkt:
+          type: string
+          nullable: true
+        starttid:
+          type: string
+          example: "14:00"
+          nullable: true
+        sluttid:
+          type: string
+          example: "15:00"
+          nullable: true
+        slack_kanal_navn:
+          type: string
+          nullable: true
+        slack_kanal_url:
+          type: string
+          nullable: true
+        er_aktiv:
+          type: boolean
+        eiere:
+          type: array
+          items:
+            $ref: "#/components/schemas/EierDTO"
+    EierDTO:
+      type: object
+      properties:
+        epost:
+          type: string
+          format: email
+        navn:
+          type: string
+          nullable: true
+    FaggruppeCreateDTO:
+      type: object
+      required:
+        - navn
+        - type
+      properties:
+        navn:
+          type: string
+        type:
+          type: string
+          enum: [faggruppe, møteplass]
+        beskrivelse:
+          type: string
+          nullable: true
+        undertittel:
+          type: string
+          nullable: true
+        malgruppe:
+          type: string
+          nullable: true
+        tidspunkt:
+          type: string
+          nullable: true
+        starttid:
+          type: string
+          example: "14:00"
+          nullable: true
+        sluttid:
+          type: string
+          example: "15:00"
+          nullable: true
+        slack_kanal_navn:
+          type: string
+          nullable: true
+        slack_kanal_url:
+          type: string
+          nullable: true
+    FaggruppeUpdateDTO:
+      type: object
+      properties:
+        navn:
+          type: string
+          nullable: true
+        type:
+          type: string
+          enum: [faggruppe, møteplass]
+          nullable: true
+        beskrivelse:
+          type: string
+          nullable: true
+        undertittel:
+          type: string
+          nullable: true
+        malgruppe:
+          type: string
+          nullable: true
+        tidspunkt:
+          type: string
+          nullable: true
+        starttid:
+          type: string
+          example: "14:00"
+          nullable: true
+        sluttid:
+          type: string
+          example: "15:00"
+          nullable: true
+        slack_kanal_navn:
+          type: string
+          nullable: true
+        slack_kanal_url:
+          type: string
+          nullable: true
+    AddEierDTO:
+      type: object
+      required:
+        - epost
+      properties:
+        epost:
+          type: string
+          format: email
