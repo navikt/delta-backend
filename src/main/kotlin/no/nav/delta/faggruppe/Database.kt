@@ -10,26 +10,34 @@ private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 
 private fun LocalTime.toHHmm(): String = format(TIME_FORMAT)
 
-private fun String.toSqlTime(): Time = Time.valueOf(LocalTime.parse(this, TIME_FORMAT))
+internal fun String.toSqlTime(): Time = Time.valueOf(LocalTime.parse(this, TIME_FORMAT))
+
+internal fun String.isValidHHmm(): Boolean = try {
+    LocalTime.parse(this, TIME_FORMAT); true
+} catch (_: Exception) { false }
 
 fun DatabaseInterface.getAllActiveFaggrupper(): List<FaggruppeDTO> {
     return connection.use { connection ->
-        val faggrupper = connection.prepareStatement(
+        val rs = connection.prepareStatement(
             """
-            SELECT * FROM faggrupper WHERE er_aktiv = true ORDER BY navn
+            SELECT f.*, e.epost AS eier_epost, e.navn AS eier_navn
+            FROM faggrupper f
+            LEFT JOIN faggruppe_eiere e ON e.faggruppe_id = f.id
+            WHERE f.er_aktiv = true
+            ORDER BY f.navn, e.epost
             """
-        ).executeQuery().let { rs ->
-            val list = mutableListOf<Pair<UUID, FaggruppeDTO>>()
-            while (rs.next()) {
-                val id = UUID.fromString(rs.getString("id"))
-                list.add(id to rs.toFaggruppeDTO(emptyList()))
-            }
-            list
-        }
+        ).executeQuery()
 
-        faggrupper.map { (id, fg) ->
-            fg.copy(eiere = getEiereWithConnection(connection, id))
+        val faggrupper = linkedMapOf<UUID, Pair<FaggruppeDTO, MutableList<EierDTO>>>()
+        while (rs.next()) {
+            val id = UUID.fromString(rs.getString("id"))
+            val entry = faggrupper.getOrPut(id) { rs.toFaggruppeDTO(emptyList()) to mutableListOf() }
+            val epost = rs.getString("eier_epost")
+            if (epost != null) {
+                entry.second.add(EierDTO(epost = epost, navn = rs.getString("eier_navn")))
+            }
         }
+        faggrupper.values.map { (fg, eiere) -> fg.copy(eiere = eiere) }
     }
 }
 
@@ -72,13 +80,13 @@ fun DatabaseInterface.createFaggruppe(
         }.executeQuery()
 
         rs.next()
-        val faggruppId = UUID.fromString(rs.getString("id"))
+        val faggruppeId = UUID.fromString(rs.getString("id"))
         val faggruppe = rs.toFaggruppeDTO(emptyList())
 
         connection.prepareStatement(
             "INSERT INTO faggruppe_eiere (faggruppe_id, epost, navn) VALUES (?::uuid, ?, ?)"
         ).also { ps ->
-            ps.setString(1, faggruppId.toString())
+            ps.setString(1, faggruppeId.toString())
             ps.setString(2, ownerEmail)
             ps.setString(3, ownerNavn)
         }.executeUpdate()
