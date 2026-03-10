@@ -600,7 +600,6 @@ components:
           nullable: true
         type:
           type: string
-          enum: [faggruppe, møteplass]
         tidspunkt:
           type: string
           nullable: true
@@ -643,7 +642,6 @@ components:
           type: string
         type:
           type: string
-          enum: [faggruppe, møteplass]
         beskrivelse:
           type: string
           nullable: true
@@ -678,7 +676,6 @@ components:
           nullable: true
         type:
           type: string
-          enum: [faggruppe, møteplass]
           nullable: true
         beskrivelse:
           type: string
