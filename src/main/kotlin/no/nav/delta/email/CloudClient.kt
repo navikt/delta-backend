@@ -178,18 +178,14 @@ class AzureCloudClient(
         participant: Participant
     ): Either<Throwable, Unit> {
         return prepareCalendarEvent(event, participant)
-            .map { calendarEvent ->
-                calendarEvent.id = calendarEventId
-                calendarEvent
-            }
             .flatMap { calendarEvent ->
                 try {
                     graphClient
                         .users()
                         .byUserId(applicationEmailAddress)
-                        .calendars()
-                        .byCalendarId(calendarEventId)
-                        .patch(calendarEvent.calendar)
+                        .events()
+                        .byEventId(calendarEventId)
+                        .patch(calendarEvent)
                     Unit.right()
                 } catch (e: Exception) {
                     RuntimeException("Failed to update event", e).left()
@@ -201,14 +197,17 @@ class AzureCloudClient(
         if (applicationEmailAddress.isBlank()) {
             return RuntimeException("Missing application email address").left()
         }
-        graphClient
-            .users()
-            .byUserId(applicationEmailAddress)
-            .calendars()
-            .byCalendarId(calendarEventId)
-            .delete()
-
-        return Unit.right()
+        return try {
+            graphClient
+                .users()
+                .byUserId(applicationEmailAddress)
+                .events()
+                .byEventId(calendarEventId)
+                .delete()
+            Unit.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to delete event", e).left()
+        }
     }
 }
 
