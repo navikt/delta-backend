@@ -8,34 +8,37 @@ import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.TestInstance
 import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
 import java.time.LocalDateTime
 import java.util.UUID
 
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@Testcontainers
 class DatabasesTest {
 
-    private lateinit var env: Environment
-    private lateinit var db: DatabaseInterface
-    private val postgresContainer = PostgreSQLContainer(DockerImageName.parse("postgres:15-alpine"))
+    companion object {
+        @Container
+        private val postgresContainer = PostgreSQLContainer(DockerImageName.parse("postgres:15-alpine"))
 
+        private lateinit var db: DatabaseInterface
 
-    @BeforeAll
-    fun setup() {
-        postgresContainer.start()
-        env = Environment(
-            dbJdbcUrl = postgresContainer.jdbcUrl,
-            dbUsername = postgresContainer.username,
-            dbPassword = postgresContainer.password
-        )
-        db = DatabaseConfig(env)
-    }
+        @JvmStatic
+        @BeforeAll
+        fun setup() {
+            db = DatabaseConfig(Environment(
+                dbJdbcUrl = postgresContainer.jdbcUrl,
+                dbUsername = postgresContainer.username,
+                dbPassword = postgresContainer.password,
+            ))
+        }
 
-    @AfterAll
-    fun tearDown() {
-        postgresContainer.stop()
+        @JvmStatic
+        @AfterAll
+        fun tearDown() {
+            postgresContainer.stop()
+        }
     }
 
     @Test
@@ -58,15 +61,16 @@ class DatabasesTest {
 
     @Test
     fun saveDeleteAndGetEvents() {
+        val before = db.getEvents(onlyFuture = true).size
         val lolEvent1 = futureEventTest("lolEvent1")
         val lolEvent2 = futureEventTest("lolEvent2")
         val event1 = db.addEvent(lolEvent1)
         db.addEvent(lolEvent2)
         val events = db.getEvents(onlyFuture = true)
-        Assertions.assertEquals(2, events.size)
+        Assertions.assertEquals(before + 2, events.size)
 
         db.deleteEvent(event1.id.toString())
-        Assertions.assertEquals(1, db.getEvents().size)
+        Assertions.assertEquals(before + 1, db.getEvents(onlyFuture = true).size)
     }
 
     @Test
@@ -76,7 +80,6 @@ class DatabasesTest {
         Assertions.assertNull(result.getOrNull())
         Assertions.assertEquals(EventNotFoundException, result.leftOrNull())
     }
-
 
     private fun futureEventTest(title: String) = CreateEvent(
         title = title,

@@ -1,7 +1,7 @@
-val ktor_version = "3.1.2"
-val logback_version = "1.5.18"
-val logstash_version = "8.1"
-val postgres_version = "42.7.5"
+val ktor_version = "3.4.0"
+val logback_version = "1.5.32"
+val logstash_version = "9.0"
+val postgres_version = "42.7.10"
 val hikari_version = "6.3.0"
 val flyway_version = "11.5.0"
 val jackson_version = "2.18.3"
@@ -9,14 +9,14 @@ val arrow_version = "1.2.4"
 val microsoft_sdk_version = "6.62.0"
 val azure_identity_version = "1.18.2"
 
-val junit_version = "5.12.1"
-val testcontainers_version = "1.20.0"
+val junit_version = "6.0.3"
+val testcontainers_version = "1.21.4"
 
 val appMainClass = "no.nav.delta.ApplicationKt"
 
 plugins {
-    kotlin("jvm") version "2.1.20"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.0.20"
+    kotlin("jvm") version "2.3.10"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.10"
 }
 
 kotlin {
@@ -59,6 +59,7 @@ dependencies {
     implementation("com.azure:azure-identity:$azure_identity_version")
 
     testImplementation("org.testcontainers:postgresql:$testcontainers_version")
+    testImplementation("org.testcontainers:junit-jupiter:$testcontainers_version")
     testImplementation(platform("org.junit:junit-bom:$junit_version"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -85,7 +86,7 @@ tasks {
     }
 
     withType<Wrapper> {
-        gradleVersion = "8.13"
+        gradleVersion = "9.4.0"
     }
 
     withType<Test> {

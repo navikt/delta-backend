@@ -36,6 +36,8 @@ interface CloudClient {
 
     fun deleteEvent(calendarEventId: String): Either<Throwable, Unit>
 
+    fun getUserDisplayName(email: String): String?
+
     companion object {
         fun fromEnvironment(env: Environment): CloudClient {
             if (env.isDev || env.isLocal) {
@@ -209,6 +211,15 @@ class AzureCloudClient(
             RuntimeException("Failed to delete event", e).left()
         }
     }
+
+    override fun getUserDisplayName(email: String): String? {
+        return try {
+            refreshTokenIfNeeded()
+            graphClient.users(email).buildRequest().get()?.displayName
+        } catch (e: Exception) {
+            null
+        }
+    }
 }
 
 class DummyCloudClient : CloudClient {
@@ -241,6 +252,11 @@ class DummyCloudClient : CloudClient {
     override fun deleteEvent(calendarEventId: String): Either<Throwable, Unit> {
         println("DummyEmailClient: Deleting event: id='$calendarEventId'")
         return Unit.right()
+    }
+
+    override fun getUserDisplayName(email: String): String? {
+        println("DummyEmailClient: Looking up display name for $email")
+        return null
     }
 }
 
