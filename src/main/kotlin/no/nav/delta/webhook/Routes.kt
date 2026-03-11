@@ -60,7 +60,11 @@ fun Route.webhookApi(
                     if (notification.changeType != "updated") {
                         continue
                     }
-                    processNotification(notification, database, cloudClient)
+                    try {
+                        processNotification(notification, database, cloudClient)
+                    } catch (e: Exception) {
+                        logger.error("Unhandled exception processing notification for resource ${notification.resource}: ${e.message}", e)
+                    }
                 }
             }
         }

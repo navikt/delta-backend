@@ -101,7 +101,11 @@ class SubscriptionService(
             // Enforce single-subscription invariant: keep the newest, delete any extras
             val sorted = existing.sortedByDescending { it.expirationTime }
             sorted.drop(1).forEach { stale ->
-                logger.warn("Deleting surplus subscription ${stale.subscriptionId} to enforce single-subscription invariant")
+                logger.warn("Deleting surplus subscription ${stale.subscriptionId}")
+                cloudClient.deleteSubscription(stale.subscriptionId).fold(
+                    ifLeft = { err -> logger.warn("Failed to delete surplus subscription ${stale.subscriptionId} from Graph: ${err.message}") },
+                    ifRight = { logger.info("Deleted surplus subscription ${stale.subscriptionId} from Graph") }
+                )
                 database.deleteSubscription(stale.subscriptionId)
             }
             val sub = sorted.first()
@@ -161,9 +165,16 @@ class SubscriptionService(
             },
             ifRight = {
                 val newLocalExpiry = newExpiry.toLocalDateTimeOslo()
-                database.updateSubscriptionExpiry(sub.subscriptionId, newLocalExpiry)
-                subscriptionHealthy = true
-                logger.info("Renewed subscription ${sub.subscriptionId}, new expiry: $newLocalExpiry")
+                database.updateSubscriptionExpiry(sub.subscriptionId, newLocalExpiry).fold(
+                    ifLeft = { err ->
+                        logger.error("Failed to persist renewed expiry for ${sub.subscriptionId}: ${err.message}")
+                        subscriptionHealthy = false
+                    },
+                    ifRight = {
+                        subscriptionHealthy = true
+                        logger.info("Renewed subscription ${sub.subscriptionId}, new expiry: $newLocalExpiry")
+                    }
+                )
             }
         )
     }

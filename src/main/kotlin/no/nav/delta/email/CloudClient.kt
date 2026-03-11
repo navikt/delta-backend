@@ -50,6 +50,8 @@ interface CloudClient {
         newExpiration: OffsetDateTime,
     ): Either<Throwable, Unit>
 
+    fun deleteSubscription(subscriptionId: String): Either<Throwable, Unit>
+
     fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?>
 
     companion object {
@@ -267,6 +269,15 @@ class AzureCloudClient(
         }
     }
 
+    override fun deleteSubscription(subscriptionId: String): Either<Throwable, Unit> {
+        return try {
+            graphClient.subscriptions().bySubscriptionId(subscriptionId).delete()
+            Unit.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to delete subscription $subscriptionId", e).left()
+        }
+    }
+
     override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> {
         return try {
             val event = graphClient
@@ -340,6 +351,11 @@ class DummyCloudClient : CloudClient {
         newExpiration: OffsetDateTime,
     ): Either<Throwable, Unit> {
         println("DummyEmailClient: Renewing subscription id='$subscriptionId' until=$newExpiration")
+        return Unit.right()
+    }
+
+    override fun deleteSubscription(subscriptionId: String): Either<Throwable, Unit> {
+        println("DummyEmailClient: Deleting subscription id='$subscriptionId'")
         return Unit.right()
     }
 

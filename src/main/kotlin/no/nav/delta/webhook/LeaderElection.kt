@@ -1,9 +1,10 @@
 package no.nav.delta.webhook
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import java.net.InetAddress
-import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -13,7 +14,6 @@ import org.slf4j.LoggerFactory
 import kotlin.time.Duration.Companion.seconds
 
 private val logger = LoggerFactory.getLogger(LeaderElection::class.java)
-private val mapper = jacksonObjectMapper()
 
 class LeaderElection {
     private val electorUrl = System.getenv("ELECTOR_GET_URL") ?: ""
@@ -22,6 +22,12 @@ class LeaderElection {
     } catch (e: Exception) {
         logger.warn("Failed to get hostname, defaulting to 'unknown'", e)
         "unknown"
+    }
+
+    private val httpClient = HttpClient(CIO) {
+        engine {
+            requestTimeout = 5_000 // 5s timeout — elector is in-cluster, should be fast
+        }
     }
 
     private val cachedLeaderStatus = AtomicBoolean(false)
@@ -45,10 +51,15 @@ class LeaderElection {
         }
     }
 
-    private fun checkLeaderStatus() {
+    private suspend fun checkLeaderStatus() {
         try {
-            val text = URI(electorUrl).toURL().readText()
-            val leaderName = mapper.readValue<Map<String, String>>(text)["name"] ?: return
+            val text = httpClient.get(electorUrl).bodyAsText()
+            // Elector returns {"name": "pod-hostname"}
+            val leaderName = text.substringAfter("\"name\":\"").substringBefore("\"").trim()
+            if (leaderName.isEmpty()) {
+                logger.warn("Elector returned unexpected response: $text")
+                return // Keep last known status — don't flip on parse failure
+            }
             val isLeader = hostname == leaderName
             val wasLeader = cachedLeaderStatus.getAndSet(isLeader)
 
@@ -59,8 +70,9 @@ class LeaderElection {
                 else -> logger.debug("$hostname is not the leader (leader: $leaderName)")
             }
         } catch (e: Exception) {
-            logger.warn("Failed to check leader election status: ${e.message}")
-            cachedLeaderStatus.set(false)
+            // Keep last known status on transient errors — a single network blip should not
+            // cause the current leader to step down and leave all pods without a leader.
+            logger.warn("Failed to check leader election status (keeping last known=${cachedLeaderStatus.get()}): ${e.message}")
         }
     }
 
