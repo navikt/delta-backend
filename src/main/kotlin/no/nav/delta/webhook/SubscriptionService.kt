@@ -2,6 +2,7 @@ package no.nav.delta.webhook
 
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
@@ -9,9 +10,9 @@ import no.nav.delta.plugins.DatabaseInterface
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("no.nav.delta.webhook.SubscriptionService")
+private val OSLO: ZoneId = ZoneId.of("Europe/Oslo")
 
-private const val SUBSCRIPTION_RESOURCE = "me/events"
-private const val SUBSCRIPTION_LIFETIME_HOURS = 71L // MS Graph max for calendar is ~4230 min
+private const val SUBSCRIPTION_LIFETIME_HOURS = 71L // Outlook event subscriptions support up to 10,080 min (7 days)
 private const val RENEWAL_THRESHOLD_HOURS = 24L
 private const val RENEWAL_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L // 12 hours
 
@@ -21,6 +22,7 @@ class SubscriptionService(
     private val env: Environment,
 ) {
     private val notificationUrl get() = "${env.webhookBaseUrl}/webhook/calendar"
+    private val subscriptionResource get() = "users/${env.deltaEmailAddress}/events"
 
     fun initialize() {
         val existing = database.getSubscriptions()
@@ -30,7 +32,7 @@ class SubscriptionService(
         } else {
             existing.forEach { sub ->
                 val hoursUntilExpiry = java.time.Duration.between(
-                    LocalDateTime.now(), sub.expirationTime
+                    LocalDateTime.now(OSLO), sub.expirationTime
                 ).toHours()
                 if (hoursUntilExpiry <= RENEWAL_THRESHOLD_HOURS) {
                     logger.info("Subscription ${sub.subscriptionId} expires in ${hoursUntilExpiry}h, renewing")
@@ -47,7 +49,7 @@ class SubscriptionService(
         val expiry = OffsetDateTime.now(ZoneOffset.UTC).plusHours(SUBSCRIPTION_LIFETIME_HOURS)
         cloudClient.createSubscription(
             notificationUrl = notificationUrl,
-            resource = SUBSCRIPTION_RESOURCE,
+            resource = subscriptionResource,
             clientState = env.webhookClientState,
             expirationDateTime = expiry,
         ).fold(
@@ -57,10 +59,10 @@ class SubscriptionService(
             ifRight = { subscription ->
                 val subscriptionId = subscription.id ?: return
                 val expirationTime = subscription.expirationDateTime?.toLocalDateTimeOslo()
-                    ?: expiry.toLocalDateTime()
+                    ?: expiry.toLocalDateTimeOslo()
                 database.saveSubscription(
                     subscriptionId = subscriptionId,
-                    resource = SUBSCRIPTION_RESOURCE,
+                    resource = subscriptionResource,
                     expirationTime = expirationTime,
                     clientState = env.webhookClientState,
                 )
@@ -99,7 +101,7 @@ class SubscriptionService(
                     } else {
                         subs.forEach { sub ->
                             val hoursUntilExpiry = java.time.Duration.between(
-                                LocalDateTime.now(), sub.expirationTime
+                                LocalDateTime.now(OSLO), sub.expirationTime
                             ).toHours()
                             if (hoursUntilExpiry <= RENEWAL_THRESHOLD_HOURS) {
                                 renewSubscription(sub)
@@ -122,4 +124,4 @@ class SubscriptionService(
 }
 
 private fun OffsetDateTime.toLocalDateTimeOslo(): LocalDateTime =
-    this.atZoneSameInstant(java.time.ZoneId.of("Europe/Oslo")).toLocalDateTime()
+    this.atZoneSameInstant(OSLO).toLocalDateTime()

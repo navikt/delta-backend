@@ -15,13 +15,13 @@ spec:
         - application: delta-backend
   port: 8080
   liveness:
-    path: /webhook/calendar
+    path: /health
     initialDelay: 5
     timeout: 5
     periodSeconds: 10
     failureThreshold: 6
   readiness:
-    path: /webhook/calendar
+    path: /health
     initialDelay: 5
     periodSeconds: 5
     timeout: 5

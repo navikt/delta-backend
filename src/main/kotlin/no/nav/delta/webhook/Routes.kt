@@ -3,6 +3,7 @@ package no.nav.delta.webhook
 import com.microsoft.graph.models.ResponseType
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.application
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
@@ -10,6 +11,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import kotlinx.coroutines.launch
 import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.unregisterFromEvent
@@ -37,25 +39,29 @@ fun Route.webhookApi(
 
         // MS Graph sends change notifications here as POST requests.
         post {
-            // Acknowledge quickly — MS Graph requires a response within 10 seconds.
-            call.respond(HttpStatusCode.Accepted)
-
             val payload = try {
                 call.receive<GraphNotificationPayload>()
             } catch (e: Exception) {
                 logger.warn("Failed to parse notification payload: ${e.message}")
+                call.respond(HttpStatusCode.Accepted)
                 return@post
             }
 
-            for (notification in payload.value) {
-                if (notification.clientState != env.webhookClientState) {
-                    logger.warn("Received notification with invalid clientState, ignoring")
-                    continue
+            // Acknowledge immediately — MS Graph requires a response within 10 seconds.
+            // Processing is offloaded to a background coroutine so the 202 is committed first.
+            call.respond(HttpStatusCode.Accepted)
+
+            call.application.launch {
+                for (notification in payload.value) {
+                    if (notification.clientState != env.webhookClientState) {
+                        logger.warn("Received notification with invalid clientState, ignoring")
+                        continue
+                    }
+                    if (notification.changeType != "updated") {
+                        continue
+                    }
+                    processNotification(notification, database, cloudClient)
                 }
-                if (notification.changeType != "updated") {
-                    continue
-                }
-                processNotification(notification, database, cloudClient)
             }
         }
     }

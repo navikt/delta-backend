@@ -19,7 +19,9 @@ fun DatabaseInterface.saveSubscription(
             INSERT INTO graph_subscription (subscription_id, resource, expiration_time, client_state)
             VALUES (?, ?, ?, ?)
             ON CONFLICT (subscription_id) DO UPDATE
-                SET expiration_time = EXCLUDED.expiration_time
+                SET resource        = EXCLUDED.resource,
+                    client_state    = EXCLUDED.client_state,
+                    expiration_time = EXCLUDED.expiration_time
             """
         ).use { stmt ->
             stmt.setString(1, subscriptionId)
