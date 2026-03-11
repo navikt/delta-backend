@@ -78,6 +78,8 @@ fun Application.mySetup(
         json()
     }
 
+    val subscriptionService = SubscriptionService(cloudClient, database, env)
+
     routing {
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient)
@@ -87,9 +89,13 @@ fun Application.mySetup(
             call.respondText("I'm alive! :)")
         }
         get("/internal/is_ready") {
-            call.respondText("I'm ready! :)")
+            if (subscriptionService.isHealthy()) {
+                call.respondText("I'm ready! :)")
+            } else {
+                call.respondText("Graph subscription unavailable", status = io.ktor.http.HttpStatusCode.ServiceUnavailable)
             }
+        }
     }
 
-    SubscriptionService(cloudClient, database, env).initialize()
+    subscriptionService.initialize()
 }

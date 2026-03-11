@@ -24,7 +24,36 @@ class SubscriptionService(
     private val notificationUrl get() = "${env.webhookBaseUrl}/webhook/calendar"
     private val subscriptionResource get() = "users/${env.deltaEmailAddress}/events"
 
+    // Only meaningful on the leader pod; true once a healthy subscription is confirmed.
+    @Volatile private var subscriptionHealthy = false
+
+    // True if this pod won the advisory lock and is responsible for subscription management.
+    @Volatile private var isLeader = false
+
+    /**
+     * Returns false only if this pod is the leader and no healthy subscription exists.
+     * Non-leader pods always report healthy — subscription management is not their concern.
+     */
+    fun isHealthy(): Boolean = !isLeader || subscriptionHealthy
+
     fun initialize() {
+        // Acquire a dedicated long-lived connection for the advisory lock.
+        // The lock is session-scoped: it is held as long as this connection stays open,
+        // and released automatically if the pod dies (connection drops).
+        val lockConn = database.connection
+        isLeader = tryAdvisoryLock(lockConn)
+
+        if (isLeader) {
+            logger.info("Acquired subscription leader lock — this pod manages Graph subscriptions")
+            manageSubscriptions()
+            startRenewalThread(lockConn)
+        } else {
+            logger.info("Another pod holds the subscription leader lock — starting lock-acquisition thread")
+            startLockAcquisitionThread()
+        }
+    }
+
+    private fun manageSubscriptions() {
         val existing = database.getSubscriptions()
         if (existing.isEmpty()) {
             logger.info("No existing Graph subscriptions found, creating new one")
@@ -39,10 +68,10 @@ class SubscriptionService(
                     renewSubscription(sub)
                 } else {
                     logger.info("Subscription ${sub.subscriptionId} is valid for ${hoursUntilExpiry}h, no action needed")
+                    subscriptionHealthy = true
                 }
             }
         }
-        startRenewalThread()
     }
 
     private fun createSubscription() {
@@ -55,6 +84,7 @@ class SubscriptionService(
         ).fold(
             ifLeft = { err ->
                 logger.error("Failed to create Graph subscription: ${err.message}", err)
+                subscriptionHealthy = false
             },
             ifRight = { subscription ->
                 val subscriptionId = subscription.id ?: return
@@ -66,6 +96,7 @@ class SubscriptionService(
                     expirationTime = expirationTime,
                     clientState = env.webhookClientState,
                 )
+                subscriptionHealthy = true
                 logger.info("Created Graph subscription $subscriptionId, expires at $expirationTime")
             }
         )
@@ -76,19 +107,49 @@ class SubscriptionService(
         cloudClient.renewSubscription(sub.subscriptionId, newExpiry).fold(
             ifLeft = { err ->
                 logger.error("Failed to renew subscription ${sub.subscriptionId}: ${err.message}", err)
-                // If renewal fails, try creating a fresh subscription
+                // Renewal failed — delete stale record and try creating a fresh subscription
                 database.deleteSubscription(sub.subscriptionId)
                 createSubscription()
             },
             ifRight = {
                 val newLocalExpiry = newExpiry.toLocalDateTimeOslo()
                 database.updateSubscriptionExpiry(sub.subscriptionId, newLocalExpiry)
+                subscriptionHealthy = true
                 logger.info("Renewed subscription ${sub.subscriptionId}, new expiry: $newLocalExpiry")
             }
         )
     }
 
-    private fun startRenewalThread() {
+    private fun startLockAcquisitionThread() {
+        val thread = Thread {
+            while (true) {
+                try {
+                    Thread.sleep(RENEWAL_CHECK_INTERVAL_MS)
+                    val lockConn = database.connection
+                    if (tryAdvisoryLock(lockConn)) {
+                        isLeader = true
+                        logger.info("Acquired subscription leader lock — taking over subscription management")
+                        manageSubscriptions()
+                        startRenewalThread(lockConn)
+                        break
+                    } else {
+                        lockConn.close()
+                        logger.debug("Leader lock still held by another pod, will retry in ${RENEWAL_CHECK_INTERVAL_MS / 3600000}h")
+                    }
+                } catch (e: InterruptedException) {
+                    logger.info("Lock acquisition thread interrupted, stopping")
+                    break
+                } catch (e: Exception) {
+                    logger.error("Error in lock acquisition thread: ${e.message}", e)
+                }
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "graph-subscription-lock-acquisition"
+        thread.start()
+    }
+
+    private fun startRenewalThread(lockConn: java.sql.Connection) {
         val thread = Thread {
             while (true) {
                 try {
@@ -109,7 +170,8 @@ class SubscriptionService(
                         }
                     }
                 } catch (e: InterruptedException) {
-                    logger.info("Subscription renewal thread interrupted, stopping")
+                    logger.info("Subscription renewal thread interrupted, releasing leader lock")
+                    lockConn.close()
                     break
                 } catch (e: Exception) {
                     logger.error("Error in subscription renewal thread: ${e.message}", e)
@@ -125,3 +187,4 @@ class SubscriptionService(
 
 private fun OffsetDateTime.toLocalDateTimeOslo(): LocalDateTime =
     this.atZoneSameInstant(OSLO).toLocalDateTime()
+
