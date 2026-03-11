@@ -1,9 +1,16 @@
 package no.nav.delta.webhook
 
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
 import no.nav.delta.plugins.DatabaseInterface
@@ -14,42 +21,74 @@ private val OSLO: ZoneId = ZoneId.of("Europe/Oslo")
 
 private const val SUBSCRIPTION_LIFETIME_HOURS = 71L // Outlook event subscriptions support up to 10,080 min (7 days)
 private const val RENEWAL_THRESHOLD_HOURS = 24L
-private const val RENEWAL_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L // 12 hours
 
 class SubscriptionService(
     private val cloudClient: CloudClient,
     private val database: DatabaseInterface,
     private val env: Environment,
+    private val leaderElection: LeaderElection,
 ) {
     private val notificationUrl get() = "${env.webhookBaseUrl}/webhook/calendar"
     private val subscriptionResource get() = "users/${env.deltaEmailAddress}/events"
 
-    // Only meaningful on the leader pod; true once a healthy subscription is confirmed.
     @Volatile private var subscriptionHealthy = false
-
-    // True if this pod won the advisory lock and is responsible for subscription management.
-    @Volatile private var isLeader = false
+    @Volatile private var lastRenewalCheck: Instant = Instant.EPOCH
 
     /**
      * Returns false only if this pod is the leader and no healthy subscription exists.
      * Non-leader pods always report healthy — subscription management is not their concern.
      */
-    fun isHealthy(): Boolean = !isLeader || subscriptionHealthy
+    fun isHealthy(): Boolean = !leaderElection.isLeader() || subscriptionHealthy
 
-    fun initialize() {
-        // Acquire a dedicated long-lived connection for the advisory lock.
-        // The lock is session-scoped: it is held as long as this connection stays open,
-        // and released automatically if the pod dies (connection drops).
-        val lockConn = database.connection
-        isLeader = tryAdvisoryLock(lockConn)
+    fun initialize(scope: CoroutineScope) {
+        leaderElection.startLeaderElectionChecks(scope)
 
-        if (isLeader) {
-            logger.info("Acquired subscription leader lock — this pod manages Graph subscriptions")
-            manageSubscriptions()
-            startRenewalThread(lockConn)
-        } else {
-            logger.info("Another pod holds the subscription leader lock — starting lock-acquisition thread")
-            startLockAcquisitionThread()
+        scope.launch {
+            // Give leader election a moment to resolve before acting
+            delay(15.seconds)
+            if (leaderElection.isLeader()) {
+                logger.info("This pod is the leader — managing Graph subscriptions")
+                manageSubscriptions()
+            }
+            startRenewalLoop(scope)
+        }
+    }
+
+    private fun startRenewalLoop(scope: CoroutineScope) {
+        scope.launch {
+            var wasLeader = leaderElection.isLeader()
+            while (isActive) {
+                delay(10.seconds)
+                val isLeaderNow = leaderElection.isLeader()
+
+                if (isLeaderNow && !wasLeader) {
+                    // Just gained leadership — run full management immediately
+                    logger.info("Leadership acquired mid-lifecycle — running subscription management")
+                    manageSubscriptions()
+                } else if (isLeaderNow) {
+                    // Already the leader — check renewal every 12h
+                    val hoursSinceLastCheck = java.time.Duration.between(lastRenewalCheck, java.time.Instant.now()).toHours()
+                    if (hoursSinceLastCheck >= 12) {
+                        lastRenewalCheck = java.time.Instant.now()
+                        logger.info("Running scheduled subscription renewal check")
+                        val subs = database.getSubscriptions()
+                        if (subs.isEmpty()) {
+                            logger.info("No subscriptions found during renewal check, creating new one")
+                            createSubscription()
+                        } else {
+                            val sub = subs.maxByOrNull { it.expirationTime }!!
+                            val hoursUntilExpiry = java.time.Duration.between(
+                                LocalDateTime.now(OSLO), sub.expirationTime
+                            ).toHours()
+                            if (hoursUntilExpiry <= RENEWAL_THRESHOLD_HOURS) {
+                                renewSubscription(sub)
+                            }
+                        }
+                    }
+                }
+
+                wasLeader = isLeaderNow
+            }
         }
     }
 
@@ -128,79 +167,9 @@ class SubscriptionService(
             }
         )
     }
-
-    private fun startLockAcquisitionThread() {
-        val thread = Thread {
-            while (true) {
-                try {
-                    Thread.sleep(RENEWAL_CHECK_INTERVAL_MS)
-                } catch (e: InterruptedException) {
-                    logger.info("Lock acquisition thread interrupted, stopping")
-                    break
-                }
-
-                val lockConn = database.connection
-                var lockAcquired = false
-                try {
-                    lockAcquired = tryAdvisoryLock(lockConn)
-                    if (lockAcquired) {
-                        isLeader = true
-                        logger.info("Acquired subscription leader lock — taking over subscription management")
-                        manageSubscriptions()
-                        startRenewalThread(lockConn)
-                        break
-                    } else {
-                        logger.debug("Leader lock still held by another pod, will retry in ${RENEWAL_CHECK_INTERVAL_MS / 3600000}h")
-                    }
-                } catch (e: Exception) {
-                    logger.error("Error in lock acquisition thread: ${e.message}", e)
-                } finally {
-                    // Only close if we didn't win the lock — winner's connection is kept open for lock lifetime
-                    if (!lockAcquired) lockConn.close()
-                }
-            }
-        }
-        thread.isDaemon = true
-        thread.name = "graph-subscription-lock-acquisition"
-        thread.start()
-    }
-
-    private fun startRenewalThread(lockConn: java.sql.Connection) {
-        val thread = Thread {
-            while (true) {
-                try {
-                    Thread.sleep(RENEWAL_CHECK_INTERVAL_MS)
-                    logger.info("Running scheduled subscription renewal check")
-                    val subs = database.getSubscriptions()
-                    if (subs.isEmpty()) {
-                        logger.info("No subscriptions found during renewal check, creating new one")
-                        createSubscription()
-                    } else {
-                        subs.forEach { sub ->
-                            val hoursUntilExpiry = java.time.Duration.between(
-                                LocalDateTime.now(OSLO), sub.expirationTime
-                            ).toHours()
-                            if (hoursUntilExpiry <= RENEWAL_THRESHOLD_HOURS) {
-                                renewSubscription(sub)
-                            }
-                        }
-                    }
-                } catch (e: InterruptedException) {
-                    logger.info("Subscription renewal thread interrupted, releasing leader lock")
-                    lockConn.close()
-                    break
-                } catch (e: Exception) {
-                    logger.error("Error in subscription renewal thread: ${e.message}", e)
-                }
-            }
-        }
-        thread.isDaemon = true
-        thread.name = "graph-subscription-renewal"
-        thread.start()
-        logger.info("Started Graph subscription renewal daemon thread")
-    }
 }
 
 private fun OffsetDateTime.toLocalDateTimeOslo(): LocalDateTime =
     this.atZoneSameInstant(OSLO).toLocalDateTime()
+
 

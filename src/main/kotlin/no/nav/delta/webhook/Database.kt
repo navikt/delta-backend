@@ -3,28 +3,9 @@ package no.nav.delta.webhook
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
-import java.sql.Connection
 import java.sql.Timestamp
 import java.time.LocalDateTime
 import no.nav.delta.plugins.DatabaseInterface
-
-// Fixed advisory lock key for subscription leader election across pods
-private const val SUBSCRIPTION_ADVISORY_LOCK_KEY = 8675309L
-
-/**
- * Attempts to acquire a PostgreSQL session-level advisory lock.
- * Returns true if the lock was acquired (this pod becomes the leader), false if another pod holds it.
- * The lock is held for the lifetime of [conn] — caller is responsible for keeping the connection open.
- */
-fun tryAdvisoryLock(conn: Connection): Boolean {
-    conn.prepareStatement("SELECT pg_try_advisory_lock(?)").use { stmt ->
-        stmt.setLong(1, SUBSCRIPTION_ADVISORY_LOCK_KEY)
-        stmt.executeQuery().use { rs ->
-            rs.next()
-            return rs.getBoolean(1)
-        }
-    }
-}
 
 fun DatabaseInterface.saveSubscription(
     subscriptionId: String,

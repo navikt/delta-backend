@@ -29,6 +29,7 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.webhook.LeaderElection
 import no.nav.delta.webhook.SubscriptionService
 import no.nav.delta.webhook.webhookApi
 import org.slf4j.event.Level
@@ -79,7 +80,7 @@ fun Application.mySetup(
         json()
     }
 
-    val subscriptionService = SubscriptionService(cloudClient, database, env)
+    val subscriptionService = SubscriptionService(cloudClient, database, env, LeaderElection())
 
     routing {
         swaggerUI(path = "openapi")
@@ -100,5 +101,5 @@ fun Application.mySetup(
 
     // Initialize asynchronously so transient MS Graph/DB errors at startup
     // don't block the server from becoming alive. Readiness reflects health.
-    launch { subscriptionService.initialize() }
+    launch { subscriptionService.initialize(this) }
 }
