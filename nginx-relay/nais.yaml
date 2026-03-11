@@ -1,0 +1,27 @@
+apiVersion: "nais.io/v1alpha1"
+kind: "Application"
+metadata:
+  name: delta-webhook-relay
+  namespace: delta
+  labels:
+    team: delta
+spec:
+  image: {{image}}
+  ingresses:
+    - https://delta-webhook.nav.no
+  accessPolicy:
+    outbound:
+      rules:
+        - application: delta-backend
+  port: 8080
+  liveness:
+    path: /webhook/calendar
+    initialDelay: 5
+    timeout: 5
+    periodSeconds: 10
+    failureThreshold: 6
+  readiness:
+    path: /webhook/calendar
+    initialDelay: 5
+    periodSeconds: 5
+    timeout: 5

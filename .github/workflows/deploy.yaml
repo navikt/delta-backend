@@ -1,3 +1,4 @@
+name: Deploy backend
 on:
   push:
   workflow_dispatch:

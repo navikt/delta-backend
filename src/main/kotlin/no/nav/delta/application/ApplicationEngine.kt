@@ -28,6 +28,8 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.webhook.SubscriptionService
+import no.nav.delta.webhook.webhookApi
 import org.slf4j.event.Level
 
 fun createApplicationEngine(
@@ -80,6 +82,7 @@ fun Application.mySetup(
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient)
         faggruppeApi(database, cloudClient, env)
+        webhookApi(database, cloudClient, env)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")
         }
@@ -87,4 +90,6 @@ fun Application.mySetup(
             call.respondText("I'm ready! :)")
             }
     }
+
+    SubscriptionService(cloudClient, database, env).initialize()
 }

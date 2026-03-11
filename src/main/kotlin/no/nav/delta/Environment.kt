@@ -15,6 +15,8 @@ data class Environment(
     val isDev: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "dev-gcp",
     val isLocal: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "localhost",
     val faggruppeAdminGroupId: String = getEnvVar("FAGGRUPPE_ADMIN_GROUP_ID", ""),
+    val webhookBaseUrl: String = getEnvVar("WEBHOOK_BASE_URL", "http://localhost:8080"),
+    val webhookClientState: String = getEnvVar("WEBHOOK_CLIENT_STATE", "local-dev-secret"),
 ) {
     companion object {
         fun getEnvVar(varName: String, defaultValue: String? = null) =

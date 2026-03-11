@@ -11,6 +11,8 @@ import com.microsoft.graph.models.*
 import com.microsoft.graph.requests.GraphServiceClient
 import java.lang.RuntimeException
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.*
 import java.util.concurrent.CompletableFuture
 import no.nav.delta.Environment
@@ -37,6 +39,20 @@ interface CloudClient {
     fun deleteEvent(calendarEventId: String): Either<Throwable, Unit>
 
     fun getUserDisplayName(email: String): String?
+
+    fun createSubscription(
+        notificationUrl: String,
+        resource: String,
+        clientState: String,
+        expirationDateTime: OffsetDateTime,
+    ): Either<Throwable, Subscription>
+
+    fun renewSubscription(
+        subscriptionId: String,
+        newExpiration: OffsetDateTime,
+    ): Either<Throwable, Unit>
+
+    fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?>
 
     companion object {
         fun fromEnvironment(env: Environment): CloudClient {
@@ -239,6 +255,57 @@ class AzureCloudClient(
             null
         }
     }
+
+    override fun createSubscription(
+        notificationUrl: String,
+        resource: String,
+        clientState: String,
+        expirationDateTime: OffsetDateTime,
+    ): Either<Throwable, Subscription> {
+        return try {
+            refreshTokenIfNeeded()
+            val subscription = Subscription().apply {
+                this.notificationUrl = notificationUrl
+                this.resource = resource
+                this.clientState = clientState
+                this.expirationDateTime = expirationDateTime
+                this.changeType = "updated"
+            }
+            graphClient.subscriptions().buildRequest().post(subscription).right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to create subscription", e).left()
+        }
+    }
+
+    override fun renewSubscription(
+        subscriptionId: String,
+        newExpiration: OffsetDateTime,
+    ): Either<Throwable, Unit> {
+        return try {
+            refreshTokenIfNeeded()
+            val patch = Subscription().apply { expirationDateTime = newExpiration }
+            graphClient.subscriptions(subscriptionId).buildRequest().patch(patch)
+            Unit.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to renew subscription $subscriptionId", e).left()
+        }
+    }
+
+    override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> {
+        return try {
+            refreshTokenIfNeeded()
+            val event = graphClient
+                .users(applicationEmailAddress)
+                .events(calendarEventId)
+                .buildRequest()
+                .select("attendees")
+                .get()
+            val status = event?.attendees?.firstOrNull()?.status?.response
+            status.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to get attendee status for event $calendarEventId", e).left()
+        }
+    }
 }
 
 private data class AzureToken(val accessToken: String, val expiresOnDate: Date?) {
@@ -280,6 +347,34 @@ class DummyCloudClient : CloudClient {
     override fun getUserDisplayName(email: String): String? {
         println("DummyEmailClient: Looking up display name for $email")
         return null
+    }
+
+    override fun createSubscription(
+        notificationUrl: String,
+        resource: String,
+        clientState: String,
+        expirationDateTime: OffsetDateTime,
+    ): Either<Throwable, Subscription> {
+        println("DummyEmailClient: Creating subscription for resource='$resource' notificationUrl='$notificationUrl'")
+        return Subscription().apply {
+            id = "dummy-subscription-id"
+            this.resource = resource
+            this.expirationDateTime = expirationDateTime
+            this.clientState = clientState
+        }.right()
+    }
+
+    override fun renewSubscription(
+        subscriptionId: String,
+        newExpiration: OffsetDateTime,
+    ): Either<Throwable, Unit> {
+        println("DummyEmailClient: Renewing subscription id='$subscriptionId' until=$newExpiration")
+        return Unit.right()
+    }
+
+    override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> {
+        println("DummyEmailClient: Getting attendee status for calendarEventId='$calendarEventId'")
+        return null.right()
     }
 }
 

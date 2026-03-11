@@ -1,0 +1,28 @@
+name: Deploy relay
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Build & push docker image to GAR
+        uses: nais/docker-build-push@ae613eff6f44f0323476eda1c3994a7c518761c3
+        id: docker-build-push
+        with:
+          team: delta
+          pull: true
+          docker_context: nginx-relay/
+          image_suffix: relay
+      - uses: nais/deploy/actions/deploy@fa754451577294aae42872a69b888b3470478ec1
+        env:
+          CLUSTER: prod-gcp
+          RESOURCE: nginx-relay/nais.yaml
+          IMAGE: ${{ steps.docker-build-push.outputs.image }}
