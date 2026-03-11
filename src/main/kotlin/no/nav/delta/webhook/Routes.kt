@@ -84,7 +84,7 @@ private fun processNotification(
         ifRight = { it }
     )
 
-    if (attendeeStatus == ResponseType.DECLINED) {
+    if (attendeeStatus == ResponseType.Declined) {
         logger.info(
             "Participant ${participantRef.email} declined event ${participantRef.eventId} via Outlook, unregistering"
         )

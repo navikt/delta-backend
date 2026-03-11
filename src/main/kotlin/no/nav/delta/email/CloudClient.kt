@@ -13,8 +13,6 @@ import com.microsoft.graph.users.item.sendmail.SendMailPostRequestBody
 import java.lang.RuntimeException
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
-import java.time.ZoneOffset
-import java.util.*
 import no.nav.delta.Environment
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
@@ -181,7 +179,7 @@ class AzureCloudClient(
                     .calendar()
                     .events()
                     .post(calendarEvent)
-                    .id
+                    ?.id
                     ?.right()
                     ?: RuntimeException("Failed to create event").left()
             } catch (e: Exception) {
@@ -243,7 +241,6 @@ class AzureCloudClient(
         expirationDateTime: OffsetDateTime,
     ): Either<Throwable, Subscription> {
         return try {
-            refreshTokenIfNeeded()
             val subscription = Subscription().apply {
                 this.notificationUrl = notificationUrl
                 this.resource = resource
@@ -251,7 +248,7 @@ class AzureCloudClient(
                 this.expirationDateTime = expirationDateTime
                 this.changeType = "updated"
             }
-            graphClient.subscriptions().buildRequest().post(subscription).right()
+            graphClient.subscriptions().post(subscription).right()
         } catch (e: Exception) {
             RuntimeException("Failed to create subscription", e).left()
         }
@@ -262,9 +259,8 @@ class AzureCloudClient(
         newExpiration: OffsetDateTime,
     ): Either<Throwable, Unit> {
         return try {
-            refreshTokenIfNeeded()
             val patch = Subscription().apply { expirationDateTime = newExpiration }
-            graphClient.subscriptions(subscriptionId).buildRequest().patch(patch)
+            graphClient.subscriptions().bySubscriptionId(subscriptionId).patch(patch)
             Unit.right()
         } catch (e: Exception) {
             RuntimeException("Failed to renew subscription $subscriptionId", e).left()
@@ -273,13 +269,12 @@ class AzureCloudClient(
 
     override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> {
         return try {
-            refreshTokenIfNeeded()
             val event = graphClient
-                .users(applicationEmailAddress)
-                .events(calendarEventId)
-                .buildRequest()
-                .select("attendees")
-                .get()
+                .users()
+                .byUserId(applicationEmailAddress)
+                .events()
+                .byEventId(calendarEventId)
+                .get { it.queryParameters?.select = arrayOf("attendees") }
             val status = event?.attendees?.firstOrNull()?.status?.response
             status.right()
         } catch (e: Exception) {
