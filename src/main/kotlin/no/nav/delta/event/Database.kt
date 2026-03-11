@@ -315,6 +315,95 @@ fun DatabaseInterface.getEvents(
     }
 }
 
+fun DatabaseInterface.getFullEvents(
+    categories: List<Int> = listOf(),
+    onlyFuture: Boolean = false,
+    onlyPast: Boolean = false,
+    onlyPublic: Boolean = false,
+    byHost: Option<String> = none(),
+    joinedBy: Option<String> = none(),
+): List<FullEvent> {
+    return connection.use { connection ->
+        val clauses = mutableListOf("TRUE")
+        val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
+
+        if (onlyFuture) clauses.add("end_time > DATE_TRUNC('day', NOW())")
+        if (onlyPast) clauses.add("start_time < DATE_TRUNC('day', NOW()) + MAKE_INTERVAL(days => 1)")
+        if (onlyPublic) clauses.add("public = TRUE")
+
+        categories.forEach { categoryId ->
+            clauses.add("id IN (SELECT event_id FROM event_has_category WHERE category_id=?)")
+            values.add { setInt(it, categoryId) }
+        }
+        byHost.onSome { host ->
+            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")
+            values.add { setString(it, host) }
+        }
+        joinedBy.onSome { jb ->
+            clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
+            values.add { setString(it, jb) }
+        }
+
+        val whereClause = clauses.joinToString(" AND ")
+
+        // Query 1: all matching events with their participants
+        val eventsStmt = connection.prepareStatement("""
+            SELECT e.*, p.email AS p_email, p.name AS p_name, p.type AS p_type
+            FROM (SELECT * FROM event WHERE $whereClause ORDER BY start_time) e
+            LEFT JOIN participant p ON e.id = p.event_id
+            ORDER BY e.start_time, e.id
+        """)
+        values.forEachIndexed { index, setSomething -> eventsStmt.setSomething(index + 1) }
+
+        val eventsResult = eventsStmt.executeQuery()
+
+        val eventsMap = LinkedHashMap<UUID, Pair<Event, MutableList<Pair<ParticipantType, Participant>>>>()
+        while (eventsResult.next()) {
+            val event = eventsResult.toEvent()
+            val entry = eventsMap.getOrPut(event.id) { Pair(event, mutableListOf()) }
+            val pEmail = eventsResult.getString("p_email")
+            if (pEmail != null) {
+                entry.second.add(
+                    Pair(
+                        ParticipantType.valueOf(eventsResult.getString("p_type")),
+                        Participant(email = pEmail, name = eventsResult.getString("p_name")),
+                    )
+                )
+            }
+        }
+
+        if (eventsMap.isEmpty()) return emptyList()
+
+        // Query 2: categories for all matching events in one shot
+        val eventIdArray = connection.createArrayOf("uuid", eventsMap.keys.toTypedArray())
+        val categoriesStmt = connection.prepareStatement("""
+            SELECT ehc.event_id, c.id, c.name
+            FROM category c
+            JOIN event_has_category ehc ON c.id = ehc.category_id
+            WHERE ehc.event_id = ANY(?)
+        """)
+        categoriesStmt.setArray(1, eventIdArray)
+
+        val categoriesMap = HashMap<UUID, MutableList<Category>>()
+        val categoriesResult = categoriesStmt.executeQuery()
+        while (categoriesResult.next()) {
+            val eventId = UUID.fromString(categoriesResult.getString("event_id"))
+            categoriesMap.getOrPut(eventId) { mutableListOf() }.add(
+                Category(id = categoriesResult.getInt("id"), name = categoriesResult.getString("name"))
+            )
+        }
+
+        eventsMap.values.map { (event, participants) ->
+            FullEvent(
+                event = event,
+                participants = participants.filter { it.first == ParticipantType.PARTICIPANT }.map { it.second },
+                hosts = participants.filter { it.first == ParticipantType.HOST }.map { it.second },
+                categories = categoriesMap[event.id] ?: emptyList(),
+            )
+        }
+    }
+}
+
 fun DatabaseInterface.registerForEvent(
     eventId: String,
     email: String,
