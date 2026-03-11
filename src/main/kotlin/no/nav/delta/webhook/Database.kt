@@ -37,8 +37,8 @@ fun DatabaseInterface.saveSubscription(
             """
             INSERT INTO graph_subscription (subscription_id, resource, expiration_time, client_state)
             VALUES (?, ?, ?, ?)
-            ON CONFLICT (subscription_id) DO UPDATE
-                SET resource        = EXCLUDED.resource,
+            ON CONFLICT (resource) DO UPDATE
+                SET subscription_id = EXCLUDED.subscription_id,
                     client_state    = EXCLUDED.client_state,
                     expiration_time = EXCLUDED.expiration_time
             """
@@ -83,7 +83,7 @@ fun DatabaseInterface.updateSubscriptionExpiry(
 ): Either<Throwable, Unit> {
     return try {
         connection.use { conn ->
-            conn.prepareStatement(
+            val updated = conn.prepareStatement(
                 "UPDATE graph_subscription SET expiration_time = ? WHERE subscription_id = ?"
             ).use { stmt ->
                 stmt.setTimestamp(1, Timestamp.valueOf(newExpiry))
@@ -91,6 +91,9 @@ fun DatabaseInterface.updateSubscriptionExpiry(
                 stmt.executeUpdate()
             }
             conn.commit()
+            if (updated == 0) {
+                return RuntimeException("No subscription row found for id=$subscriptionId — row may have been deleted").left()
+            }
         }
         Unit.right()
     } catch (e: Exception) {

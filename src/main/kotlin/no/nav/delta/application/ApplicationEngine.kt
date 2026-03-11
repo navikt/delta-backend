@@ -18,6 +18,7 @@ import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
 import io.ktor.server.request.path
+import kotlinx.coroutines.launch
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -97,5 +98,7 @@ fun Application.mySetup(
         }
     }
 
-    subscriptionService.initialize()
+    // Initialize asynchronously so transient MS Graph/DB errors at startup
+    // don't block the server from becoming alive. Readiness reflects health.
+    launch { subscriptionService.initialize() }
 }

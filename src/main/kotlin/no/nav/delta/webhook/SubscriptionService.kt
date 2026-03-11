@@ -59,17 +59,22 @@ class SubscriptionService(
             logger.info("No existing Graph subscriptions found, creating new one")
             createSubscription()
         } else {
-            existing.forEach { sub ->
-                val hoursUntilExpiry = java.time.Duration.between(
-                    LocalDateTime.now(OSLO), sub.expirationTime
-                ).toHours()
-                if (hoursUntilExpiry <= RENEWAL_THRESHOLD_HOURS) {
-                    logger.info("Subscription ${sub.subscriptionId} expires in ${hoursUntilExpiry}h, renewing")
-                    renewSubscription(sub)
-                } else {
-                    logger.info("Subscription ${sub.subscriptionId} is valid for ${hoursUntilExpiry}h, no action needed")
-                    subscriptionHealthy = true
-                }
+            // Enforce single-subscription invariant: keep the newest, delete any extras
+            val sorted = existing.sortedByDescending { it.expirationTime }
+            sorted.drop(1).forEach { stale ->
+                logger.warn("Deleting surplus subscription ${stale.subscriptionId} to enforce single-subscription invariant")
+                database.deleteSubscription(stale.subscriptionId)
+            }
+            val sub = sorted.first()
+            val hoursUntilExpiry = java.time.Duration.between(
+                LocalDateTime.now(OSLO), sub.expirationTime
+            ).toHours()
+            if (hoursUntilExpiry <= RENEWAL_THRESHOLD_HOURS) {
+                logger.info("Subscription ${sub.subscriptionId} expires in ${hoursUntilExpiry}h, renewing")
+                renewSubscription(sub)
+            } else {
+                logger.info("Subscription ${sub.subscriptionId} is valid for ${hoursUntilExpiry}h, no action needed")
+                subscriptionHealthy = true
             }
         }
     }
@@ -87,7 +92,11 @@ class SubscriptionService(
                 subscriptionHealthy = false
             },
             ifRight = { subscription ->
-                val subscriptionId = subscription.id ?: return
+                val subscriptionId = subscription.id ?: run {
+                    logger.error("MS Graph returned a subscription without an id — cannot store it")
+                    subscriptionHealthy = false
+                    return
+                }
                 val expirationTime = subscription.expirationDateTime?.toLocalDateTimeOslo()
                     ?: expiry.toLocalDateTimeOslo()
                 database.saveSubscription(
@@ -125,22 +134,29 @@ class SubscriptionService(
             while (true) {
                 try {
                     Thread.sleep(RENEWAL_CHECK_INTERVAL_MS)
-                    val lockConn = database.connection
-                    if (tryAdvisoryLock(lockConn)) {
+                } catch (e: InterruptedException) {
+                    logger.info("Lock acquisition thread interrupted, stopping")
+                    break
+                }
+
+                val lockConn = database.connection
+                var lockAcquired = false
+                try {
+                    lockAcquired = tryAdvisoryLock(lockConn)
+                    if (lockAcquired) {
                         isLeader = true
                         logger.info("Acquired subscription leader lock — taking over subscription management")
                         manageSubscriptions()
                         startRenewalThread(lockConn)
                         break
                     } else {
-                        lockConn.close()
                         logger.debug("Leader lock still held by another pod, will retry in ${RENEWAL_CHECK_INTERVAL_MS / 3600000}h")
                     }
-                } catch (e: InterruptedException) {
-                    logger.info("Lock acquisition thread interrupted, stopping")
-                    break
                 } catch (e: Exception) {
                     logger.error("Error in lock acquisition thread: ${e.message}", e)
+                } finally {
+                    // Only close if we didn't win the lock — winner's connection is kept open for lock lifetime
+                    if (!lockAcquired) lockConn.close()
                 }
             }
         }
