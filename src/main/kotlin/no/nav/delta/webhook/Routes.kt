@@ -125,13 +125,12 @@ private fun processNotification(
     }
 }
 
+private val eventsResourceRegex =
+    Regex("(?i)/events(?:\\('([^']+)'\\)|/([^/()]+))/?(?:\\?.*)?$")
+
 /** Extracts the calendar event ID from a resource path like `users/{id}/events/{eventId}` */
 private fun extractCalendarEventId(resource: String): String? {
-    val segments = resource.trimStart('/').split("/")
-    val eventsIndex = segments.indexOfLast { it == "events" }
-    return if (eventsIndex >= 0 && eventsIndex + 1 < segments.size) {
-        segments[eventsIndex + 1]
-    } else {
-        null
-    }
+    val normalized = if (resource.startsWith("/")) resource else "/$resource"
+    val match = eventsResourceRegex.find(normalized) ?: return null
+    return match.groups[1]?.value ?: match.groups[2]?.value
 }
