@@ -274,6 +274,48 @@ WHERE  event_id = Uuid(?)
     }
 }
 
+private data class EventFilterClause(
+    val whereClause: String,
+    val binders: List<PreparedStatement.(Int) -> Unit>,
+)
+
+private fun buildEventFilterClause(
+    categories: List<Int>,
+    onlyFuture: Boolean,
+    onlyPast: Boolean,
+    onlyPublic: Boolean,
+    byHost: Option<String>,
+    joinedBy: Option<String>,
+): EventFilterClause {
+    val clauses = mutableListOf("TRUE")
+    val binders = mutableListOf<PreparedStatement.(Int) -> Unit>()
+
+    if (onlyFuture) clauses.add("end_time > DATE_TRUNC('day', NOW())")
+    if (onlyPast) clauses.add("start_time < DATE_TRUNC('day', NOW()) + MAKE_INTERVAL(days => 1)")
+    if (onlyPublic) clauses.add("public = TRUE")
+
+    categories.forEach { categoryId ->
+        clauses.add("id IN (SELECT event_id FROM event_has_category WHERE category_id=?)")
+        binders.add { setInt(it, categoryId) }
+    }
+    byHost.onSome { host ->
+        clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")
+        binders.add { setString(it, host) }
+    }
+    joinedBy.onSome { jb ->
+        clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
+        binders.add { setString(it, jb) }
+    }
+
+    return EventFilterClause(clauses.joinToString(" AND "), binders)
+}
+
+private data class EventAccumulator(
+    val event: Event,
+    val hosts: MutableList<Participant> = mutableListOf(),
+    val participants: MutableList<Participant> = mutableListOf(),
+)
+
 fun DatabaseInterface.getEvents(
     categories: List<Int> = listOf(),
     onlyFuture: Boolean = false,
@@ -282,36 +324,82 @@ fun DatabaseInterface.getEvents(
     byHost: Option<String> = none(),
     joinedBy: Option<String> = none(),
 ): List<Event> {
+    val filter = buildEventFilterClause(categories, onlyFuture, onlyPast, onlyPublic, byHost, joinedBy)
     return connection.use { connection ->
-        val clauses = mutableListOf("TRUE")
-        val values = mutableListOf<PreparedStatement.(Int) -> Unit>()
-
-        if (onlyFuture) clauses.add("end_time > DATE_TRUNC('day', NOW())")
-        if (onlyPast) clauses.add("start_time < DATE_TRUNC('day', NOW()) + MAKE_INTERVAL(days => 1)")
-        if (onlyPublic) clauses.add("public = TRUE")
-
-        categories.forEach { categoryId ->
-            clauses.add("id IN (SELECT event_id FROM event_has_category WHERE category_id=?)")
-            values.add { setInt(it, categoryId) }
-        }
-        byHost.onSome { host ->
-            clauses.add(
-                "id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'HOST')")
-            values.add { setString(it, host) }
-        }
-        joinedBy.onSome { joinedBy ->
-            clauses.add(
-                "id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
-            values.add { setString(it, joinedBy) }
-        }
-
-        val preparedStatement =
-            connection.prepareStatement(
-                "SELECT * FROM event WHERE ${clauses.joinToString(" AND ")} ORDER BY start_time;")
-        values.forEachIndexed { index, setSomething -> preparedStatement.setSomething(index + 1) }
+        val preparedStatement = connection.prepareStatement(
+            "SELECT * FROM event WHERE ${filter.whereClause} ORDER BY start_time;"
+        )
+        filter.binders.forEachIndexed { index, bind -> preparedStatement.bind(index + 1) }
 
         val result = preparedStatement.executeQuery()
         result.toList { toEvent() }
+    }
+}
+
+fun DatabaseInterface.getFullEvents(
+    categories: List<Int> = listOf(),
+    onlyFuture: Boolean = false,
+    onlyPast: Boolean = false,
+    onlyPublic: Boolean = false,
+    byHost: Option<String> = none(),
+    joinedBy: Option<String> = none(),
+): List<FullEvent> {
+    val filter = buildEventFilterClause(categories, onlyFuture, onlyPast, onlyPublic, byHost, joinedBy)
+    return connection.use { connection ->
+        // Query 1: all matching events with their participants
+        val eventsStmt = connection.prepareStatement("""
+            SELECT e.*, p.email AS p_email, p.name AS p_name, p.type AS p_type
+            FROM (SELECT * FROM event WHERE ${filter.whereClause} ORDER BY start_time) e
+            LEFT JOIN participant p ON e.id = p.event_id
+            ORDER BY e.start_time, e.id
+        """)
+        filter.binders.forEachIndexed { index, bind -> eventsStmt.bind(index + 1) }
+
+        val eventsResult = eventsStmt.executeQuery()
+
+        val eventsMap = LinkedHashMap<UUID, EventAccumulator>()
+        while (eventsResult.next()) {
+            val event = eventsResult.toEvent()
+            val acc = eventsMap.getOrPut(event.id) { EventAccumulator(event) }
+            val pEmail = eventsResult.getString("p_email")
+            if (pEmail != null) {
+                val participant = Participant(email = pEmail, name = eventsResult.getString("p_name"))
+                when (ParticipantType.valueOf(eventsResult.getString("p_type"))) {
+                    ParticipantType.HOST -> acc.hosts.add(participant)
+                    ParticipantType.PARTICIPANT -> acc.participants.add(participant)
+                }
+            }
+        }
+
+        if (eventsMap.isEmpty()) return emptyList()
+
+        // Query 2: categories for all matching events in one shot
+        val eventIdArray = connection.createArrayOf("uuid", eventsMap.keys.toTypedArray())
+        val categoriesStmt = connection.prepareStatement("""
+            SELECT ehc.event_id, c.id, c.name
+            FROM category c
+            JOIN event_has_category ehc ON c.id = ehc.category_id
+            WHERE ehc.event_id = ANY(?)
+        """)
+        categoriesStmt.setArray(1, eventIdArray)
+
+        val categoriesMap = HashMap<UUID, MutableList<Category>>()
+        val categoriesResult = categoriesStmt.executeQuery()
+        while (categoriesResult.next()) {
+            val eventId = UUID.fromString(categoriesResult.getString("event_id"))
+            categoriesMap.getOrPut(eventId) { mutableListOf() }.add(
+                Category(id = categoriesResult.getInt("id"), name = categoriesResult.getString("name"))
+            )
+        }
+
+        eventsMap.values.map { acc ->
+            FullEvent(
+                event = acc.event,
+                participants = acc.participants,
+                hosts = acc.hosts,
+                categories = categoriesMap[acc.event.id] ?: emptyList(),
+            )
+        }
     }
 }
 

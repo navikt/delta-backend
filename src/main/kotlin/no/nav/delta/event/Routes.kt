@@ -39,12 +39,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                     call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
 
                 call.respond(
-                    database
-                        .getEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
-                        .fold(mutableListOf<FullEvent>()) { acc, event ->
-                            database.getFullEvent(event.id.toString()).map { acc.add(it) }
-                            acc
-                        })
+                    database.getFullEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
+                )
             }
             route("/{id}") {
                 get {

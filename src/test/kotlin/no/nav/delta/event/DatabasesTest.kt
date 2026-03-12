@@ -81,6 +81,38 @@ class DatabasesTest {
         Assertions.assertEquals(EventNotFoundException, result.leftOrNull())
     }
 
+    @Test
+    fun getFullEventsReturnsParticipantsAndCategories() {
+        val category = db.createCategory(CreateCategory("testcategory")).getOrNull()!!
+        val event = db.addEvent(futureEventTest("fullEventTest"))
+        db.registerForEvent(event.id.toString(), "host@example.com", "Host User", ParticipantType.HOST)
+        db.registerForEvent(event.id.toString(), "participant@example.com", "Participant User")
+        db.setCategories(event.id.toString(), listOf(category.id))
+
+        val results = db.getFullEvents(onlyFuture = true)
+        val fullEvent = results.find { it.event.id == event.id }
+
+        Assertions.assertNotNull(fullEvent)
+        Assertions.assertEquals(1, fullEvent!!.hosts.size)
+        Assertions.assertEquals("host@example.com", fullEvent.hosts[0].email)
+        Assertions.assertEquals(1, fullEvent.participants.size)
+        Assertions.assertEquals("participant@example.com", fullEvent.participants[0].email)
+        Assertions.assertEquals(1, fullEvent.categories.size)
+        Assertions.assertEquals("testcategory", fullEvent.categories[0].name)
+    }
+
+    @Test
+    fun getFullEventsWithNoParticipantsOrCategories() {
+        val event = db.addEvent(futureEventTest("emptyFullEvent"))
+        val results = db.getFullEvents(onlyFuture = true)
+        val fullEvent = results.find { it.event.id == event.id }
+
+        Assertions.assertNotNull(fullEvent)
+        Assertions.assertTrue(fullEvent!!.hosts.isEmpty())
+        Assertions.assertTrue(fullEvent.participants.isEmpty())
+        Assertions.assertTrue(fullEvent.categories.isEmpty())
+    }
+
     private fun futureEventTest(title: String) = CreateEvent(
         title = title,
         description = "desc",
