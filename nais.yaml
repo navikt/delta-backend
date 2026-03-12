@@ -12,6 +12,15 @@ spec:
         - application: delta-frontend
         - application: delta-webhook-relay
   image: {{image}}
+  resources:
+    limits:
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 416Mi
+  replicas:
+    max: 2
+    min: 2
   gcp:
     sqlInstances:
       - type: POSTGRES_14

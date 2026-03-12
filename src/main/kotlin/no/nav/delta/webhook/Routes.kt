@@ -26,19 +26,20 @@ fun Route.webhookApi(
     env: Environment,
 ) {
     route("/webhook/calendar") {
-        // MS Graph sends a GET with validationToken when creating/renewing a subscription.
-        // We must echo it back as plain text within 10 seconds.
+        // Support GET as well, though Graph validates notificationUrl with POST.
         get {
-            val validationToken = call.parameters["validationToken"]
-            if (validationToken != null) {
-                call.respondText(validationToken, ContentType.Text.Plain, HttpStatusCode.OK)
-            } else {
+            if (!call.respondToValidationToken(call.parameters["validationToken"])) {
                 call.respond(HttpStatusCode.BadRequest)
             }
         }
 
-        // MS Graph sends change notifications here as POST requests.
+        // MS Graph validates notificationUrl with POST ?validationToken=... and sends
+        // actual change notifications as JSON POST requests.
         post {
+            if (call.respondToValidationToken(call.parameters["validationToken"])) {
+                return@post
+            }
+
             val payload = try {
                 call.receive<GraphNotificationPayload>()
             } catch (e: Exception) {
@@ -69,6 +70,14 @@ fun Route.webhookApi(
             }
         }
     }
+}
+
+private suspend fun io.ktor.server.application.ApplicationCall.respondToValidationToken(
+    validationToken: String?,
+): Boolean {
+    if (validationToken == null) return false
+    respondText(validationToken, ContentType.Text.Plain, HttpStatusCode.OK)
+    return true
 }
 
 private fun processNotification(

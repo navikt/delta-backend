@@ -13,6 +13,15 @@ spec:
     outbound:
       rules:
         - application: delta-backend
+  resources:
+    limits:
+      memory: 32Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  replicas:
+    max: 2
+    min: 2
   port: 8080
   liveness:
     path: /health
