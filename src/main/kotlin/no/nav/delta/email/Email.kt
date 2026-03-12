@@ -40,6 +40,25 @@ fun CloudClient.sendUpdateOrCreationNotification(
     }
 }
 
+fun CloudClient.batchSendUpdateOrCreationNotification(
+    event: Event,
+    database: DatabaseInterface,
+    participantsWithCalendarIds: List<Pair<Participant, String?>>,
+) {
+    batchUpdateOrCreateEvents(event, participantsWithCalendarIds)
+        .forEach { (participant, result) ->
+            result
+                .onLeft { e ->
+                    log.error("Failed to update/create calendar event for ${participant.email}: ${e.message}", e)
+                }
+                .onRight { newCalendarEventId ->
+                    if (newCalendarEventId != null) {
+                        database.setCalendarEventId(event.id.toString(), participant.email, newCalendarEventId)
+                    }
+                }
+        }
+}
+
 fun CloudClient.sendCancellationNotification(
     calendarEventId: String?,
     event: Event,
