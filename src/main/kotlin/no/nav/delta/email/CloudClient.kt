@@ -13,7 +13,7 @@ import com.microsoft.graph.models.*
 import com.microsoft.graph.users.item.sendmail.SendMailPostRequestBody
 import java.lang.RuntimeException
 import java.time.LocalDateTime
-import java.util.*
+import java.time.OffsetDateTime
 import no.nav.delta.Environment
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
@@ -43,6 +43,22 @@ interface CloudClient {
     ): Map<Participant, Either<Throwable, String?>>
 
     fun getUserDisplayName(email: String): String?
+
+    fun createSubscription(
+        notificationUrl: String,
+        resource: String,
+        clientState: String,
+        expirationDateTime: OffsetDateTime,
+    ): Either<Throwable, Subscription>
+
+    fun renewSubscription(
+        subscriptionId: String,
+        newExpiration: OffsetDateTime,
+    ): Either<Throwable, Unit>
+
+    fun deleteSubscription(subscriptionId: String): Either<Throwable, Unit>
+
+    fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?>
 
     companion object {
         fun fromEnvironment(env: Environment): CloudClient {
@@ -171,7 +187,7 @@ class AzureCloudClient(
                     .calendar()
                     .events()
                     .post(calendarEvent)
-                    .id
+                    ?.id
                     ?.right()
                     ?: RuntimeException("Failed to create event").left()
             } catch (e: Exception) {
@@ -300,6 +316,63 @@ class AzureCloudClient(
             null
         }
     }
+
+    override fun createSubscription(
+        notificationUrl: String,
+        resource: String,
+        clientState: String,
+        expirationDateTime: OffsetDateTime,
+    ): Either<Throwable, Subscription> {
+        return try {
+            val subscription = Subscription().apply {
+                this.notificationUrl = notificationUrl
+                this.resource = resource
+                this.clientState = clientState
+                this.expirationDateTime = expirationDateTime
+                this.changeType = "updated"
+            }
+            graphClient.subscriptions().post(subscription).right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to create subscription", e).left()
+        }
+    }
+
+    override fun renewSubscription(
+        subscriptionId: String,
+        newExpiration: OffsetDateTime,
+    ): Either<Throwable, Unit> {
+        return try {
+            val patch = Subscription().apply { expirationDateTime = newExpiration }
+            graphClient.subscriptions().bySubscriptionId(subscriptionId).patch(patch)
+            Unit.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to renew subscription $subscriptionId", e).left()
+        }
+    }
+
+    override fun deleteSubscription(subscriptionId: String): Either<Throwable, Unit> {
+        return try {
+            graphClient.subscriptions().bySubscriptionId(subscriptionId).delete()
+            Unit.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to delete subscription $subscriptionId", e).left()
+        }
+    }
+
+    override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> {
+        return try {
+            val event = graphClient
+                .users()
+                .byUserId(applicationEmailAddress)
+                .events()
+                .byEventId(calendarEventId)
+                .get { it.queryParameters?.select = arrayOf("attendees") }
+            val status = event?.attendees?.firstOrNull()?.status?.response
+            status.right()
+        } catch (e: Exception) {
+            RuntimeException("Failed to get attendee status for event $calendarEventId", e).left()
+        }
+    }
 }
 
 class DummyCloudClient : CloudClient {
@@ -352,6 +425,39 @@ class DummyCloudClient : CloudClient {
     override fun getUserDisplayName(email: String): String? {
         println("DummyEmailClient: Looking up display name for $email")
         return null
+    }
+
+    override fun createSubscription(
+        notificationUrl: String,
+        resource: String,
+        clientState: String,
+        expirationDateTime: OffsetDateTime,
+    ): Either<Throwable, Subscription> {
+        println("DummyEmailClient: Creating subscription for resource='$resource' notificationUrl='$notificationUrl'")
+        return Subscription().apply {
+            id = "dummy-subscription-id"
+            this.resource = resource
+            this.expirationDateTime = expirationDateTime
+            this.clientState = clientState
+        }.right()
+    }
+
+    override fun renewSubscription(
+        subscriptionId: String,
+        newExpiration: OffsetDateTime,
+    ): Either<Throwable, Unit> {
+        println("DummyEmailClient: Renewing subscription id='$subscriptionId' until=$newExpiration")
+        return Unit.right()
+    }
+
+    override fun deleteSubscription(subscriptionId: String): Either<Throwable, Unit> {
+        println("DummyEmailClient: Deleting subscription id='$subscriptionId'")
+        return Unit.right()
+    }
+
+    override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> {
+        println("DummyEmailClient: Getting attendee status for calendarEventId='$calendarEventId'")
+        return null.right()
     }
 }
 

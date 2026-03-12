@@ -11,8 +11,8 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
         jdbcUrl = env.dbJdbcUrl
         username = env.dbUsername
         password = env.dbPassword
-        maximumPoolSize = 3
-        minimumIdle = 3
+        maximumPoolSize = 5
+        minimumIdle = 5
         maxLifetime = 300000
         isAutoCommit = false
         transactionIsolation = "TRANSACTION_REPEATABLE_READ"

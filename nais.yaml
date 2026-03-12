@@ -10,6 +10,7 @@ spec:
     inbound:
       rules:
         - application: delta-frontend
+        - application: delta-webhook-relay
   image: {{image}}
   gcp:
     sqlInstances:
@@ -33,6 +34,11 @@ spec:
       value: "ikkesvar.delta@nav.no"
     - name: FAGGRUPPE_ADMIN_GROUP_ID
       value: "74eafa90-c494-4913-9b96-76da786c8419"
+    - name: WEBHOOK_BASE_URL
+      value: "https://delta-webhook.nav.no"
+  envFrom:
+    - secret: delta-backend-webhook-secret
+  leaderElection: true
   liveness:
     path: /internal/is_alive
     initialDelay: 10

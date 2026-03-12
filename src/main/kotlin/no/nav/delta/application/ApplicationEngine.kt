@@ -18,6 +18,7 @@ import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
 import io.ktor.server.request.path
+import kotlinx.coroutines.launch
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -28,6 +29,9 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.webhook.LeaderElection
+import no.nav.delta.webhook.SubscriptionService
+import no.nav.delta.webhook.webhookApi
 import org.slf4j.event.Level
 
 fun createApplicationEngine(
@@ -76,15 +80,26 @@ fun Application.mySetup(
         json()
     }
 
+    val subscriptionService = SubscriptionService(cloudClient, database, env, LeaderElection())
+
     routing {
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient)
         faggruppeApi(database, cloudClient, env)
+        webhookApi(database, cloudClient, env)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")
         }
         get("/internal/is_ready") {
-            call.respondText("I'm ready! :)")
+            if (subscriptionService.isHealthy()) {
+                call.respondText("I'm ready! :)")
+            } else {
+                call.respondText("Graph subscription unavailable", status = io.ktor.http.HttpStatusCode.ServiceUnavailable)
             }
+        }
     }
+
+    // Initialize asynchronously so transient MS Graph/DB errors at startup
+    // don't block the server from becoming alive. Readiness reflects health.
+    launch { subscriptionService.initialize(this) }
 }
