@@ -6,6 +6,7 @@ import arrow.core.left
 import arrow.core.right
 import com.azure.identity.ClientSecretCredentialBuilder
 import com.microsoft.graph.core.authentication.AzureIdentityAuthenticationProvider
+import com.microsoft.graph.core.content.BatchRequestContentCollection
 import com.microsoft.graph.core.requests.GraphClientFactory
 import com.microsoft.graph.serviceclient.GraphServiceClient
 import com.microsoft.graph.models.*
@@ -35,6 +36,11 @@ interface CloudClient {
     ): Either<Throwable, Unit>
 
     fun deleteEvent(calendarEventId: String): Either<Throwable, Unit>
+
+    fun batchUpdateOrCreateEvents(
+        event: Event,
+        participantsWithCalendarIds: List<Pair<Participant, String?>>,
+    ): Map<Participant, Either<Throwable, String?>>
 
     fun getUserDisplayName(email: String): String?
 
@@ -212,6 +218,81 @@ class AzureCloudClient(
         }
     }
 
+    override fun batchUpdateOrCreateEvents(
+        event: Event,
+        participantsWithCalendarIds: List<Pair<Participant, String?>>,
+    ): Map<Participant, Either<Throwable, String?>> {
+        if (applicationEmailAddress.isBlank()) {
+            return participantsWithCalendarIds.associate { (p, _) ->
+                p to RuntimeException("Missing application email address").left()
+            }
+        }
+        if (participantsWithCalendarIds.isEmpty()) return emptyMap()
+
+        val results = mutableMapOf<Participant, Either<Throwable, String?>>()
+        // Maps batch request step ID -> (participant, isCreate)
+        val requestIdToInfo = mutableMapOf<String, Pair<Participant, Boolean>>()
+        val batchContent = BatchRequestContentCollection(graphClient)
+
+        for ((participant, calendarEventId) in participantsWithCalendarIds) {
+            prepareCalendarEvent(event, participant).fold(
+                { e -> results[participant] = e.left() },
+                { calendarEvent ->
+                    val requestInfo = if (calendarEventId != null) {
+                        graphClient.users().byUserId(applicationEmailAddress)
+                            .events().byEventId(calendarEventId)
+                            .toPatchRequestInformation(calendarEvent)
+                    } else {
+                        graphClient.users().byUserId(applicationEmailAddress)
+                            .calendar().events()
+                            .toPostRequestInformation(calendarEvent)
+                    }
+                    val requestId = batchContent.addBatchRequestStep(requestInfo)
+                    requestIdToInfo[requestId] = Pair(participant, calendarEventId == null)
+                }
+            )
+        }
+
+        if (requestIdToInfo.isEmpty()) return results
+
+        try {
+            val batchResponse = graphClient.batchRequestBuilder.post(batchContent, null)
+            val statusCodes = batchResponse.getResponsesStatusCodes()
+
+            for ((requestId, info) in requestIdToInfo) {
+                val (participant, isCreate) = info
+                val status = statusCodes[requestId]
+                when {
+                    status == null ->
+                        results[participant] = RuntimeException("No batch response for request").left()
+                    status in 200..299 -> {
+                        if (isCreate) {
+                            try {
+                                val createdEvent = batchResponse.getResponseById(requestId, com.microsoft.graph.models.Event::createFromDiscriminatorValue)
+                                results[participant] = (createdEvent?.id
+                                    ?: throw RuntimeException("No event ID in batch create response")).right<String>()
+                            } catch (e: Exception) {
+                                results[participant] = RuntimeException("Failed to parse batch create response", e).left()
+                            }
+                        } else {
+                            results[participant] = (null as String?).right()
+                        }
+                    }
+                    else ->
+                        results[participant] = RuntimeException("Batch request failed with status $status").left()
+                }
+            }
+        } catch (e: Exception) {
+            requestIdToInfo.values.forEach { (participant, _) ->
+                if (!results.containsKey(participant)) {
+                    results[participant] = RuntimeException("Batch request failed", e).left()
+                }
+            }
+        }
+
+        return results
+    }
+
     override fun getUserDisplayName(email: String): String? {
         return try {
             graphClient.users().byUserId(email).get()?.displayName
@@ -251,6 +332,21 @@ class DummyCloudClient : CloudClient {
     override fun deleteEvent(calendarEventId: String): Either<Throwable, Unit> {
         println("DummyEmailClient: Deleting event: id='$calendarEventId'")
         return Unit.right()
+    }
+
+    override fun batchUpdateOrCreateEvents(
+        event: Event,
+        participantsWithCalendarIds: List<Pair<Participant, String?>>,
+    ): Map<Participant, Either<Throwable, String?>> {
+        return participantsWithCalendarIds.associate { (participant, calendarEventId) ->
+            if (calendarEventId != null) {
+                println("DummyEmailClient: Updating event (batch): id='$calendarEventId' subject='${event.title}' to=$participant")
+                participant to (null as String?).right()
+            } else {
+                println("DummyEmailClient: Creating event (batch): subject='${event.title}' to=$participant")
+                participant to "dummy-id".right()
+            }
+        }
     }
 
     override fun getUserDisplayName(email: String): String? {

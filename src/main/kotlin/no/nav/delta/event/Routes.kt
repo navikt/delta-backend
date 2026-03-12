@@ -12,6 +12,7 @@ import io.ktor.server.routing.*
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import no.nav.delta.email.CloudClient
+import no.nav.delta.email.batchSendUpdateOrCreationNotification
 import no.nav.delta.email.sendCancellationNotification
 import no.nav.delta.email.sendUpdateOrCreationNotification
 import no.nav.delta.plugins.DatabaseInterface
@@ -151,25 +152,24 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         database
                             .getAllParticipantsAndCalendarEventIds(newEvent.id.toString())
                             .map { pairs ->
-                                pairs.map { (participant, calendarEventId) ->
-                                    {
-                                        cloudClient.sendUpdateOrCreationNotification(
-                                            newEvent,
-                                            database,
-                                            participant,
-                                            calendarEventId.getOrNull(),
-                                        )
-                                    }
+                                {
+                                    cloudClient.batchSendUpdateOrCreationNotification(
+                                        newEvent,
+                                        database,
+                                        pairs.map { (participant, calendarEventId) ->
+                                            Pair(participant, calendarEventId.getOrNull())
+                                        },
+                                    )
                                 }
                             }
-                            .getOrElse { listOf() }
+                            .getOrElse { {} }
 
                     database
                         .updateEvent(newEvent)
                         .flatMap { event -> database.getFullEvent(event.id.toString()) }
                         .map {
                             if (changedEvent.sendNotificationEmail == true) {
-                                sendUpdateFuture.forEach { future -> Thread(future).start() }
+                                Thread(sendUpdateFuture).start()
                             }
                             it
                         }
