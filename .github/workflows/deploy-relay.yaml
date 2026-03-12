@@ -10,11 +10,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
       - name: Build & push docker image to GAR
-        uses: nais/docker-build-push@ae613eff6f44f0323476eda1c3994a7c518761c3
+        uses: nais/docker-build-push@078e460885ed0424b60d45ce9220b4be1748be9d
         id: docker-build-push
         with:
           team: delta
