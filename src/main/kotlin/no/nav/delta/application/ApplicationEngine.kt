@@ -91,8 +91,11 @@ fun Application.mySetup(
             call.respondText("I'm alive! :)")
         }
         get("/internal/is_ready") {
+            call.respondText("I'm ready! :)")
+        }
+        get("/internal/webhook_subscription_ready") {
             if (subscriptionService.isHealthy()) {
-                call.respondText("I'm ready! :)")
+                call.respondText("Webhook subscription healthy")
             } else {
                 call.respondText("Graph subscription unavailable", status = io.ktor.http.HttpStatusCode.ServiceUnavailable)
             }
@@ -100,6 +103,7 @@ fun Application.mySetup(
     }
 
     // Initialize asynchronously so transient MS Graph/DB errors at startup
-    // don't block the server from becoming alive. Readiness reflects health.
+    // don't block the server from becoming alive. General readiness is decoupled
+    // from webhook subscription health so the app can degrade gracefully.
     launch { subscriptionService.initialize(this) }
 }
