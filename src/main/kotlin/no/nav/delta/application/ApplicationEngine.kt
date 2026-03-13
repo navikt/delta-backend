@@ -39,18 +39,18 @@ fun createApplicationEngine(
     database: DatabaseInterface,
     cloudClient: CloudClient,
     jwkProvider: JwkProvider,
+    startBackgroundTasks: Boolean = true,
+    leaderElection: LeaderElection = LeaderElection(),
 ): EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration> =
     embeddedServer(
         factory = Netty,
         port = env.applicationPort,
-        module = { mySetup(env, database, cloudClient, jwkProvider) }
+        module = { mySetup(env, database, cloudClient, jwkProvider, startBackgroundTasks, leaderElection) }
     )
 
-fun Application.mySetup(
+fun Application.installDeltaApiPlugins(
     env: Environment,
-    database: DatabaseInterface,
-    cloudClient: CloudClient,
-    jwkProvider: JwkProvider
+    jwkProvider: JwkProvider,
 ) {
     setupAuth(jwkProvider, env)
     install(CallLogging) {
@@ -79,8 +79,19 @@ fun Application.mySetup(
         }
         json()
     }
+}
 
-    val subscriptionService = SubscriptionService(cloudClient, database, env, LeaderElection())
+fun Application.mySetup(
+    env: Environment,
+    database: DatabaseInterface,
+    cloudClient: CloudClient,
+    jwkProvider: JwkProvider,
+    startBackgroundTasks: Boolean = true,
+    leaderElection: LeaderElection = LeaderElection(),
+) {
+    installDeltaApiPlugins(env, jwkProvider)
+
+    val subscriptionService = SubscriptionService(cloudClient, database, env, leaderElection)
 
     routing {
         swaggerUI(path = "openapi")
@@ -105,5 +116,7 @@ fun Application.mySetup(
     // Initialize asynchronously so transient MS Graph/DB errors at startup
     // don't block the server from becoming alive. General readiness is decoupled
     // from webhook subscription health so the app can degrade gracefully.
-    launch { subscriptionService.initialize(this) }
+    if (startBackgroundTasks) {
+        launch { subscriptionService.initialize(this) }
+    }
 }
