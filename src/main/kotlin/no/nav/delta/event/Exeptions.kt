@@ -70,3 +70,11 @@ object CategoryAlreadyExistsException :
 object CategoryNameTooLongException :
     ExceptionWithDefaultResponse(HttpStatusCode.BadRequest, "Category name too long"),
     CreateCategoryError
+
+class RecurringEventValidationException(
+    message: String,
+) : ExceptionWithDefaultResponse(HttpStatusCode.BadRequest, message)
+
+class UnsupportedRecurringOperationException(
+    message: String,
+) : ExceptionWithDefaultResponse(HttpStatusCode.BadRequest, message)

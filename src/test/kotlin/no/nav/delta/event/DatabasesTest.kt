@@ -113,15 +113,92 @@ class DatabasesTest {
         Assertions.assertTrue(fullEvent.categories.isEmpty())
     }
 
-    private fun futureEventTest(title: String) = CreateEvent(
+    @Test
+    fun createRecurringSeriesCreatesLinkedOccurrences() {
+        val category = db.createCategory(CreateCategory("recurring-category")).getOrNull()!!
+        val start = LocalDateTime.now().plusDays(7).withHour(10).withMinute(0).withSecond(0).withNano(0)
+        val createEvent =
+            futureEventTest("recurring-create", start).copy(
+                categories = listOf(category.id),
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(2)),
+            )
+
+        val createdSeries =
+            db.createRecurringEventSeries(createEvent, "host@example.com", "Host User").getOrNull()!!
+
+        Assertions.assertEquals(3, createdSeries.affectedEvents.size)
+
+        val firstEvent = db.getFullEvent(createdSeries.referenceEventId.toString()).getOrNull()!!
+        val recurringSeries = requireNotNull(firstEvent.recurringSeries)
+        Assertions.assertEquals(RecurrenceFrequency.WEEKLY, recurringSeries.frequency)
+        Assertions.assertEquals(1, firstEvent.categories.size)
+        val seriesId = recurringSeries.seriesId
+
+        createdSeries.affectedEvents.forEach { event ->
+            val fullEvent = db.getFullEvent(event.id.toString()).getOrNull()!!
+            Assertions.assertNotNull(fullEvent.recurringSeries)
+            Assertions.assertEquals(seriesId, fullEvent.recurringSeries?.seriesId)
+        }
+    }
+
+    @Test
+    fun updatingUpcomingRecurringOccurrencesSplitsSeriesAndPreservesPast() {
+        val originalCategory = db.createCategory(CreateCategory("recurring-original")).getOrNull()!!
+        val updatedCategory = db.createCategory(CreateCategory("recurring-updated")).getOrNull()!!
+        val start = LocalDateTime.now().plusDays(14).withHour(9).withMinute(0).withSecond(0).withNano(0)
+        val createEvent =
+            futureEventTest("recurring-update", start).copy(
+                categories = listOf(originalCategory.id),
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(2)),
+            )
+
+        val createdSeries =
+            db.createRecurringEventSeries(createEvent, "host@example.com", "Host User").getOrNull()!!
+
+        val firstOccurrence = createdSeries.affectedEvents[0]
+        val secondOccurrence = createdSeries.affectedEvents[1]
+        val thirdOccurrence = createdSeries.affectedEvents[2]
+
+        val updateRequest =
+            futureEventTest("recurring-update-upcoming", secondOccurrence.startTime.plusHours(1)).copy(
+                endTime = secondOccurrence.startTime.plusHours(3),
+                categories = listOf(updatedCategory.id),
+                recurrence = createEvent.recurrence,
+                editScope = EventEditScope.UPCOMING,
+            )
+
+        db.updateRecurringSeriesFromOccurrence(
+            eventId = secondOccurrence.id.toString(),
+            createEvent = updateRequest,
+            updatedByEmail = "host@example.com",
+        ).getOrNull()!!
+
+        val firstFull = db.getFullEvent(firstOccurrence.id.toString()).getOrNull()!!
+        val secondFull = db.getFullEvent(secondOccurrence.id.toString()).getOrNull()!!
+        val thirdFull = db.getFullEvent(thirdOccurrence.id.toString()).getOrNull()!!
+
+        Assertions.assertEquals("recurring-update", firstFull.event.title)
+        Assertions.assertEquals("recurring-update-upcoming", secondFull.event.title)
+        Assertions.assertEquals("recurring-update-upcoming", thirdFull.event.title)
+        Assertions.assertNotEquals(firstFull.recurringSeries!!.seriesId, secondFull.recurringSeries?.seriesId)
+        Assertions.assertEquals(secondFull.recurringSeries!!.seriesId, thirdFull.recurringSeries?.seriesId)
+        Assertions.assertEquals("recurring-original", firstFull.categories.single().name)
+        Assertions.assertEquals("recurring-updated", secondFull.categories.single().name)
+        Assertions.assertEquals("recurring-updated", thirdFull.categories.single().name)
+    }
+
+    private fun futureEventTest(
+        title: String,
+        startTime: LocalDateTime = LocalDateTime.now().plusHours(1),
+    ) = CreateEvent(
         title = title,
         description = "desc",
-        startTime = LocalDateTime.now().plusHours(1),
-        endTime = LocalDateTime.now().plusHours(2),
+        startTime = startTime,
+        endTime = startTime.plusHours(1),
         location = "location",
         public = true,
         participantLimit = 2,
         sendNotificationEmail = false,
-        signupDeadline = LocalDateTime.now().plusMinutes(10),
+        signupDeadline = startTime.minusMinutes(30),
     )
 }

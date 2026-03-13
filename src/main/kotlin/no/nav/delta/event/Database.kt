@@ -131,9 +131,10 @@ WHERE  id = Uuid(?);
                             Participant(
                                 email = getString("email"),
                                 name = getString("name"),
-                            )))
+                    )))
                 }
             }
+            val recurringSeries = loadRecurringSeriesSummaries(connection, listOf(event.id))[event.id]
 
             FullEvent(
                 event = event,
@@ -143,6 +144,7 @@ WHERE  id = Uuid(?);
                         .map { it.second },
                 hosts = participants.filter { it.first == ParticipantType.HOST }.map { it.second },
                 categories = categories,
+                recurringSeries = recurringSeries,
             )
         }
     }
@@ -392,12 +394,15 @@ fun DatabaseInterface.getFullEvents(
             )
         }
 
+        val recurringSeriesMap = loadRecurringSeriesSummaries(connection, eventsMap.keys)
+
         eventsMap.values.map { acc ->
             FullEvent(
                 event = acc.event,
                 participants = acc.participants,
                 hosts = acc.hosts,
                 categories = categoriesMap[acc.event.id] ?: emptyList(),
+                recurringSeries = recurringSeriesMap[acc.event.id],
             )
         }
     }
