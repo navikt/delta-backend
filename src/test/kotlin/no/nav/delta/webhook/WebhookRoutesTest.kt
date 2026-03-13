@@ -23,7 +23,7 @@ import no.nav.delta.support.RecordingCloudClient
 import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installTestApi
 import no.nav.delta.support.localTestEnvironment
-import no.nav.delta.support.waitUntil
+import no.nav.delta.support.waitUntilSuspending
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -126,7 +126,7 @@ class WebhookRoutesTest {
 
         assertEquals(HttpStatusCode.Accepted, response.status)
 
-        waitUntil {
+        waitUntilSuspending {
             database.getParticipants(event.id.toString()).getOrNull()!!.none { it.email == "person@example.com" } &&
                 cloudClient.deletedCalendarEventIds.contains("calendar-42")
         }
@@ -155,7 +155,7 @@ class WebhookRoutesTest {
 
         assertEquals(HttpStatusCode.Accepted, response.status)
 
-        waitUntil {
+        waitUntilSuspending {
             database.getParticipants(event.id.toString()).getOrNull()!!.any { it.email == "person2@example.com" }
         }
         assertFalse(cloudClient.deletedCalendarEventIds.contains("calendar-84"))

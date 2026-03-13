@@ -13,6 +13,7 @@ import com.microsoft.graph.models.Subscription
 import io.ktor.server.application.Application
 import io.ktor.server.routing.Routing
 import io.ktor.server.routing.routing
+import java.sql.DriverManager
 import java.time.OffsetDateTime
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -40,25 +41,26 @@ inline fun <reified T> readJson(json: String): T = testObjectMapper.readValue(js
 
 class TestDatabase private constructor(
     val database: DatabaseInterface,
-    private val container: PostgreSQLContainer<*>,
+    private val databaseName: String,
 ) : AutoCloseable {
     override fun close() {
-        container.stop()
+        database.close()
+        SharedPostgresContainer.dropDatabase(databaseName)
     }
 
     companion object {
         fun create(): TestDatabase {
-            val container = PostgreSQLContainer(DockerImageName.parse("postgres:15-alpine"))
-            container.start()
+            val databaseName = "delta_test_${UUID.randomUUID().toString().replace("-", "")}"
+            SharedPostgresContainer.createDatabase(databaseName)
             val database =
                 DatabaseConfig(
                     Environment(
-                        dbJdbcUrl = container.jdbcUrl,
-                        dbUsername = container.username,
-                        dbPassword = container.password,
+                        dbJdbcUrl = SharedPostgresContainer.jdbcUrlFor(databaseName),
+                        dbUsername = SharedPostgresContainer.username,
+                        dbPassword = SharedPostgresContainer.password,
                     )
                 )
-            return TestDatabase(database, container)
+            return TestDatabase(database, databaseName)
         }
     }
 }
@@ -68,6 +70,8 @@ fun localTestEnvironment() =
         faggruppeAdminGroupId = "test-admin-group",
         deltaEmailAddress = "delta@example.com",
         webhookClientState = "test-client-state",
+        isDev = false,
+        isLocal = true,
     )
 
 fun Application.installTestApi(
@@ -192,20 +196,6 @@ class RecordingCloudClient : CloudClient {
         attendeeStatuses[calendarEventId] ?: ResponseType.Accepted.right()
 }
 
-fun waitUntil(
-    timeout: Duration = 3.seconds,
-    condition: () -> Boolean,
-) {
-    val deadline = System.nanoTime() + timeout.inWholeNanoseconds
-    while (System.nanoTime() < deadline) {
-        if (condition()) {
-            return
-        }
-        Thread.sleep(25)
-    }
-    check(condition()) { "Condition was not met within $timeout" }
-}
-
 suspend fun waitUntilSuspending(
     timeout: Duration = 3.seconds,
     interval: Duration = 25.milliseconds,
@@ -214,6 +204,48 @@ suspend fun waitUntilSuspending(
     withTimeout(timeout) {
         while (!condition()) {
             delay(interval)
+        }
+    }
+}
+
+private object SharedPostgresContainer {
+    private val container =
+        PostgreSQLContainer(DockerImageName.parse("postgres:15-alpine")).apply {
+            start()
+        }
+
+    val username: String
+        get() = container.username
+
+    val password: String
+        get() = container.password
+
+    private val jdbcUrlPrefix = container.jdbcUrl.substringBeforeLast("/")
+
+    fun jdbcUrlFor(databaseName: String): String = "$jdbcUrlPrefix/$databaseName"
+
+    @Synchronized
+    fun createDatabase(databaseName: String) {
+        DriverManager.getConnection(container.jdbcUrl, username, password).use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("""CREATE DATABASE "$databaseName"""")
+            }
+        }
+    }
+
+    @Synchronized
+    fun dropDatabase(databaseName: String) {
+        DriverManager.getConnection(container.jdbcUrl, username, password).use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """
+                    SELECT pg_terminate_backend(pid)
+                    FROM pg_stat_activity
+                    WHERE datname = '$databaseName' AND pid <> pg_backend_pid()
+                    """.trimIndent()
+                )
+                statement.execute("""DROP DATABASE IF EXISTS "$databaseName"""")
+            }
         }
     }
 }

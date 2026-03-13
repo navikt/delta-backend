@@ -25,6 +25,10 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
     override val connection: Connection
         get() = dataSource.connection
 
+    override fun close() {
+        dataSource.close()
+    }
+
     init {
         Flyway.configure().run {
             dataSource(env.dbJdbcUrl, env.dbUsername, env.dbPassword)
@@ -34,6 +38,8 @@ class DatabaseConfig(private val env: Environment) : DatabaseInterface {
     }
 }
 
-interface DatabaseInterface {
+interface DatabaseInterface : AutoCloseable {
     val connection: Connection
+
+    override fun close() = Unit
 }

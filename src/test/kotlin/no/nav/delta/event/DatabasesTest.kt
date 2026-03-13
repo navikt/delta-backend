@@ -37,6 +37,7 @@ class DatabasesTest {
         @JvmStatic
         @AfterAll
         fun tearDown() {
+            db.close()
             postgresContainer.stop()
         }
     }

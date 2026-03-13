@@ -18,7 +18,7 @@ import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installTestApi
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
-import no.nav.delta.support.waitUntil
+import no.nav.delta.support.waitUntilSuspending
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -213,7 +213,7 @@ class EventRoutesTest {
         val joinResponse = client.post("/user/event/${event.id}")
         assertEquals(HttpStatusCode.OK, joinResponse.status)
 
-        waitUntil {
+        waitUntilSuspending {
             database.getCalendarEventId(event.id.toString(), "test@localhost").getOrNull() != null
         }
 
@@ -223,7 +223,7 @@ class EventRoutesTest {
         val leaveResponse = client.delete("/user/event/${event.id}")
         assertEquals(HttpStatusCode.OK, leaveResponse.status)
 
-        waitUntil {
+        waitUntilSuspending {
             database.getParticipants(event.id.toString()).getOrNull()!!.none { it.email == "test@localhost" } &&
                 cloudClient.deletedCalendarEventIds.contains(calendarEventId)
         }

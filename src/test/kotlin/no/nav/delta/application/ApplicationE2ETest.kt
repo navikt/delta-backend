@@ -20,7 +20,6 @@ import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installFullTestApplication
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
-import no.nav.delta.support.waitUntil
 import no.nav.delta.support.waitUntilSuspending
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
