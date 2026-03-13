@@ -64,6 +64,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:$testcontainers_version")
     testImplementation(platform("org.junit:junit-bom:$junit_version"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("io.ktor:ktor-server-test-host-jvm:$ktor_version")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

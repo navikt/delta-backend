@@ -39,6 +39,7 @@ class FaggruppeTest {
         @JvmStatic
         @AfterAll
         fun tearDown() {
+            db.close()
             postgresContainer.stop()
         }
     }
