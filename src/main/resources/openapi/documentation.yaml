@@ -19,8 +19,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateEvent'
       responses:
-        "201":
-          description: "created event"
+        "200":
+          description: "Created event"
           content:
             application/json:
               schema:
@@ -147,7 +147,8 @@ paths:
           description: "Event id"
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
         "200":
           description: "Event joined"
@@ -162,7 +163,8 @@ paths:
           description: "Event id"
           required: true
           schema:
-            type: integer
+            type: string
+            format: uuid
       responses:
         "200":
           description: "Event left"
@@ -170,8 +172,8 @@ paths:
     get:
       tags:
         - general
-      description: "Get future events"
-      operationId: getFutureEvents
+      description: "Get events"
+      operationId: getEvents
       parameters:
         - in: query
           name: categories
@@ -205,7 +207,7 @@ paths:
             type: boolean
       responses:
         "200":
-          description: "All future events"
+          description: "Matching events"
           content:
             application/json:
               schema:
@@ -228,7 +230,7 @@ paths:
             format: uuid
       responses:
         "200":
-          description: "Event joined"
+          description: "Event details"
           content:
             application/json:
               schema:
@@ -245,7 +247,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Category"
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
     put:
       tags:
         - category
@@ -257,8 +261,8 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateCategory'
       responses:
-        "201":
-          description: "created category"
+        "200":
+          description: "Created category"
           content:
             application/json:
               schema:
