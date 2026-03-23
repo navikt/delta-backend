@@ -70,6 +70,7 @@ data class CreateCategory(
 enum class RecurrenceFrequency {
     WEEKLY,
     BIWEEKLY,
+    MONTHLY,
 }
 
 enum class EventEditScope {

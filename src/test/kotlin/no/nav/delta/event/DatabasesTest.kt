@@ -187,6 +187,29 @@ class DatabasesTest {
         Assertions.assertEquals("recurring-updated", thirdFull.categories.single().name)
     }
 
+    @Test
+    fun createMonthlyRecurringSeriesCreatesLinkedOccurrences() {
+        val start = LocalDateTime.now().plusDays(7).withHour(10).withMinute(0).withSecond(0).withNano(0)
+        val createEvent =
+            futureEventTest("recurring-monthly", start).copy(
+                recurrence = RecurrenceRequest(RecurrenceFrequency.MONTHLY, start.toLocalDate().plusMonths(2)),
+            )
+
+        val createdSeries =
+            db.createRecurringEventSeries(createEvent, "host@example.com", "Host User").getOrNull()!!
+
+        Assertions.assertEquals(3, createdSeries.affectedEvents.size)
+
+        val firstEvent = db.getFullEvent(createdSeries.referenceEventId.toString()).getOrNull()!!
+        val recurringSeries = requireNotNull(firstEvent.recurringSeries)
+        Assertions.assertEquals(RecurrenceFrequency.MONTHLY, recurringSeries.frequency)
+
+        val occurrenceDates = createdSeries.affectedEvents.map { it.startTime.toLocalDate() }
+        Assertions.assertEquals(start.toLocalDate(), occurrenceDates[0])
+        Assertions.assertEquals(start.toLocalDate().plusMonths(1), occurrenceDates[1])
+        Assertions.assertEquals(start.toLocalDate().plusMonths(2), occurrenceDates[2])
+    }
+
     private fun futureEventTest(
         title: String,
         startTime: LocalDateTime = LocalDateTime.now().plusHours(1),

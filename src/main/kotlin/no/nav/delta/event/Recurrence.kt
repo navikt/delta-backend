@@ -115,6 +115,7 @@ fun generateOccurrences(
             when (recurrence.frequency) {
                 RecurrenceFrequency.WEEKLY -> occurrenceDate.plusWeeks(1)
                 RecurrenceFrequency.BIWEEKLY -> occurrenceDate.plusWeeks(2)
+                RecurrenceFrequency.MONTHLY -> occurrenceDate.plusMonths(1)
             }
     }
 
