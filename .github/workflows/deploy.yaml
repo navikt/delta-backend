@@ -21,7 +21,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c
+      - uses: gradle/actions/setup-gradle@0f4528296b4bc09e8ae0fc7be30185a4ab435545
       - name: Run tests & build jar files
         run: ./gradlew test build
       - name: Build & push docker image to GAR
@@ -31,7 +31,7 @@ jobs:
           team: delta
           pull: true
       - name: Generate and submit dependency graph
-        uses: gradle/actions/dependency-submission@0723195856401067f7a2779048b490ace7a47d7c
+        uses: gradle/actions/dependency-submission@0f4528296b4bc09e8ae0fc7be30185a4ab435545
       - name: Scan docker image for secrets
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
@@ -39,7 +39,7 @@ jobs:
           format: 'sarif'
           scanners: 'secret'
           output: 'trivy.sarif'
-      - uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98
+      - uses: github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc
         with:
           sarif_file: 'trivy.sarif'
 
