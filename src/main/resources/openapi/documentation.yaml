@@ -520,6 +520,18 @@ components:
           type: integer
         sendNotificationEmail:
           type: boolean
+        categories:
+          type: array
+          items:
+            type: integer
+          nullable: true
+        recurrence:
+          $ref: "#/components/schemas/RecurrenceRequest"
+          nullable: true
+        editScope:
+          type: string
+          enum: [SINGLE, UPCOMING]
+          nullable: true
     Event:
       type: object
       properties:
@@ -562,6 +574,38 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Category"
+        recurringSeries:
+          $ref: "#/components/schemas/RecurringSeriesSummary"
+          nullable: true
+    RecurrenceRequest:
+      type: object
+      required:
+        - frequency
+        - untilDate
+      properties:
+        frequency:
+          type: string
+          enum: [WEEKLY, BIWEEKLY, MONTHLY]
+        untilDate:
+          type: string
+          format: date
+    RecurringSeriesSummary:
+      type: object
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+        frequency:
+          type: string
+          enum: [WEEKLY, BIWEEKLY, MONTHLY]
+        untilDate:
+          type: string
+          format: date
+        editableScopes:
+          type: array
+          items:
+            type: string
+            enum: [SINGLE, UPCOMING]
     EmailObject:
       type: object
       properties:
