@@ -131,6 +131,31 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                             return@delete it.left().unwrapAndRespond(call)
                         }
 
+                    val editScope = call.parameters["editScope"]?.let {
+                        runCatching { EventEditScope.valueOf(it) }.getOrElse {
+                            return@delete call.respond(HttpStatusCode.BadRequest, "Invalid editScope value")
+                        }
+                    }
+
+                    if (editScope == EventEditScope.UPCOMING) {
+                        val notificationData =
+                            database
+                                .deleteRecurringSeriesFromOccurrence(event.id.toString(), call.principalEmail())
+                                .getOrElse { return@delete it.left().unwrapAndRespond(call) }
+
+                        Thread {
+                            notificationData.forEach { (deletedEvent, pairs) ->
+                                pairs.forEach { (participant, calendarEventId) ->
+                                    cloudClient.sendCancellationNotification(
+                                        calendarEventId.getOrNull(), deletedEvent, participant
+                                    )
+                                }
+                            }
+                        }.start()
+
+                        return@delete call.respond("Success")
+                    }
+
                     // I don't care if this fails...
                     val sendCancellationFuture =
                         database

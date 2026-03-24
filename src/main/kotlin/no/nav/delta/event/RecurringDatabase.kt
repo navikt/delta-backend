@@ -1,10 +1,10 @@
 package no.nav.delta.event
 
 import arrow.core.Either
+import arrow.core.Option
 import arrow.core.left
 import arrow.core.right
 import java.sql.Connection
-import java.sql.PreparedStatement
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.LocalDate
@@ -210,6 +210,55 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
             referenceEventId = selectedOccurrence.event.id,
             affectedEvents = updatedEvents,
         ).right()
+    }
+}
+
+fun DatabaseInterface.deleteRecurringSeriesFromOccurrence(
+    eventId: String,
+    deletedByEmail: String,
+): Either<ExceptionWithDefaultResponse, List<Pair<Event, List<Pair<Participant, Option<String>>>>>> {
+    return connection.use { connection ->
+        val selectedOccurrence =
+            loadRecurringOccurrence(connection, UUID.fromString(eventId))
+                ?: return UnsupportedRecurringOperationException(
+                    "Only recurring events can be deleted with UPCOMING scope"
+                ).left()
+
+        val upcomingOccurrences =
+            loadRecurringOccurrencesFromIndex(connection, selectedOccurrence.seriesId, selectedOccurrence.occurrenceIndex)
+        if (upcomingOccurrences.isEmpty()) {
+            return UnsupportedRecurringOperationException("No upcoming recurring occurrences found").left()
+        }
+
+        if (upcomingOccurrences.any { !isHostOf(connection, it.event.id, deletedByEmail) }) {
+            return ForbiddenException.left()
+        }
+
+        // Collect participant data before deletion — participant rows cascade-delete with the event
+        val notificationData = upcomingOccurrences.map { occurrence ->
+            Pair(occurrence.event, loadParticipantsWithCalendarIds(connection, occurrence.event.id))
+        }
+
+        val eventIdArray = connection.createArrayOf("uuid", upcomingOccurrences.map { it.event.id }.toTypedArray())
+        connection.prepareStatement("DELETE FROM event WHERE id = ANY(?)").use {
+            it.setArray(1, eventIdArray)
+            it.executeUpdate()
+        }
+
+        if (selectedOccurrence.occurrenceIndex == 0) {
+            // No past occurrences remain; remove the series record as well
+            connection.prepareStatement("DELETE FROM recurring_event_series WHERE id = ?").use {
+                it.setObject(1, selectedOccurrence.seriesId)
+                it.executeUpdate()
+            }
+        } else {
+            val pastOccurrences =
+                loadRecurringOccurrencesBeforeIndex(connection, selectedOccurrence.seriesId, selectedOccurrence.occurrenceIndex)
+            updateRecurringSeriesUntilDate(connection, selectedOccurrence.seriesId, pastOccurrences.last().occurrenceDate)
+        }
+
+        connection.commit()
+        notificationData.right()
     }
 }
 
@@ -809,6 +858,22 @@ WHERE  id IN (${distinctCategoryIds.joinToString(",") { "?" }});
 private fun java.sql.ResultSet.getLongOrNull(columnLabel: String): Long? {
     val value = getLong(columnLabel)
     return if (wasNull()) null else value
+}
+
+private fun loadParticipantsWithCalendarIds(
+    connection: Connection,
+    eventId: UUID,
+): List<Pair<Participant, Option<String>>> {
+    val ps = connection.prepareStatement(
+        "SELECT email, name, calendar_event_id FROM participant WHERE event_id = ?"
+    )
+    ps.setObject(1, eventId)
+    return ps.executeQuery().toList {
+        Pair(
+            Participant(email = getString("email"), name = getString("name")),
+            Option.fromNullable(getString("calendar_event_id")),
+        )
+    }
 }
 
 private fun isHostOf(connection: Connection, eventId: UUID, email: String): Boolean {

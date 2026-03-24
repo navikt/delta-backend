@@ -39,6 +39,13 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: editScope
+          in: query
+          description: "When UPCOMING, deletes this occurrence and all following ones in the series. Defaults to SINGLE (only this event)."
+          required: false
+          schema:
+            type: string
+            enum: [SINGLE, UPCOMING]
       responses:
         "200":
           description: "Event deleted"
