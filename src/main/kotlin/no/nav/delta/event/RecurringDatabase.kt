@@ -115,6 +115,10 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
             return UnsupportedRecurringOperationException("No upcoming recurring occurrences found").left()
         }
 
+        if (upcomingOccurrences.any { !isHostOf(connection, it.event.id, updatedByEmail) }) {
+            return ForbiddenException.left()
+        }
+
         val startShift = Duration.between(selectedOccurrence.event.startTime, createEvent.startTime)
         val signupDeadlineOffsetMinutes =
             createEvent.signupDeadline?.let { Duration.between(createEvent.startTime, it).toMinutes() }
@@ -805,4 +809,14 @@ WHERE  id IN (${distinctCategoryIds.joinToString(",") { "?" }});
 private fun java.sql.ResultSet.getLongOrNull(columnLabel: String): Long? {
     val value = getLong(columnLabel)
     return if (wasNull()) null else value
+}
+
+private fun isHostOf(connection: Connection, eventId: UUID, email: String): Boolean {
+    val preparedStatement =
+        connection.prepareStatement(
+            "SELECT 1 FROM participant WHERE event_id = ? AND email = ? AND type = 'HOST'"
+        )
+    preparedStatement.setObject(1, eventId)
+    preparedStatement.setString(2, email)
+    return preparedStatement.executeQuery().next()
 }

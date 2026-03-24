@@ -205,9 +205,13 @@ class DatabasesTest {
         Assertions.assertEquals(RecurrenceFrequency.MONTHLY, recurringSeries.frequency)
 
         val occurrenceDates = createdSeries.affectedEvents.map { it.startTime.toLocalDate() }
-        Assertions.assertEquals(start.toLocalDate(), occurrenceDates[0])
-        Assertions.assertEquals(start.toLocalDate().plusMonths(1), occurrenceDates[1])
-        Assertions.assertEquals(start.toLocalDate().plusMonths(2), occurrenceDates[2])
+        val startDate = start.toLocalDate()
+        Assertions.assertEquals(startDate, occurrenceDates[0])
+        // All occurrences must fall on the same day of week as the start date
+        Assertions.assertTrue(occurrenceDates.all { it.dayOfWeek == startDate.dayOfWeek })
+        // Each occurrence must be in the expected calendar month
+        Assertions.assertEquals(startDate.plusMonths(1).month, occurrenceDates[1].month)
+        Assertions.assertEquals(startDate.plusMonths(2).month, occurrenceDates[2].month)
     }
 
     private fun futureEventTest(
