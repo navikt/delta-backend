@@ -51,7 +51,10 @@ fun CreateEvent.toRecurringSeriesDraft(
         ).left()
     }
 
-    val signupDeadlineOffsetMinutes = signupDeadline?.let { Duration.between(startTime, it).toMinutes() }
+    // If the recurrence specifies an offset, it takes precedence over CreateEvent.signupDeadline
+    val signupDeadlineOffsetMinutes =
+        recurrence.signupDeadlineOffsetDays?.let { -(it.toLong() * 24 * 60) }
+            ?: signupDeadline?.let { Duration.between(startTime, it).toMinutes() }
     val occurrences =
         when (
             val generatedOccurrences =

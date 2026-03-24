@@ -596,6 +596,12 @@ components:
         untilDate:
           type: string
           format: date
+        signupDeadlineOffsetDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          nullable: true
+          description: "Days before each occurrence's start time to set as signup deadline"
     RecurringSeriesSummary:
       type: object
       properties:

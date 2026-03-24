@@ -81,6 +81,7 @@ enum class EventEditScope {
 data class RecurrenceRequest(
     val frequency: RecurrenceFrequency,
     val untilDate: LocalDate,
+    val signupDeadlineOffsetDays: Int? = null,
 )
 
 data class RecurringSeriesSummary(

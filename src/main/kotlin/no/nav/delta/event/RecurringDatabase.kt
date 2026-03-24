@@ -120,8 +120,10 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
         }
 
         val startShift = Duration.between(selectedOccurrence.event.startTime, createEvent.startTime)
+        // If the recurrence specifies an offset, it takes precedence over CreateEvent.signupDeadline
         val signupDeadlineOffsetMinutes =
-            createEvent.signupDeadline?.let { Duration.between(createEvent.startTime, it).toMinutes() }
+            createEvent.recurrence?.signupDeadlineOffsetDays?.let { -(it.toLong() * 24 * 60) }
+                ?: createEvent.signupDeadline?.let { Duration.between(createEvent.startTime, it).toMinutes() }
         val targetCategories = createEvent.categories ?: loadSeriesCategoryIds(connection, existingSeries.id)
         val targetUntilDate = upcomingOccurrences.last().event.startTime.plus(startShift).toLocalDate()
 
