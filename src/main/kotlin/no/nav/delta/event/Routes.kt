@@ -57,11 +57,34 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
             put {
                 val createEvent = call.receive(CreateEvent::class)
                 val email = call.principalEmail()
+                val principal = Participant(email, call.principalName())
 
                 if (createEvent.startTime.isAfter(createEvent.endTime)) {
                     return@put call.respond(
                         HttpStatusCode.BadRequest, "Start time must be before end time"
                     )
+                }
+
+                if (createEvent.recurrence != null) {
+                    val createdSeries =
+                        database
+                            .createRecurringEventSeries(createEvent, email, call.principalName())
+                            .getOrElse {
+                                return@put it.left().unwrapAndRespond(call)
+                            }
+
+                    if (createEvent.sendNotificationEmail == true) {
+                        Thread(
+                            createCreationNotificationFuture(
+                                events = createdSeries.affectedEvents,
+                                database = database,
+                                cloudClient = cloudClient,
+                                participant = principal,
+                            )
+                        ).start()
+                    }
+
+                    return@put database.getFullEvent(createdSeries.referenceEventId.toString()).unwrapAndRespond(call)
                 }
 
                 val event =
@@ -73,7 +96,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                     cloudClient.sendUpdateOrCreationNotification(
                         event,
                         database,
-                        Participant(email, call.principalName()),
+                        principal,
                         null,
                     )
                 }
@@ -85,13 +108,21 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         call.principalName(),
                         ParticipantType.HOST,
                     )
-                    .flatMap {
-                        if (createEvent.sendNotificationEmail == true) {
-                            Thread(createEventFuture).start()
-                        }
-                        database.getFullEvent(event.id.toString())
+                    .getOrElse {
+                        return@put it.left().unwrapAndRespond(call)
                     }
-                    .unwrapAndRespond(call)
+
+                createEvent.categories?.let { categories ->
+                    database.setCategories(event.id.toString(), categories).getOrElse {
+                        return@put it.left().unwrapAndRespond(call)
+                    }
+                }
+
+                if (createEvent.sendNotificationEmail == true) {
+                    Thread(createEventFuture).start()
+                }
+
+                database.getFullEvent(event.id.toString()).unwrapAndRespond(call)
             }
             route("/{id}") {
                 delete {
@@ -99,6 +130,31 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         call.getEventWithPrivilege(database).getOrElse {
                             return@delete it.left().unwrapAndRespond(call)
                         }
+
+                    val editScope = call.parameters["editScope"]?.let {
+                        runCatching { EventEditScope.valueOf(it) }.getOrElse {
+                            return@delete call.respond(HttpStatusCode.BadRequest, "Invalid editScope value")
+                        }
+                    }
+
+                    if (editScope == EventEditScope.UPCOMING) {
+                        val notificationData =
+                            database
+                                .deleteRecurringSeriesFromOccurrence(event.id.toString(), call.principalEmail())
+                                .getOrElse { return@delete it.left().unwrapAndRespond(call) }
+
+                        Thread {
+                            notificationData.forEach { (deletedEvent, pairs) ->
+                                pairs.forEach { (participant, calendarEventId) ->
+                                    cloudClient.sendCancellationNotification(
+                                        calendarEventId.getOrNull(), deletedEvent, participant
+                                    )
+                                }
+                            }
+                        }.start()
+
+                        return@delete call.respond("Success")
+                    }
 
                     // I don't care if this fails...
                     val sendCancellationFuture =
@@ -131,6 +187,36 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         }
 
                     val changedEvent = call.receive<CreateEvent>()
+                    if (changedEvent.startTime.isAfter(changedEvent.endTime)) {
+                        return@post call.respond(
+                            HttpStatusCode.BadRequest, "Start time must be before end time"
+                        )
+                    }
+
+                    if ((changedEvent.editScope ?: EventEditScope.SINGLE) == EventEditScope.UPCOMING) {
+                        val recurringUpdate =
+                            database
+                                .updateRecurringSeriesFromOccurrence(
+                                    eventId = originalEvent.id.toString(),
+                                    createEvent = changedEvent,
+                                    updatedByEmail = call.principalEmail(),
+                                ).getOrElse {
+                                    return@post it.left().unwrapAndRespond(call)
+                                }
+
+                        if (changedEvent.sendNotificationEmail == true) {
+                            Thread(
+                                createUpdateNotificationFuture(
+                                    events = recurringUpdate.affectedEvents,
+                                    database = database,
+                                    cloudClient = cloudClient,
+                                )
+                            ).start()
+                        }
+
+                        return@post database.getFullEvent(recurringUpdate.referenceEventId.toString()).unwrapAndRespond(call)
+                    }
+
                     val newEvent =
                         Event(
                             id = originalEvent.id,
@@ -160,16 +246,21 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                             }
                             .getOrElse { {} }
 
-                    database
-                        .updateEvent(newEvent)
-                        .flatMap { event -> database.getFullEvent(event.id.toString()) }
-                        .map {
-                            if (changedEvent.sendNotificationEmail == true) {
-                                Thread(sendUpdateFuture).start()
-                            }
-                            it
+                    database.updateEvent(newEvent).getOrElse {
+                        return@post it.left().unwrapAndRespond(call)
+                    }
+
+                    changedEvent.categories?.let { categories ->
+                        database.setCategories(newEvent.id.toString(), categories).getOrElse {
+                            return@post it.left().unwrapAndRespond(call)
                         }
-                        .unwrapAndRespond(call)
+                    }
+
+                    if (changedEvent.sendNotificationEmail == true) {
+                        Thread(sendUpdateFuture).start()
+                    }
+
+                    database.getFullEvent(newEvent.id.toString()).unwrapAndRespond(call)
                 }
                 delete("/participant") {
                     val event =
@@ -336,6 +427,43 @@ fun ApplicationCall.principalEmail(): String {
         "test@localhost"
     } else {
         principal<JWTPrincipal>()!!["preferred_username"]!!.lowercase()
+    }
+}
+
+private fun createCreationNotificationFuture(
+    events: List<Event>,
+    database: DatabaseInterface,
+    cloudClient: CloudClient,
+    participant: Participant,
+): () -> Unit = {
+    events.forEach { event ->
+        cloudClient.sendUpdateOrCreationNotification(
+            event = event,
+            database = database,
+            participant = participant,
+            calendarEventId = null,
+        )
+    }
+}
+
+private fun createUpdateNotificationFuture(
+    events: List<Event>,
+    database: DatabaseInterface,
+    cloudClient: CloudClient,
+): () -> Unit = {
+    events.forEach { event ->
+        database
+            .getAllParticipantsAndCalendarEventIds(event.id.toString())
+            .map { pairs ->
+                cloudClient.batchSendUpdateOrCreationNotification(
+                    event = event,
+                    database = database,
+                    participantsWithCalendarIds =
+                        pairs.map { (participant, calendarEventId) ->
+                            Pair(participant, calendarEventId.getOrNull())
+                        },
+                )
+            }
     }
 }
 

@@ -39,6 +39,13 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: editScope
+          in: query
+          description: "When UPCOMING, deletes this occurrence and all following ones in the series. Defaults to SINGLE (only this event)."
+          required: false
+          schema:
+            type: string
+            enum: [SINGLE, UPCOMING]
       responses:
         "200":
           description: "Event deleted"
@@ -524,6 +531,18 @@ components:
           type: integer
         sendNotificationEmail:
           type: boolean
+        categories:
+          type: array
+          items:
+            type: integer
+          nullable: true
+        recurrence:
+          $ref: "#/components/schemas/RecurrenceRequest"
+          nullable: true
+        editScope:
+          type: string
+          enum: [SINGLE, UPCOMING]
+          nullable: true
     Event:
       type: object
       properties:
@@ -566,6 +585,44 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Category"
+        recurringSeries:
+          $ref: "#/components/schemas/RecurringSeriesSummary"
+          nullable: true
+    RecurrenceRequest:
+      type: object
+      required:
+        - frequency
+        - untilDate
+      properties:
+        frequency:
+          type: string
+          enum: [WEEKLY, BIWEEKLY, MONTHLY]
+        untilDate:
+          type: string
+          format: date
+        signupDeadlineOffsetDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          nullable: true
+          description: "Days before each occurrence's start time to set as signup deadline"
+    RecurringSeriesSummary:
+      type: object
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+        frequency:
+          type: string
+          enum: [WEEKLY, BIWEEKLY, MONTHLY]
+        untilDate:
+          type: string
+          format: date
+        editableScopes:
+          type: array
+          items:
+            type: string
+            enum: [SINGLE, UPCOMING]
     EmailObject:
       type: object
       properties:

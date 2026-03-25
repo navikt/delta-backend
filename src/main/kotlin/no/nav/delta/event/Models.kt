@@ -1,5 +1,6 @@
 package no.nav.delta.event
 
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -20,6 +21,7 @@ data class FullEvent(
     val participants: List<Participant>,
     val hosts: List<Participant>,
     val categories: List<Category>,
+    val recurringSeries: RecurringSeriesSummary? = null,
 )
 
 data class Participant(
@@ -50,7 +52,10 @@ data class CreateEvent(
     val public: Boolean,
     val participantLimit: Int,
     val signupDeadline: LocalDateTime?,
-    val sendNotificationEmail: Boolean? = true
+    val sendNotificationEmail: Boolean? = true,
+    val categories: List<Int>? = null,
+    val recurrence: RecurrenceRequest? = null,
+    val editScope: EventEditScope? = null,
 )
 
 data class Category(
@@ -60,4 +65,28 @@ data class Category(
 
 data class CreateCategory(
     val name: String,
+)
+
+enum class RecurrenceFrequency {
+    WEEKLY,
+    BIWEEKLY,
+    MONTHLY,
+}
+
+enum class EventEditScope {
+    SINGLE,
+    UPCOMING,
+}
+
+data class RecurrenceRequest(
+    val frequency: RecurrenceFrequency,
+    val untilDate: LocalDate,
+    val signupDeadlineOffsetDays: Int? = null,
+)
+
+data class RecurringSeriesSummary(
+    val seriesId: UUID,
+    val frequency: RecurrenceFrequency,
+    val untilDate: LocalDate,
+    val editableScopes: List<EventEditScope> = listOf(EventEditScope.SINGLE, EventEditScope.UPCOMING),
 )
