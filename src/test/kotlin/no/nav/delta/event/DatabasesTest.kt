@@ -214,6 +214,85 @@ class DatabasesTest {
         Assertions.assertEquals(startDate.plusMonths(2).month, occurrenceDates[2].month)
     }
 
+    @Test
+    fun extendingUntilDateCreatesNewOccurrences() {
+        val start = LocalDateTime.now().plusDays(7).withHour(10).withMinute(0).withSecond(0).withNano(0)
+        val createEvent =
+            futureEventTest("recurring-extend", start).copy(
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(2)),
+            )
+
+        val createdSeries =
+            db.createRecurringEventSeries(createEvent, "host@example.com", "Host User").getOrNull()!!
+        Assertions.assertEquals(3, createdSeries.affectedEvents.size) // weeks 0, 1, 2
+
+        val firstOccurrence = createdSeries.affectedEvents[0]
+        val originalSeriesId = db.getFullEvent(firstOccurrence.id.toString()).getOrNull()!!.recurringSeries!!.seriesId
+
+        // Extend untilDate by 2 more weeks — should produce 2 new events
+        val updateRequest =
+            futureEventTest("recurring-extend", firstOccurrence.startTime).copy(
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(4)),
+                editScope = EventEditScope.UPCOMING,
+            )
+
+        val result =
+            db.updateRecurringSeriesFromOccurrence(
+                eventId = firstOccurrence.id.toString(),
+                createEvent = updateRequest,
+                updatedByEmail = "host@example.com",
+            ).getOrNull()!!
+
+        Assertions.assertEquals(5, result.affectedEvents.size) // weeks 0–4
+
+        // All 5 should belong to the same series (no split — editing from index 0)
+        result.affectedEvents.forEach { event ->
+            val full = db.getFullEvent(event.id.toString()).getOrNull()!!
+            Assertions.assertEquals(originalSeriesId, full.recurringSeries!!.seriesId)
+        }
+
+        // Dates should be exactly one week apart
+        val dates = result.affectedEvents.map { it.startTime.toLocalDate() }
+        for (i in 1 until dates.size) {
+            Assertions.assertEquals(dates[i - 1].plusWeeks(1), dates[i])
+        }
+    }
+
+    @Test
+    fun shorteningUntilDateDeletesExcessOccurrences() {
+        val start = LocalDateTime.now().plusDays(7).withHour(10).withMinute(0).withSecond(0).withNano(0)
+        val createEvent =
+            futureEventTest("recurring-shorten", start).copy(
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(4)),
+            )
+
+        val createdSeries =
+            db.createRecurringEventSeries(createEvent, "host@example.com", "Host User").getOrNull()!!
+        Assertions.assertEquals(5, createdSeries.affectedEvents.size) // weeks 0–4
+
+        val firstOccurrence = createdSeries.affectedEvents[0]
+        val removedEvent = createdSeries.affectedEvents[4] // week 4, should be deleted
+
+        // Shorten to 2 weeks — events at weeks 3 and 4 should be deleted
+        val updateRequest =
+            futureEventTest("recurring-shorten", firstOccurrence.startTime).copy(
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(2)),
+                editScope = EventEditScope.UPCOMING,
+            )
+
+        val result =
+            db.updateRecurringSeriesFromOccurrence(
+                eventId = firstOccurrence.id.toString(),
+                createEvent = updateRequest,
+                updatedByEmail = "host@example.com",
+            ).getOrNull()!!
+
+        Assertions.assertEquals(3, result.affectedEvents.size) // weeks 0–2
+
+        // The event that was at week 4 should no longer exist
+        Assertions.assertTrue(db.getEvent(removedEvent.id.toString()).isLeft())
+    }
+
     private fun futureEventTest(
         title: String,
         startTime: LocalDateTime = LocalDateTime.now().plusHours(1),
