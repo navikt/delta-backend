@@ -98,9 +98,9 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                 ?: return UnsupportedRecurringOperationException("Recurring series not found").left()
 
         createEvent.recurrence?.let { recurrence ->
-            if (recurrence.frequency != existingSeries.frequency || recurrence.untilDate != existingSeries.untilDate) {
+            if (recurrence.frequency != existingSeries.frequency) {
                 return UnsupportedRecurringOperationException(
-                    "Updating the recurrence rule itself is not supported yet"
+                    "Updating the recurrence frequency is not supported"
                 ).left()
             }
         }
@@ -119,16 +119,37 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
             return ForbiddenException.left()
         }
 
-        val startShift = Duration.between(selectedOccurrence.event.startTime, createEvent.startTime)
         // If the recurrence specifies an offset, it takes precedence over CreateEvent.signupDeadline
         val signupDeadlineOffsetMinutes =
             createEvent.recurrence?.signupDeadlineOffsetDays?.let { -(it.toLong() * 24 * 60) }
                 ?: createEvent.signupDeadline?.let { Duration.between(createEvent.startTime, it).toMinutes() }
         val targetCategories = createEvent.categories ?: loadSeriesCategoryIds(connection, existingSeries.id)
-        val targetUntilDate = upcomingOccurrences.last().event.startTime.plus(startShift).toLocalDate()
+
+        // Build the full desired set of occurrences, anchored to createEvent.startTime.
+        // This handles untilDate changes (extend or shorten) and always respects day-of-week.
+        val targetRecurrence = RecurrenceRequest(
+            frequency = existingSeries.frequency,
+            untilDate = createEvent.recurrence?.untilDate ?: existingSeries.untilDate,
+            signupDeadlineOffsetDays = createEvent.recurrence?.signupDeadlineOffsetDays,
+        )
+        val desiredOccurrences = when (
+            val generated = generateOccurrences(
+                firstStartTime = createEvent.startTime,
+                occurrenceDurationMinutes = newDurationMinutes,
+                recurrence = targetRecurrence,
+                signupDeadlineOffsetMinutes = signupDeadlineOffsetMinutes,
+            )
+        ) {
+            is Either.Left -> return generated
+            is Either.Right -> generated.value
+        }
+
+        val isSplit = selectedOccurrence.occurrenceIndex > 0
+        val existingCount = upcomingOccurrences.size
+        val desiredCount = desiredOccurrences.size
 
         val targetSeriesId =
-            if (selectedOccurrence.occurrenceIndex == 0) {
+            if (!isSplit) {
                 existingSeries.id.also {
                     updateRecurringSeries(
                         connection = connection,
@@ -139,7 +160,7 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                         public = createEvent.public,
                         participantLimit = createEvent.participantLimit,
                         startDate = createEvent.startTime.toLocalDate(),
-                        untilDate = targetUntilDate,
+                        untilDate = desiredOccurrences.last().occurrenceDate,
                         occurrenceDurationMinutes = newDurationMinutes,
                         signupDeadlineOffsetMinutes = signupDeadlineOffsetMinutes,
                     )
@@ -157,7 +178,7 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                     participantLimit = createEvent.participantLimit,
                     frequency = existingSeries.frequency,
                     startDate = createEvent.startTime.toLocalDate(),
-                    untilDate = targetUntilDate,
+                    untilDate = desiredOccurrences.last().occurrenceDate,
                     occurrenceDurationMinutes = newDurationMinutes,
                     signupDeadlineOffsetMinutes = signupDeadlineOffsetMinutes,
                     createdByEmail = updatedByEmail,
@@ -166,9 +187,10 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                 }
             }
 
+        // Update existing occurrences that are still within the desired range
         val updatedEvents =
-            upcomingOccurrences.mapIndexed { index, occurrence ->
-                val newStart = occurrence.event.startTime.plus(startShift)
+            upcomingOccurrences.take(desiredCount).mapIndexed { index, occurrence ->
+                val desired = desiredOccurrences[index]
                 val updatedEvent =
                     updateEvent(
                         connection = connection,
@@ -177,31 +199,64 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                                 id = occurrence.event.id,
                                 title = createEvent.title,
                                 description = createEvent.description,
-                                startTime = newStart,
-                                endTime = newStart.plusMinutes(newDurationMinutes),
+                                startTime = desired.startTime,
+                                endTime = desired.endTime,
                                 location = createEvent.location,
                                 public = createEvent.public,
                                 participantLimit = createEvent.participantLimit,
-                                signupDeadline = signupDeadlineOffsetMinutes?.let { newStart.plusMinutes(it) },
+                                signupDeadline = desired.signupDeadline,
                             ),
                     )
-
                 if (createEvent.categories != null) {
                     replaceEventCategories(connection, updatedEvent.id, createEvent.categories)
                 }
-
                 updateRecurringOccurrence(
                     connection = connection,
                     eventId = updatedEvent.id,
                     seriesId = targetSeriesId,
-                    occurrenceIndex = if (selectedOccurrence.occurrenceIndex == 0) occurrence.occurrenceIndex else index,
-                    occurrenceDate = newStart.toLocalDate(),
+                    occurrenceIndex = if (!isSplit) occurrence.occurrenceIndex else index,
+                    occurrenceDate = desired.occurrenceDate,
                 )
-
                 updatedEvent
             }
 
-        if (selectedOccurrence.occurrenceIndex > 0) {
+        // Delete occurrences that fall beyond the new untilDate (shortening)
+        val toDelete = upcomingOccurrences.drop(desiredCount)
+        if (toDelete.isNotEmpty()) {
+            val deleteIdArray = connection.createArrayOf("uuid", toDelete.map { it.event.id }.toTypedArray())
+            connection.prepareStatement("DELETE FROM event WHERE id = ANY(?)").use {
+                it.setArray(1, deleteIdArray)
+                it.executeUpdate()
+            }
+        }
+
+        // Insert new occurrences beyond the old untilDate (extending)
+        val hosts = loadHosts(connection, selectedOccurrence.event.id)
+        val insertedEvents =
+            desiredOccurrences.drop(existingCount).mapIndexed { extraIndex, desired ->
+                val absoluteIndex =
+                    if (!isSplit) upcomingOccurrences.last().occurrenceIndex + extraIndex + 1
+                    else existingCount + extraIndex
+                val newEvent =
+                    insertEvent(
+                        connection,
+                        createEvent.copy(
+                            startTime = desired.startTime,
+                            endTime = desired.endTime,
+                            signupDeadline = desired.signupDeadline,
+                            recurrence = null,
+                            editScope = null,
+                        ),
+                    )
+                hosts.forEach { host ->
+                    insertParticipant(connection, newEvent.id, host.email, host.name, ParticipantType.HOST)
+                }
+                replaceEventCategories(connection, newEvent.id, targetCategories)
+                insertRecurringOccurrence(connection, targetSeriesId, newEvent.id, absoluteIndex, desired.occurrenceDate)
+                newEvent
+            }
+
+        if (isSplit) {
             val pastOccurrences =
                 loadRecurringOccurrencesBeforeIndex(connection, existingSeries.id, selectedOccurrence.occurrenceIndex)
             updateRecurringSeriesUntilDate(connection, existingSeries.id, pastOccurrences.last().occurrenceDate)
@@ -210,7 +265,7 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
         connection.commit()
         RecurringEventMutationResult(
             referenceEventId = selectedOccurrence.event.id,
-            affectedEvents = updatedEvents,
+            affectedEvents = updatedEvents + insertedEvents,
         ).right()
     }
 }
@@ -875,6 +930,16 @@ private fun loadParticipantsWithCalendarIds(
             Participant(email = getString("email"), name = getString("name")),
             Option.fromNullable(getString("calendar_event_id")),
         )
+    }
+}
+
+private fun loadHosts(connection: Connection, eventId: UUID): List<Participant> {
+    val ps = connection.prepareStatement(
+        "SELECT email, name FROM participant WHERE event_id = ? AND type = 'HOST'"
+    )
+    ps.setObject(1, eventId)
+    return ps.executeQuery().toList {
+        Participant(email = getString("email"), name = getString("name"))
     }
 }
 
