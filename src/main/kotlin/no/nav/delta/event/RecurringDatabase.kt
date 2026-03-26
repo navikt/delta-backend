@@ -42,6 +42,7 @@ fun DatabaseInterface.createRecurringEventSeries(
     createEvent: CreateEvent,
     hostEmail: String,
     hostName: String,
+    additionalHosts: List<Participant> = emptyList(),
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
     val draft =
         when (val seriesDraft = createEvent.toRecurringSeriesDraft(hostEmail)) {
@@ -69,6 +70,9 @@ fun DatabaseInterface.createRecurringEventSeries(
 
                 insertRecurringOccurrence(connection, seriesId, event.id, occurrence.occurrenceIndex, occurrence.occurrenceDate)
                 insertParticipant(connection, event.id, hostEmail, hostName, ParticipantType.HOST)
+                additionalHosts.forEach { host ->
+                    insertParticipant(connection, event.id, host.email, host.name, ParticipantType.HOST)
+                }
                 replaceEventCategories(connection, event.id, draft.categories)
                 event
             }

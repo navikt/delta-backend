@@ -500,6 +500,30 @@ paths:
           description: "Forbidden — not an owner or admin"
         "404":
           description: "Faggruppe or owner not found"
+  /users/search:
+    get:
+      tags:
+        - users
+      description: "Search for Delta users by name or email (autocomplete for co-host selection)"
+      operationId: searchUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "Search query (minimum 2 characters)"
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "List of matching users"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserSearchResult"
 components:
   securitySchemes:
     bearerAuth:
@@ -543,6 +567,13 @@ components:
           type: string
           enum: [SINGLE, UPCOMING]
           nullable: true
+        additionalHosts:
+          type: array
+          items:
+            type: string
+            format: email
+          nullable: true
+          description: "Email addresses of additional co-hosts to register at creation time"
     Event:
       type: object
       properties:
@@ -793,3 +824,11 @@ components:
         epost:
           type: string
           format: email
+    UserSearchResult:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
