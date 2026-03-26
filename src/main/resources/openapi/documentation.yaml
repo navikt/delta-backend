@@ -515,6 +515,7 @@ paths:
           description: "Search query (minimum 2 characters)"
           schema:
             type: string
+            minLength: 2
       responses:
         "200":
           description: "List of matching users"
@@ -524,6 +525,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/UserSearchResult"
+        "400":
+          description: "Query parameter missing or too short (minimum 2 characters)"
 components:
   securitySchemes:
     bearerAuth:

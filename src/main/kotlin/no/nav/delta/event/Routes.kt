@@ -24,7 +24,10 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
             get {
                 val q = call.parameters["q"]
                 if (q.isNullOrBlank() || q.length < 2) {
-                    return@get call.respond(emptyList<Participant>())
+                    return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        "Query parameter 'q' is required and must be at least 2 characters long"
+                    )
                 }
                 call.respond(database.searchUsers(q))
             }
@@ -74,14 +77,15 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                     )
                 }
 
-                if (createEvent.recurrence != null) {
-                    val resolvedHosts =
-                        resolveAdditionalHosts(createEvent.additionalHosts, cloudClient)
-                            ?: return@put call.respond(
-                                HttpStatusCode.BadRequest,
-                                "One or more additional host emails could not be found"
-                            )
+                // Resolve and validate additional hosts before any DB writes
+                val resolvedHosts =
+                    resolveAdditionalHosts(createEvent.additionalHosts, email, cloudClient)
+                        ?: return@put call.respond(
+                            HttpStatusCode.BadRequest,
+                            "One or more additional host emails could not be found"
+                        )
 
+                if (createEvent.recurrence != null) {
                     val createdSeries =
                         database
                             .createRecurringEventSeries(createEvent, email, call.principalName(), resolvedHosts)
@@ -128,12 +132,6 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                         return@put it.left().unwrapAndRespond(call)
                     }
 
-                val resolvedHosts =
-                    resolveAdditionalHosts(createEvent.additionalHosts, cloudClient)
-                        ?: return@put call.respond(
-                            HttpStatusCode.BadRequest,
-                            "One or more additional host emails could not be found"
-                        )
                 resolvedHosts.forEach { host ->
                     database.registerForEvent(event.id.toString(), host.email, host.name, ParticipantType.HOST)
                         .getOrElse { return@put it.left().unwrapAndRespond(call) }
@@ -504,11 +502,17 @@ fun ApplicationCall.principalName(): String {
 
 private fun resolveAdditionalHosts(
     emails: List<String>?,
+    creatorEmail: String,
     cloudClient: CloudClient,
 ): List<Participant>? {
     if (emails.isNullOrEmpty()) return emptyList()
-    return emails.map { email ->
-        val name = cloudClient.getUserDisplayName(email) ?: return null
+    val normalised = emails
+        .map { it.trim().lowercase() }
+        .filter { it.isNotEmpty() && it != creatorEmail.lowercase() }
+        .distinct()
+    val resolved = normalised.mapNotNull { email ->
+        val name = cloudClient.getUserDisplayName(email) ?: return@mapNotNull null
         Participant(email, name)
     }
+    return if (resolved.size == normalised.size) resolved else null
 }

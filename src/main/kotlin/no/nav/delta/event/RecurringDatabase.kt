@@ -70,9 +70,12 @@ fun DatabaseInterface.createRecurringEventSeries(
 
                 insertRecurringOccurrence(connection, seriesId, event.id, occurrence.occurrenceIndex, occurrence.occurrenceDate)
                 insertParticipant(connection, event.id, hostEmail, hostName, ParticipantType.HOST)
-                additionalHosts.forEach { host ->
-                    insertParticipant(connection, event.id, host.email, host.name, ParticipantType.HOST)
-                }
+                additionalHosts
+                    .distinctBy { it.email.lowercase() }
+                    .filter { it.email.lowercase() != hostEmail.lowercase() }
+                    .forEach { host ->
+                        insertParticipant(connection, event.id, host.email, host.name, ParticipantType.HOST)
+                    }
                 replaceEventCategories(connection, event.id, draft.categories)
                 event
             }
