@@ -877,3 +877,28 @@ WHERE  NAME = ?;
 fun checkIfCategoryNameIsTooLong(name: String): Either<CategoryNameTooLongException, Unit> {
     return if (name.length > 25) CategoryNameTooLongException.left() else Unit.right()
 }
+
+fun DatabaseInterface.searchUsers(query: String): List<Participant> {
+    val pattern = "%${query}%"
+    return connection.use { connection ->
+        connection.prepareStatement(
+            """
+SELECT DISTINCT ON (email) email, name
+FROM   participant
+WHERE  email ILIKE ?
+       OR name ILIKE ?
+ORDER  BY email
+LIMIT  20;
+"""
+        ).use { stmt ->
+            stmt.setString(1, pattern)
+            stmt.setString(2, pattern)
+            val result = stmt.executeQuery()
+            val users = mutableListOf<Participant>()
+            while (result.next()) {
+                users.add(Participant(result.getString("email"), result.getString("name")))
+            }
+            users
+        }
+    }
+}
