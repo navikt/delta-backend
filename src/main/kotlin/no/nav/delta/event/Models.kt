@@ -56,6 +56,7 @@ data class CreateEvent(
     val categories: List<Int>? = null,
     val recurrence: RecurrenceRequest? = null,
     val editScope: EventEditScope? = null,
+    val additionalHosts: List<String>? = null,
 )
 
 data class Category(
