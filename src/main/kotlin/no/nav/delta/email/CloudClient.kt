@@ -160,10 +160,7 @@ class AzureCloudClient(
                         ItemBody().apply {
                             contentType = BodyType.Html
                             content =
-                                """<p>${event.description.replace("\n", "<br>")}</p>
-
-<p><strong>Merk:</strong> Hvis du ikke kan delta, må du melde deg av via <a href="https://delta.nav.no/event/${event.id}/">arrangementsiden i Delta</a>. Det er ikke nok å avvise invitasjonen i Outlook.</p>
-"""
+                                """<p>${event.description.replace("\n", "<br>")}</p>"""
                         }
                     }
                 start = event.startTime.toDateTimeTimeZone()
