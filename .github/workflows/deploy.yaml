@@ -25,7 +25,7 @@ jobs:
       - name: Run tests & build jar files
         run: ./gradlew test build
       - name: Build & push docker image to GAR
-        uses: nais/docker-build-push@078e460885ed0424b60d45ce9220b4be1748be9d
+        uses: nais/docker-build-push@cd5ec5663feb0e05c3fa374d1fb442605b046c6b
         id: docker-build-push
         with:
           team: delta
@@ -39,7 +39,7 @@ jobs:
           format: 'sarif'
           scanners: 'secret'
           output: 'trivy.sarif'
-      - uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13
+      - uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225
         with:
           sarif_file: 'trivy.sarif'
 
