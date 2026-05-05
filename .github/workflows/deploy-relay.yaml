@@ -14,14 +14,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Build & push docker image to GAR
-        uses: nais/docker-build-push@078e460885ed0424b60d45ce9220b4be1748be9d
+        uses: nais/docker-build-push@be85229e81c0293c265c646c084f05317fb6e0d2
         id: docker-build-push
         with:
           team: delta
           pull: true
           docker_context: nginx-relay/
           image_suffix: relay
-      - uses: nais/deploy/actions/deploy@fa754451577294aae42872a69b888b3470478ec1
+      - uses: nais/deploy/actions/deploy@2f28259ff29ea37915f5a0c9e2a8e3542c429df7
         env:
           CLUSTER: prod-gcp
           RESOURCE: nginx-relay/nais.yaml
