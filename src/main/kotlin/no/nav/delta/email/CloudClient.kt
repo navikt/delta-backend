@@ -328,7 +328,8 @@ class AzureCloudClient(
                 this.expirationDateTime = expirationDateTime
                 this.changeType = "updated"
             }
-            graphClient.subscriptions().post(subscription).right()
+            (graphClient.subscriptions().post(subscription)
+                ?: throw RuntimeException("Failed to create subscription: null response")).right()
         } catch (e: Exception) {
             RuntimeException("Failed to create subscription", e).left()
         }
