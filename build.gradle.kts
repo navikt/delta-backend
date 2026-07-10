@@ -1,22 +1,22 @@
-val ktor_version = "3.4.1"
-val logback_version = "1.5.32"
+val ktor_version = "3.5.1"
+val logback_version = "1.5.38"
 val logstash_version = "9.0"
-val postgres_version = "42.7.11"
-val hikari_version = "7.0.2"
-val flyway_version = "12.1.0"
-val jackson_version = "2.21.1"
-val arrow_version = "2.2.2"
-val microsoft_sdk_version = "6.62.0"
-val azure_identity_version = "1.18.2"
+val postgres_version = "42.7.13"
+val hikari_version = "7.1.0"
+val flyway_version = "12.11.0"
+val jackson_version = "2.22.1"
+val arrow_version = "2.2.3"
+val microsoft_sdk_version = "6.65.0"
+val azure_identity_version = "1.18.4"
 
-val junit_version = "6.0.3"
+val junit_version = "6.1.1"
 val testcontainers_version = "1.21.4"
 
 val appMainClass = "no.nav.delta.ApplicationKt"
 
 plugins {
-    kotlin("jvm") version "2.3.10"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.10"
+    kotlin("jvm") version "2.4.0"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.0"
 }
 
 kotlin {
