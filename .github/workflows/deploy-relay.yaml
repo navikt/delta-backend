@@ -14,7 +14,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build & push docker image to GAR
-        uses: nais/docker-build-push@f8bc7437f7549c2b08197152d781b98f8727a08a
+        uses: nais/docker-build-push@31c3a7321909bcb20799fdf46153fec721fd9512
         id: docker-build-push
         with:
           team: delta
