@@ -6,10 +6,10 @@ val hikari_version = "7.1.0"
 val flyway_version = "12.11.0"
 val jackson_version = "2.22.1"
 val arrow_version = "2.2.3"
-val microsoft_sdk_version = "6.65.0"
+val microsoft_sdk_version = "6.66.1"
 val azure_identity_version = "1.18.4"
 
-val junit_version = "6.1.1"
+val junit_version = "6.1.2"
 val testcontainers_version = "1.21.4"
 
 val appMainClass = "no.nav.delta.ApplicationKt"
