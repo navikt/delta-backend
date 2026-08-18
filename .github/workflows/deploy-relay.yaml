@@ -1,5 +1,8 @@
 name: Deploy relay
 on:
+  schedule:
+    - cron: 0 7 * * 1
+      timezone: Europe/Oslo
   workflow_dispatch:
 
 jobs:
