@@ -422,7 +422,7 @@ class DummyCloudClient : CloudClient {
 
     override fun getUserDisplayName(email: String): String? {
         println("DummyEmailClient: Looking up display name for $email")
-        return null
+        return email
     }
 
     override fun createSubscription(

@@ -20,6 +20,18 @@ import org.slf4j.LoggerFactory
 
 fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
     authenticate("jwt") {
+        route("/users/search") {
+            get {
+                val q = call.parameters["q"]
+                if (q.isNullOrBlank() || q.length < 2) {
+                    return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        "Query parameter 'q' is required and must be at least 2 characters long"
+                    )
+                }
+                call.respond(database.searchUsers(q))
+            }
+        }
         route("/event") {
             get {
                 val email = call.principalEmail()
@@ -65,10 +77,18 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                     )
                 }
 
+                // Resolve and validate additional hosts before any DB writes
+                val resolvedHosts =
+                    resolveAdditionalHosts(createEvent.additionalHosts, email, cloudClient)
+                        ?: return@put call.respond(
+                            HttpStatusCode.BadRequest,
+                            "One or more additional host emails could not be found"
+                        )
+
                 if (createEvent.recurrence != null) {
                     val createdSeries =
                         database
-                            .createRecurringEventSeries(createEvent, email, call.principalName())
+                            .createRecurringEventSeries(createEvent, email, call.principalName(), resolvedHosts)
                             .getOrElse {
                                 return@put it.left().unwrapAndRespond(call)
                             }
@@ -111,6 +131,11 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient) {
                     .getOrElse {
                         return@put it.left().unwrapAndRespond(call)
                     }
+
+                resolvedHosts.forEach { host ->
+                    database.registerForEvent(event.id.toString(), host.email, host.name, ParticipantType.HOST)
+                        .getOrElse { return@put it.left().unwrapAndRespond(call) }
+                }
 
                 createEvent.categories?.let { categories ->
                     database.setCategories(event.id.toString(), categories).getOrElse {
@@ -473,4 +498,21 @@ fun ApplicationCall.principalName(): String {
     } else {
         principal<JWTPrincipal>()!!["name"]!!
     }
+}
+
+private fun resolveAdditionalHosts(
+    emails: List<String>?,
+    creatorEmail: String,
+    cloudClient: CloudClient,
+): List<Participant>? {
+    if (emails.isNullOrEmpty()) return emptyList()
+    val normalised = emails
+        .map { it.trim().lowercase() }
+        .filter { it.isNotEmpty() && it != creatorEmail.lowercase() }
+        .distinct()
+    val resolved = normalised.mapNotNull { email ->
+        val name = cloudClient.getUserDisplayName(email) ?: return@mapNotNull null
+        Participant(email, name)
+    }
+    return if (resolved.size == normalised.size) resolved else null
 }
