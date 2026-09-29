@@ -273,6 +273,26 @@ class RoomRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, client.get("/rooms/search?q=fya1").status)
     }
 
+    @Test
+    fun `post availability rejects requests outside the getSchedule limits`() = testApplication {
+        val env = enabledEnv()
+        application { installTestApi(env, database) { roomApi(cloudClient, env) } }
+        val tooMany = (1..21).joinToString(",", "[", "]") { "\"r$it@nav.no\"" }
+
+        listOf(
+            availabilityRequestJson(roomEmails = tooMany),
+            availabilityRequestJson(startTime = "2026-01-01T09:00:00", endTime = "2026-01-01T09:00:00"),
+            availabilityRequestJson(startTime = "2026-01-01T09:00:00", endTime = "2026-03-15T09:00:00"),
+            availabilityRequestJson().replace("\"availabilityViewInterval\": 30", "\"availabilityViewInterval\": 4"),
+        ).forEach { body ->
+            val response = client.post("/rooms/availability") {
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertEquals(HttpStatusCode.BadRequest, response.status, body)
+        }
+    }
+
     private fun availabilityRequestJson(
         roomEmails: String = """["room1@nav.no"]""",
         startTime: String = "2026-01-01T09:00:00",

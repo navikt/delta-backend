@@ -385,8 +385,9 @@ paths:
                   $ref: "#/components/schemas/RoomAvailability"
         "400":
           description: >-
-            Room booking is not enabled for the caller, roomEmails is empty, or startTime is
-            after endTime
+            Room booking is not enabled for the caller, roomEmails is empty or has more than 20
+            entries, startTime is not before endTime, the range exceeds 62 days, or
+            availabilityViewInterval is outside 5–1440
         "502":
           description: "Microsoft Graph failed; retry later"
   /category:
@@ -661,8 +662,9 @@ components:
             type: string
     RoomTeamsBadGateway:
       description: >-
-        Creating/updating the room booking or Teams meeting in Microsoft Graph failed. Nothing
-        was saved; the event is unchanged. Safe to retry.
+        Creating/updating the room booking or Teams meeting in Microsoft Graph failed, or Graph
+        created no Teams join link ("Teams meeting could not be created; nothing was saved").
+        Nothing was saved; the event is unchanged. Safe to retry.
       content:
         text/plain:
           schema:
@@ -850,6 +852,8 @@ components:
         availabilityViewInterval:
           type: integer
           default: 30
+          minimum: 5
+          maximum: 1440
           description: "Slot length in minutes"
     RoomAvailability:
       type: object

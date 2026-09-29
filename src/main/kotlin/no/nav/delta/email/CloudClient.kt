@@ -44,6 +44,16 @@ internal fun describeGraphError(e: Throwable): String =
         else -> "${e::class.simpleName}: ${e.message}"
     }
 
+private fun Room.toRoomInfo() =
+    RoomInfo(
+        displayName = displayName,
+        emailAddress = emailAddress,
+        capacity = capacity,
+        building = building,
+        floorLabel = floorLabel,
+        isWheelChairAccessible = isWheelChairAccessible,
+    )
+
 private fun graphFailure(what: String, e: Exception): Throwable =
     RuntimeException("$what (${describeGraphError(e)})", e)
 
@@ -434,10 +444,14 @@ class AzureCloudClient(
 
     override fun getRoomLists(): Either<Throwable, List<RoomList>> {
         return try {
-            val response = graphClient.places().graphRoomList().get()
-            (response?.value ?: emptyList()).map { roomList ->
-                RoomList(displayName = roomList.displayName, emailAddress = roomList.emailAddress)
-            }.also { graphLogger.info("Graph room lists: ${it.size} returned") }.right()
+            val lists = mutableListOf<RoomList>()
+            var page = graphClient.places().graphRoomList().get()
+            while (page != null) {
+                page.value?.forEach { lists += RoomList(displayName = it.displayName, emailAddress = it.emailAddress) }
+                val next = page.odataNextLink ?: break
+                page = graphClient.places().graphRoomList().withUrl(next).get()
+            }
+            lists.toList().also { graphLogger.info("Graph room lists: ${it.size} returned") }.right()
         } catch (e: Exception) {
             graphFailure("Failed to get room lists", e).left()
         }
@@ -448,16 +462,7 @@ class AzureCloudClient(
             val rooms = mutableListOf<RoomInfo>()
             var page = graphClient.places().graphRoom().get { it.queryParameters?.top = 999 }
             while (page != null) {
-                page.value?.forEach { room ->
-                    rooms += RoomInfo(
-                        displayName = room.displayName,
-                        emailAddress = room.emailAddress,
-                        capacity = room.capacity,
-                        building = room.building,
-                        floorLabel = room.floorLabel,
-                        isWheelChairAccessible = room.isWheelChairAccessible,
-                    )
-                }
+                page.value?.forEach { rooms += it.toRoomInfo() }
                 val next = page.odataNextLink ?: break
                 page = graphClient.places().graphRoom().withUrl(next).get()
             }
@@ -470,17 +475,15 @@ class AzureCloudClient(
 
     override fun getRooms(roomListEmail: String): Either<Throwable, List<RoomInfo>> {
         return try {
-            val response = graphClient.places().byPlaceId(roomListEmail).graphRoomList().rooms().get()
-            (response?.value ?: emptyList()).map { room ->
-                RoomInfo(
-                    displayName = room.displayName,
-                    emailAddress = room.emailAddress,
-                    capacity = room.capacity,
-                    building = room.building,
-                    floorLabel = room.floorLabel,
-                    isWheelChairAccessible = room.isWheelChairAccessible,
-                )
-            }.also { graphLogger.info("Graph rooms for list $roomListEmail: ${it.size} returned") }.right()
+            val rooms = mutableListOf<RoomInfo>()
+            val builder = graphClient.places().byPlaceId(roomListEmail).graphRoomList().rooms()
+            var page = builder.get()
+            while (page != null) {
+                page.value?.forEach { rooms += it.toRoomInfo() }
+                val next = page.odataNextLink ?: break
+                page = builder.withUrl(next).get()
+            }
+            rooms.toList().also { graphLogger.info("Graph rooms for list $roomListEmail: ${it.size} returned") }.right()
         } catch (e: Exception) {
             graphFailure("Failed to get rooms for room list $roomListEmail", e).left()
         }
@@ -596,10 +599,19 @@ class AzureCloudClient(
                 .calendar()
                 .events()
                 .post(calendarEvent)
-            logMasterEventResponse("create", event, created)
             val id = created?.id
                 ?: return RuntimeException("Failed to create master event: Graph returned no id").left()
-            toMasterEventResult(id, created).right()
+            // The Teams details can lag the create response; re-fetch once before giving up.
+            val withMeeting =
+                if (event.isOnlineMeeting && created.onlineMeeting?.joinUrl == null) {
+                    graphClient.users().byUserId(applicationEmailAddress).events().byEventId(id)
+                        .get { it.queryParameters?.select = arrayOf("attendees", "onlineMeeting", "isOnlineMeeting", "onlineMeetingProvider") }
+                        ?: created
+                } else {
+                    created
+                }
+            logMasterEventResponse("create", event, withMeeting)
+            toMasterEventResult(id, withMeeting).right()
         } catch (e: Exception) {
             graphFailure("Failed to create master event", e).left()
         }

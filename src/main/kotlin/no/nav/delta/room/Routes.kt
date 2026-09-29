@@ -21,6 +21,11 @@ import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("no.nav.delta.room.Routes")
 
+// getSchedule limits. The interval range is documented by Microsoft; the room count and 62-day
+// range are conservative caps from Exchange free/busy limits.
+private const val MAX_AVAILABILITY_ROOMS = 20
+private val MAX_AVAILABILITY_RANGE: Duration = Duration.ofDays(62)
+
 /** Caches successful loads only; a failed load is returned as-is and retried on the next call. */
 private class Cache<T>(private val ttl: Duration) {
     private var value: T? = null
@@ -114,8 +119,17 @@ fun Route.roomApi(cloudClient: CloudClient, env: Environment) {
                     if (request.roomEmails.isEmpty()) {
                         return@post call.respond(HttpStatusCode.BadRequest, "roomEmails must not be empty")
                     }
-                    if (request.startTime.isAfter(request.endTime)) {
+                    if (request.roomEmails.size > MAX_AVAILABILITY_ROOMS) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "At most $MAX_AVAILABILITY_ROOMS roomEmails per request")
+                    }
+                    if (!request.startTime.isBefore(request.endTime)) {
                         return@post call.respond(HttpStatusCode.BadRequest, "startTime must be before endTime")
+                    }
+                    if (Duration.between(request.startTime, request.endTime) > MAX_AVAILABILITY_RANGE) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "Time range must be at most 62 days")
+                    }
+                    if (request.availabilityViewInterval !in 5..1440) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "availabilityViewInterval must be between 5 and 1440")
                     }
 
                     cloudClient

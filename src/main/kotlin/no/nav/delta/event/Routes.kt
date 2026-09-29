@@ -121,6 +121,15 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                         null
                     }
 
+                // Graph can create the event but silently skip the Teams meeting (e.g. no Teams
+                // license on the Delta mailbox). Teams can't be turned off later, so never save
+                // isOnlineMeeting=true without a join link.
+                if (createEvent.isOnlineMeeting == true && masterResult?.teamsJoinUrl == null) {
+                    masterResult?.let { deleteMasterBestEffort(cloudClient, it.calendarEventId, null) }
+                    logger.warn("Teams meeting requested but Graph returned no join URL; nothing saved")
+                    return@put call.respond(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
+                }
+
                 // If anything below fails after the master was created, undo both the master and
                 // the event row, so no room stays booked for an event that was never fully created.
                 fun rollbackCreate(eventId: UUID?) {
@@ -378,12 +387,26 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             )
                         }
 
-                    // Undo a master created by this request if the DB write fails, so no room stays
-                    // booked (or Teams meeting exists) that the event does not know about.
+                    // Undo this request's Graph change if a later step fails: delete a master it
+                    // created, or restore an existing master to the original event, so Outlook and
+                    // the DB don't diverge.
                     fun rollbackNewMaster() {
-                        if (!createsNewMaster || masterResult == null) return
-                        deleteMasterBestEffort(cloudClient, masterResult.calendarEventId, originalEvent.id)
-                        database.setMasterCalendarEventId(originalEvent.id.toString(), null)
+                        if (masterResult == null) return
+                        if (createsNewMaster) {
+                            deleteMasterBestEffort(cloudClient, masterResult.calendarEventId, originalEvent.id)
+                            database.setMasterCalendarEventId(originalEvent.id.toString(), null)
+                        } else if (existingMasterId != null) {
+                            cloudClient.updateMasterEvent(existingMasterId, originalEvent).onLeft {
+                                logger.warn("Failed to restore master event $existingMasterId for event ${originalEvent.id}", it)
+                            }
+                        }
+                    }
+
+                    // Same guard as on create: never persist Teams without a join link.
+                    if (newEvent.isOnlineMeeting && newEvent.teamsJoinUrl == null) {
+                        rollbackNewMaster()
+                        logger.warn("Teams meeting requested for event ${originalEvent.id} but Graph returned no join URL")
+                        return@post call.respond(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
                     }
 
                     if (createsNewMaster && masterResult != null) {
@@ -616,6 +639,9 @@ private fun validateRoomAndTeamsToggles(
 
     return null
 }
+
+private const val TEAMS_MEETING_NOT_CREATED =
+    "Teams meeting could not be created; nothing was saved"
 
 private const val RECURRING_NOT_SUPPORTED =
     "Room booking and Teams meetings are not supported for recurring events"

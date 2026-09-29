@@ -785,6 +785,45 @@ class EventRoutesTest {
         assertEquals("https://teams.microsoft.com/l/meetup-join/abc", listed.event.teamsJoinUrl)
     }
 
+    @Test
+    fun `admin put returns 502 and saves nothing when graph creates no teams join url`() = testApplication {
+        val env = enabledEnv()
+        application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
+        val title = "no-teams-link-${UUID.randomUUID()}"
+
+        val response =
+            client.put("/admin/event") {
+                contentType(ContentType.Application.Json)
+                setBody(createEventJson(title = title, sendNotificationEmail = false).dropLast(2) + ""","isOnlineMeeting":true}""")
+            }
+
+        assertEquals(HttpStatusCode.BadGateway, response.status)
+        assertEquals(listOf("master-1"), cloudClient.deletedMasterEventIds)
+        assertTrue(database.getEvents(onlyFuture = true).none { it.title == title })
+    }
+
+    @Test
+    fun `admin post enabling teams without a join url restores the master and keeps the event unchanged`() = testApplication {
+        val env = enabledEnv()
+        application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
+        val created = bookedEvent("teams-on-fail-${UUID.randomUUID()}")
+        database.updateEvent(created.copy(isOnlineMeeting = false, teamsJoinUrl = null))
+
+        val response =
+            client.post("/admin/event/${created.id}") {
+                contentType(ContentType.Application.Json)
+                setBody(createEventJson(title = "renamed", sendNotificationEmail = false).dropLast(2) + ""","isOnlineMeeting":true}""")
+            }
+
+        assertEquals(HttpStatusCode.BadGateway, response.status)
+        // First call applies the change, second restores the original event on the master.
+        assertEquals(2, cloudClient.updatedMasterEvents.size)
+        assertEquals(created.title, cloudClient.updatedMasterEvents.last().second.title)
+        val stored = database.getEvent(created.id.toString()).getOrNull()!!
+        assertEquals(created.title, stored.title)
+        assertEquals(false, stored.isOnlineMeeting)
+    }
+
     /** An event hosted by the test user with a room (ACCEPTED), Teams and a master event. */
     private fun bookedEvent(title: String): Event {
         val created = database.addEvent(futureEvent(title))
