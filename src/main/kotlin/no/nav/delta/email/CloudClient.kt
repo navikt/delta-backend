@@ -604,9 +604,16 @@ class AzureCloudClient(
             // The Teams details can lag the create response; re-fetch once before giving up.
             val withMeeting =
                 if (event.isOnlineMeeting && created.onlineMeeting?.joinUrl == null) {
-                    graphClient.users().byUserId(applicationEmailAddress).events().byEventId(id)
-                        .get { it.queryParameters?.select = arrayOf("attendees", "onlineMeeting", "isOnlineMeeting", "onlineMeetingProvider") }
-                        ?: created
+                    try {
+                        graphClient.users().byUserId(applicationEmailAddress).events().byEventId(id)
+                            .get {
+                                it.queryParameters?.select =
+                                    arrayOf("attendees", "onlineMeeting", "isOnlineMeeting", "onlineMeetingProvider")
+                            } ?: created
+                    } catch (e: Exception) {
+                        graphLogger.warn("Failed to refresh master event $id after create; using create response", e)
+                        created
+                    }
                 } else {
                     created
                 }
@@ -626,7 +633,7 @@ class AzureCloudClient(
         }
         return try {
             val calendarEvent = prepareMasterCalendarEvent(event)
-            graphClient
+            val updated = graphClient
                 .users()
                 .byUserId(applicationEmailAddress)
                 .events()
@@ -635,14 +642,20 @@ class AzureCloudClient(
 
             // Re-fetch to get the room's attendee status and the Teams meeting details, which
             // the PATCH response does not reliably include.
-            val refreshed = graphClient
-                .users()
-                .byUserId(applicationEmailAddress)
-                .events()
-                .byEventId(calendarEventId)
-                .get {
-                    it.queryParameters?.select =
-                        arrayOf("attendees", "onlineMeeting", "isOnlineMeeting", "onlineMeetingProvider")
+            val refreshed =
+                try {
+                    graphClient
+                        .users()
+                        .byUserId(applicationEmailAddress)
+                        .events()
+                        .byEventId(calendarEventId)
+                        .get {
+                            it.queryParameters?.select =
+                                arrayOf("attendees", "onlineMeeting", "isOnlineMeeting", "onlineMeetingProvider")
+                        } ?: updated
+                } catch (e: Exception) {
+                    graphLogger.warn("Failed to refresh master event $calendarEventId after update; using update response", e)
+                    updated
                 }
 
             logMasterEventResponse("update", event, refreshed)
@@ -884,4 +897,3 @@ fun buildInviteBodyHtml(event: Event): String {
 
     return description + room + teams
 }
-

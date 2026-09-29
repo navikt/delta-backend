@@ -247,6 +247,20 @@ class RoomRoutesTest {
     }
 
     @Test
+    fun `room list cache evicts least recently used entries at capacity`() = testApplication {
+        val env = enabledEnv()
+        application { installTestApi(env, database) { roomApi(cloudClient, env) } }
+
+        client.get("/rooms/list-0@nav.no")
+        (1..100).forEach { client.get("/rooms/list-$it@nav.no") }
+        assertEquals(101, cloudClient.roomsCalls)
+
+        client.get("/rooms/list-0@nav.no")
+
+        assertEquals(102, cloudClient.roomsCalls)
+    }
+
+    @Test
     fun `search returns matching rooms, caches the full room list and validates input`() = testApplication {
         val env = enabledEnv()
         cloudClient.allRoomsResult =
