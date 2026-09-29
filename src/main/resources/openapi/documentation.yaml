@@ -11,7 +11,10 @@ paths:
     put:
       tags:
         - admin
-      description: "Create an event"
+      description: >-
+        Create an event. With room/Teams fields (see CreateEvent), a room booking and/or Teams
+        meeting is created synchronously before the event is saved, so the response already
+        contains roomStatus and the Teams details. This adds ~0.3–0.8 s to the request.
       operationId: createEvent
       requestBody:
         content:
@@ -25,6 +28,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FullEvent"
+        "400":
+          $ref: "#/components/responses/RoomTeamsBadRequest"
+        "502":
+          $ref: "#/components/responses/RoomTeamsBadGateway"
   /admin/event/{id}:
     delete:
       tags:
@@ -48,11 +55,19 @@ paths:
             enum: [SINGLE, UPCOMING]
       responses:
         "200":
-          description: "Event deleted"
+          description: >-
+            Event deleted. If the event had a room booking or Teams meeting, it is cancelled in
+            Outlook and the room is freed (best effort; the delete succeeds even if that fails).
+            This is the only way to remove a room or Teams meeting from an event.
     post:
       tags:
         - admin
-      description: "Change an event"
+      description: >-
+        Change an event. Room/Teams update rules: omitted (null) roomEmail/roomName/isOnlineMeeting
+        keep their current values, so a client that doesn't send them never removes a booking.
+        Any change (title, time, ...) is also applied to an existing room booking/Teams meeting.
+        A new roomEmail+roomName changes the room (roomStatus becomes PENDING until the room
+        answers). A room cannot be removed and Teams cannot be turned off; delete the event instead.
       operationId: changeEvent
       parameters:
         - name: id
@@ -74,6 +89,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FullEvent'
+        "400":
+          $ref: "#/components/responses/RoomTeamsBadRequest"
+        "502":
+          $ref: "#/components/responses/RoomTeamsBadGateway"
   /admin/event/{id}/category:
     post:
       tags:
@@ -179,7 +198,9 @@ paths:
     get:
       tags:
         - general
-      description: "Get events"
+      description: >-
+        Get events. teamsJoinUrl, teamsConferenceId and teamsDialIn are null unless the caller is
+        a registered participant or host of the event (isOnlineMeeting is always shown).
       operationId: getEvents
       parameters:
         - in: query
@@ -225,7 +246,9 @@ paths:
     get:
       tags:
         - general
-      description: "Get an event"
+      description: >-
+        Get an event. teamsJoinUrl, teamsConferenceId and teamsDialIn are null unless the caller
+        is a registered participant or host (isOnlineMeeting is always shown).
       operationId: getEvent
       parameters:
         - name: id
@@ -242,6 +265,130 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FullEvent"
+  /features:
+    get:
+      tags:
+        - features
+      description: >-
+        Which feature-toggled features are enabled for the calling user. Use this to show/hide
+        the room picker and the Teams toggle. Sending room/Teams fields or calling /rooms when a
+        feature is disabled returns 400.
+      operationId: getFeatures
+      responses:
+        "200":
+          description: "Enabled features for the caller"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Features"
+  /rooms:
+    get:
+      tags:
+        - rooms
+      description: "Room lists (typically one per building). Cached on the server for 1 hour."
+      operationId: getRoomLists
+      responses:
+        "200":
+          description: "Room lists"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RoomList"
+        "400":
+          description: "Room booking is not enabled for the caller"
+        "502":
+          description: "Microsoft Graph failed; retry later"
+  /rooms/search:
+    get:
+      tags:
+        - rooms
+      description: >-
+        Search all rooms in the tenant by name or email. Case-insensitive; every term must
+        match, in any order; punctuation is ignored. "fya1 a347" or "kaptein" both find
+        "(RV) FYA1 - A347 Kaptein - Videokonf". Rooms with a word starting with the first term
+        come first. The full room list is cached on the server for 1 hour.
+      operationId: searchRooms
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "Search text, at least 2 characters"
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: "Max results, 1–100"
+          schema:
+            type: integer
+            default: 25
+      responses:
+        "200":
+          description: "Matching rooms"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RoomInfo"
+        "400":
+          description: "Room booking is not enabled for the caller, or q is shorter than 2 characters"
+        "502":
+          description: "Microsoft Graph failed; retry later"
+  /rooms/{roomListEmail}:
+    get:
+      tags:
+        - rooms
+      description: "Rooms in a room list. Cached on the server for 1 hour per list."
+      operationId: getRooms
+      parameters:
+        - name: roomListEmail
+          in: path
+          description: "emailAddress of a RoomList from GET /rooms"
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "Rooms"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RoomInfo"
+        "400":
+          description: "Room booking is not enabled for the caller"
+        "502":
+          description: "Microsoft Graph failed; retry later"
+  /rooms/availability:
+    post:
+      tags:
+        - rooms
+      description: "Free/busy for one or more rooms in a time range. Not cached."
+      operationId: getRoomAvailability
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomAvailabilityRequest"
+      responses:
+        "200":
+          description: "Availability per room"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RoomAvailability"
+        "400":
+          description: >-
+            Room booking is not enabled for the caller, roomEmails is empty, or startTime is
+            after endTime
+        "502":
+          description: "Microsoft Graph failed; retry later"
   /category:
     get:
       tags:
@@ -501,6 +648,25 @@ paths:
         "404":
           description: "Faggruppe or owner not found"
 components:
+  responses:
+    RoomTeamsBadRequest:
+      description: >-
+        Plain-text reason. Room/Teams-related messages: "Room booking is not enabled",
+        "Teams meeting is not enabled", "roomEmail and roomName must be set together",
+        "Room booking and Teams meetings are not supported for recurring events",
+        "Teams meeting cannot be removed from an event; delete the event instead".
+      content:
+        text/plain:
+          schema:
+            type: string
+    RoomTeamsBadGateway:
+      description: >-
+        Creating/updating the room booking or Teams meeting in Microsoft Graph failed. Nothing
+        was saved; the event is unchanged. Safe to retry.
+      content:
+        text/plain:
+          schema:
+            type: string
   securitySchemes:
     bearerAuth:
       type: http
@@ -543,6 +709,27 @@ components:
           type: string
           enum: [SINGLE, UPCOMING]
           nullable: true
+        roomEmail:
+          type: string
+          nullable: true
+          description: >-
+            Room to book (feature toggled, see docs/teams-meeting-room-booking-plan.md). Rejected
+            with 400 if the caller does not have room booking enabled, if roomName is not sent
+            with it, or on a recurring event. On update, null keeps the current room; a
+            different value changes it. A room cannot be removed; delete the event instead.
+        roomName:
+          type: string
+          nullable: true
+          description: Display name of the room. Must be sent together with roomEmail.
+        isOnlineMeeting:
+          type: boolean
+          nullable: true
+          description: >-
+            Opt-in Teams meeting (feature toggled). Rejected with 400 if the caller does not have
+            Teams meetings enabled, or on a recurring event. On update, null keeps the current
+            value. Once enabled it cannot be turned off (false returns 400); delete the event
+            instead. Server-managed fields (roomStatus, teamsJoinUrl, teamsConferenceId,
+            teamsDialIn) are ignored if sent.
     Event:
       type: object
       properties:
@@ -568,6 +755,117 @@ components:
           format: date-time
         participantLimit:
           type: integer
+        roomEmail:
+          type: string
+          nullable: true
+          description: "Booked room, null if none. Always present (stable contract), also when the feature is off."
+        roomName:
+          type: string
+          nullable: true
+        roomStatus:
+          type: string
+          enum: [PENDING, ACCEPTED, DECLINED]
+          nullable: true
+          description: >-
+            The room's answer to the booking. Null when there is no room. PENDING until the room
+            answers (usually seconds, updated in the background). DECLINED means the room is not
+            booked (e.g. already taken); the host is not emailed, so the frontend should show it.
+            Server-managed.
+        isOnlineMeeting:
+          type: boolean
+          description: "Whether the event has a Teams meeting."
+        teamsJoinUrl:
+          type: string
+          nullable: true
+          description: >-
+            Teams join link. Null when there is no Teams meeting, or when the caller is not a
+            registered participant/host. Server-managed.
+        teamsConferenceId:
+          type: string
+          nullable: true
+          description: "Teams audio conference ID. Same visibility as teamsJoinUrl. Server-managed."
+        teamsDialIn:
+          type: string
+          nullable: true
+          description: >-
+            Dial-in number (with quick-dial suffix when available). Null if the tenant has no
+            Audio Conferencing. Same visibility as teamsJoinUrl. Server-managed.
+    Features:
+      type: object
+      properties:
+        roomBooking:
+          type: boolean
+        teamsMeeting:
+          type: boolean
+    RoomList:
+      type: object
+      properties:
+        displayName:
+          type: string
+          nullable: true
+        emailAddress:
+          type: string
+          nullable: true
+    RoomInfo:
+      type: object
+      properties:
+        displayName:
+          type: string
+          nullable: true
+          description: "Use as roomName (and typically as location) when booking"
+        emailAddress:
+          type: string
+          nullable: true
+          description: "Use as roomEmail when booking"
+        capacity:
+          type: integer
+          nullable: true
+        building:
+          type: string
+          nullable: true
+        floorLabel:
+          type: string
+          nullable: true
+        isWheelChairAccessible:
+          type: boolean
+          nullable: true
+    RoomAvailabilityRequest:
+      type: object
+      required:
+        - roomEmails
+        - startTime
+        - endTime
+      properties:
+        roomEmails:
+          type: array
+          items:
+            type: string
+        startTime:
+          type: string
+          format: date-time
+          description: "Local time (Europe/Oslo), same format as event times"
+        endTime:
+          type: string
+          format: date-time
+        availabilityViewInterval:
+          type: integer
+          default: 30
+          description: "Slot length in minutes"
+    RoomAvailability:
+      type: object
+      properties:
+        emailAddress:
+          type: string
+        availabilityView:
+          type: string
+          nullable: true
+          description: >-
+            One character per availabilityViewInterval slot from startTime: 0 = free,
+            1 = tentative, 2 = busy, 3 = out of office, 4 = working elsewhere.
+        error:
+          type: string
+          nullable: true
+          description: "Set when Graph could not return availability for this room"
     FullEvent:
       type: object
       properties:
