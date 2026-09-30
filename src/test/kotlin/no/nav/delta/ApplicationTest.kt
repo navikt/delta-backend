@@ -87,5 +87,38 @@ class ApplicationTest {
         override fun deleteSubscription(subscriptionId: String) = Unit.right()
 
         override fun getEventAttendeeStatus(calendarEventId: String) = ResponseType.Accepted.right()
+
+        override fun getRoomLists() = emptyList<no.nav.delta.room.RoomList>().right()
+
+        override fun getRooms(roomListEmail: String) = emptyList<no.nav.delta.room.RoomInfo>().right()
+
+        override fun getAllRooms() = emptyList<no.nav.delta.room.RoomInfo>().right()
+
+        override fun getRoomAvailability(
+            roomEmails: List<String>,
+            startTime: java.time.LocalDateTime,
+            endTime: java.time.LocalDateTime,
+            availabilityViewInterval: Int,
+        ) = emptyList<no.nav.delta.room.RoomAvailability>().right()
+
+        override fun createMasterEvent(event: Event) =
+            no.nav.delta.room.MasterEventResult(
+                calendarEventId = "master",
+                roomStatus = null,
+                teamsJoinUrl = null,
+                teamsConferenceId = null,
+                teamsDialIn = null,
+            ).right()
+
+        override fun updateMasterEvent(calendarEventId: String, event: Event) =
+            no.nav.delta.room.MasterEventResult(
+                calendarEventId = calendarEventId,
+                roomStatus = null,
+                teamsJoinUrl = null,
+                teamsConferenceId = null,
+                teamsDialIn = null,
+            ).right()
+
+        override fun deleteMasterEvent(calendarEventId: String) = Unit.right()
     }
 }

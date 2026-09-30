@@ -28,6 +28,8 @@ import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.faggruppe.faggruppeApi
+import no.nav.delta.feature.featureApi
+import no.nav.delta.room.roomApi
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.webhook.LeaderElection
 import no.nav.delta.webhook.SubscriptionService
@@ -95,9 +97,11 @@ fun Application.mySetup(
 
     routing {
         swaggerUI(path = "openapi")
-        eventApi(database, cloudClient)
+        eventApi(database, cloudClient, env)
         faggruppeApi(database, cloudClient, env)
         webhookApi(database, cloudClient, env)
+        featureApi(env)
+        roomApi(cloudClient, env)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")
         }

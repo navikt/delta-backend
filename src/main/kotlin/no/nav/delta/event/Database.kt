@@ -43,10 +43,16 @@ fun DatabaseInterface.addEvent(
                         location,
                         public,
                         participant_limit,
-                        signup_deadline
+                        signup_deadline,
+                        room_email,
+                        room_name,
+                        is_online_meeting
             )
             VALUES
             (
+                        ?,
+                        ?,
+                        ?,
                         ?,
                         ?,
                         ?,
@@ -67,6 +73,9 @@ fun DatabaseInterface.addEvent(
         preparedStatement.setBoolean(6, createEvent.public)
         preparedStatement.setInt(7, createEvent.participantLimit)
         preparedStatement.setTimestamp(8, createEvent.signupDeadline?.let { Timestamp.valueOf(it) })
+        preparedStatement.setString(9, createEvent.roomEmail)
+        preparedStatement.setString(10, createEvent.roomName)
+        preparedStatement.setBoolean(11, createEvent.isOnlineMeeting ?: false)
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -273,6 +282,92 @@ WHERE  event_id = Uuid(?)
                 connection.commit()
                 if (rows == 0) EventNotFoundException.left() else Unit.right()
             }
+    }
+}
+
+/**
+ * The "master" calendar event holding the room/Teams meeting (see
+ * docs/teams-meeting-room-booking-plan.md). Not part of [Event]; only used internally by the
+ * room/Teams booking flow and the webhook that watches for room decline notifications.
+ */
+fun DatabaseInterface.getMasterCalendarEventId(eventId: String): Either<EventNotFoundException, String?> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                """
+SELECT master_calendar_event_id
+FROM   event
+WHERE  id = Uuid(?);
+""")
+        preparedStatement.setString(1, eventId)
+        val result = preparedStatement.executeQuery()
+        if (!result.next()) EventNotFoundException.left() else result.getString(1).right()
+    }
+}
+
+fun DatabaseInterface.getEventIdByMasterCalendarEventId(masterCalendarEventId: String): Either<EventNotFoundException, String> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                """
+SELECT id
+FROM   event
+WHERE  master_calendar_event_id = ?;
+""")
+        preparedStatement.setString(1, masterCalendarEventId)
+        val result = preparedStatement.executeQuery()
+        if (!result.next()) EventNotFoundException.left() else result.getString(1).right()
+    }
+}
+
+fun DatabaseInterface.setMasterCalendarEventId(
+    eventId: String,
+    masterCalendarEventId: String?,
+): Either<EventNotFoundException, Unit> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                """
+UPDATE event
+SET    master_calendar_event_id = ?
+WHERE  id = Uuid(?);
+""")
+        preparedStatement.setString(1, masterCalendarEventId)
+        preparedStatement.setString(2, eventId)
+        val rows = preparedStatement.executeUpdate()
+        connection.commit()
+        if (rows == 0) EventNotFoundException.left() else Unit.right()
+    }
+}
+
+/**
+ * Updates only `room_status`. Used by the webhook so a room response never overwrites a concurrent
+ * admin edit of the rest of the event row.
+ */
+fun DatabaseInterface.setRoomStatus(
+    eventId: String,
+    roomStatus: RoomBookingStatus?,
+): Either<EventNotFoundException, Unit> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                """
+UPDATE event
+SET    room_status = ?
+WHERE  id = Uuid(?);
+""")
+        preparedStatement.setString(1, roomStatus?.name)
+        preparedStatement.setString(2, eventId)
+        val rows = preparedStatement.executeUpdate()
+        connection.commit()
+        if (rows == 0) EventNotFoundException.left() else Unit.right()
+    }
+}
+
+/** Whether the event is an occurrence in a recurring series (room/Teams is not supported there). */
+fun DatabaseInterface.isRecurringOccurrence(eventId: UUID): Boolean {
+    return connection.use { connection ->
+        loadRecurringSeriesSummaries(connection, listOf(eventId)).containsKey(eventId)
     }
 }
 
@@ -526,7 +621,14 @@ SET    title=?,
        location=?,
        public=?,
        participant_limit=?,
-       signup_deadline=?
+       signup_deadline=?,
+       room_email=?,
+       room_name=?,
+       room_status=?,
+       is_online_meeting=?,
+       teams_join_url=?,
+       teams_conference_id=?,
+       teams_dial_in=?
 WHERE  id=Uuid(?) returning *;
 """)
         preparedStatement.setString(1, newEvent.title)
@@ -537,7 +639,14 @@ WHERE  id=Uuid(?) returning *;
         preparedStatement.setBoolean(6, newEvent.public)
         preparedStatement.setInt(7, newEvent.participantLimit)
         preparedStatement.setTimestamp(8, newEvent.signupDeadline?.let { Timestamp.valueOf(it) })
-        preparedStatement.setString(9, newEvent.id.toString())
+        preparedStatement.setString(9, newEvent.roomEmail)
+        preparedStatement.setString(10, newEvent.roomName)
+        preparedStatement.setString(11, newEvent.roomStatus?.name)
+        preparedStatement.setBoolean(12, newEvent.isOnlineMeeting)
+        preparedStatement.setString(13, newEvent.teamsJoinUrl)
+        preparedStatement.setString(14, newEvent.teamsConferenceId)
+        preparedStatement.setString(15, newEvent.teamsDialIn)
+        preparedStatement.setString(16, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -736,6 +845,13 @@ fun ResultSet.toEvent(): Event {
         public = getBoolean("public"),
         participantLimit = getInt("participant_limit"),
         signupDeadline = getTimestamp("signup_deadline")?.toLocalDateTime(),
+        roomEmail = getString("room_email"),
+        roomName = getString("room_name"),
+        roomStatus = getString("room_status")?.let { RoomBookingStatus.valueOf(it) },
+        isOnlineMeeting = getBoolean("is_online_meeting"),
+        teamsJoinUrl = getString("teams_join_url"),
+        teamsConferenceId = getString("teams_conference_id"),
+        teamsDialIn = getString("teams_dial_in"),
     )
 }
 

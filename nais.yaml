@@ -41,10 +41,17 @@ spec:
   env:
     - name: DELTA_EMAIL_ADDRESS
       value: "ikkesvar.delta@nav.no"
-    - name: FAGGRUPPE_ADMIN_GROUP_ID
+    # Delta maintainers: faggruppe admins, and access to features toggled to "maintainers".
+    - name: DELTA_MAINTAINERS_GROUP_ID
       value: "74eafa90-c494-4913-9b96-76da786c8419"
     - name: WEBHOOK_BASE_URL
       value: "https://delta-webhook.nav.no"
+    # Room booking / Teams meeting feature toggles (see docs/teams-meeting-room-booking-plan.md):
+    # "off", "maintainers" (only DELTA_MAINTAINERS_GROUP_ID members, for prod testing) or "all".
+    - name: FEATURE_ROOM_BOOKING
+      value: "maintainers"
+    - name: FEATURE_TEAMS_MEETING
+      value: "maintainers"
   envFrom:
     - secret: delta-backend-webhook-secret
   leaderElection: true

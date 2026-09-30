@@ -14,18 +14,52 @@ data class Environment(
     val deltaEmailAddress: String = getEnvVar("DELTA_EMAIL_ADDRESS", "email"),
     val isDev: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "dev-gcp",
     val isLocal: Boolean = getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "localhost",
-    val faggruppeAdminGroupId: String = getEnvVar("FAGGRUPPE_ADMIN_GROUP_ID", ""),
+    /** Entra ID group for Delta maintainers: faggruppe admins, and early access to toggled features. */
+    val maintainersGroupId: String = getEnvVar("DELTA_MAINTAINERS_GROUP_ID", ""),
     val webhookBaseUrl: String = getEnvVar("WEBHOOK_BASE_URL", "http://localhost:8080"),
     val webhookClientState: String = getEnvVar(
         "WEBHOOK_CLIENT_STATE",
         if (getEnvVar("NAIS_CLUSTER_NAME", "localhost") == "localhost") "local-dev-secret" else null,
     ),
+    val featureRoomBooking: FeatureAccess = FeatureAccess.parse(getEnvVar("FEATURE_ROOM_BOOKING", "off")),
+    val featureTeamsMeeting: FeatureAccess = FeatureAccess.parse(getEnvVar("FEATURE_TEAMS_MEETING", "off")),
 ) {
+    fun isRoomBookingEnabledFor(groups: Collection<String>): Boolean = featureRoomBooking.allows(groups, maintainersGroupId)
+
+    fun isTeamsMeetingEnabledFor(groups: Collection<String>): Boolean = featureTeamsMeeting.allows(groups, maintainersGroupId)
+
     companion object {
         fun getEnvVar(varName: String, defaultValue: String? = null) =
             System.getenv(varName)
                 ?: defaultValue ?: throw RuntimeException("Missing required variable [$varName]")
+
     }
 }
 
+/**
+ * Rollout state of a feature toggle: [OFF] for nobody, [MAINTAINERS] for members of
+ * [Environment.maintainersGroupId] only (prod testing), [ALL] for everyone.
+ */
+enum class FeatureAccess {
+    OFF,
+    MAINTAINERS,
+    ALL;
 
+    fun allows(groups: Collection<String>, maintainersGroupId: String): Boolean =
+        when (this) {
+            OFF -> false
+            MAINTAINERS -> maintainersGroupId.isNotBlank() && groups.contains(maintainersGroupId)
+            ALL -> true
+        }
+
+    companion object {
+        /** Accepts off/maintainers/all (case-insensitive); "false"/"true" are aliases for off/all. */
+        fun parse(raw: String): FeatureAccess =
+            when (raw.trim().lowercase()) {
+                "", "off", "false" -> OFF
+                "maintainers" -> MAINTAINERS
+                "all", "true" -> ALL
+                else -> throw IllegalArgumentException("Invalid feature toggle value '$raw' (expected off, maintainers or all)")
+            }
+    }
+}

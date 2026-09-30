@@ -61,6 +61,68 @@ class DatabasesTest {
     }
 
     @Test
+    fun saveAndGetEventWithRoom() {
+        val newEvent =
+            futureEventTest("roomEvent").copy(
+                roomEmail = "room1@nav.no",
+                roomName = "Møterom 1",
+                isOnlineMeeting = true,
+            )
+        val created = db.addEvent(newEvent)
+        Assertions.assertEquals("room1@nav.no", created.roomEmail)
+        Assertions.assertEquals("Møterom 1", created.roomName)
+        Assertions.assertEquals(true, created.isOnlineMeeting)
+        Assertions.assertNull(created.roomStatus)
+        Assertions.assertNull(created.teamsJoinUrl)
+
+        val fetched = db.getEvent(created.id.toString()).getOrNull()
+        Assertions.assertNotNull(fetched)
+        Assertions.assertEquals("room1@nav.no", fetched?.roomEmail)
+        Assertions.assertEquals(true, fetched?.isOnlineMeeting)
+    }
+
+    @Test
+    fun updateEventPersistsRoomAndTeamsFields() {
+        val created = db.addEvent(futureEventTest("updateRoomEvent"))
+        Assertions.assertNull(created.roomEmail)
+
+        val updated =
+            created.copy(
+                roomEmail = "room2@nav.no",
+                roomName = "Møterom 2",
+                roomStatus = RoomBookingStatus.ACCEPTED,
+                isOnlineMeeting = true,
+                teamsJoinUrl = "https://teams.microsoft.com/l/meetup-join/abc",
+                teamsConferenceId = "123456789",
+                teamsDialIn = "+47 21 00 00 00,,123456789#",
+            )
+
+        val result = db.updateEvent(updated).getOrNull()
+        Assertions.assertNotNull(result)
+        Assertions.assertEquals("room2@nav.no", result?.roomEmail)
+        Assertions.assertEquals(RoomBookingStatus.ACCEPTED, result?.roomStatus)
+        Assertions.assertEquals("https://teams.microsoft.com/l/meetup-join/abc", result?.teamsJoinUrl)
+        Assertions.assertEquals("123456789", result?.teamsConferenceId)
+    }
+
+    @Test
+    fun masterCalendarEventIdCanBeSetAndLookedUp() {
+        val created = db.addEvent(futureEventTest("masterEvent"))
+        Assertions.assertEquals(null, db.getMasterCalendarEventId(created.id.toString()).getOrNull())
+
+        db.setMasterCalendarEventId(created.id.toString(), "master-calendar-id-1")
+
+        Assertions.assertEquals(
+            "master-calendar-id-1",
+            db.getMasterCalendarEventId(created.id.toString()).getOrNull(),
+        )
+        Assertions.assertEquals(
+            created.id.toString(),
+            db.getEventIdByMasterCalendarEventId("master-calendar-id-1").getOrNull(),
+        )
+    }
+
+    @Test
     fun saveDeleteAndGetEvents() {
         val before = db.getEvents(onlyFuture = true).size
         val lolEvent1 = futureEventTest("lolEvent1")

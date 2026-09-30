@@ -14,6 +14,10 @@ import io.ktor.server.routing.route
 import kotlinx.coroutines.launch
 import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
+import no.nav.delta.event.RoomBookingStatus
+import no.nav.delta.event.getEvent
+import no.nav.delta.event.getEventIdByMasterCalendarEventId
+import no.nav.delta.event.setRoomStatus
 import no.nav.delta.event.unregisterFromEvent
 import no.nav.delta.plugins.DatabaseInterface
 import org.slf4j.LoggerFactory
@@ -90,6 +94,12 @@ private fun processNotification(
         return
     }
 
+    val masterEventId = database.getEventIdByMasterCalendarEventId(calendarEventId).getOrNull()
+    if (masterEventId != null) {
+        processMasterEventNotification(masterEventId, calendarEventId, database, cloudClient)
+        return
+    }
+
     val participantRef = database.getParticipantByCalendarEventId(calendarEventId) ?: run {
         // Not a Delta-managed event — ignore
         return
@@ -123,6 +133,57 @@ private fun processNotification(
             }
         )
     }
+}
+
+/**
+ * Handles a notification for a "master" calendar event (the room booking / Teams meeting, see
+ * docs/teams-meeting-room-booking-plan.md) rather than a participant invite. Only updates
+ * [no.nav.delta.event.Event.roomStatus] — there is no email or attendee status to react to for
+ * the Teams meeting itself, since the master has no human attendees.
+ */
+private fun processMasterEventNotification(
+    eventId: String,
+    calendarEventId: String,
+    database: DatabaseInterface,
+    cloudClient: CloudClient,
+) {
+    val attendeeStatus = cloudClient.getEventAttendeeStatus(calendarEventId).fold(
+        ifLeft = { err ->
+            logger.error("Failed to get room attendee status for master event $calendarEventId: ${err.message}", err)
+            return
+        },
+        ifRight = { it }
+    )
+
+    val newStatus = when (attendeeStatus) {
+        ResponseType.Accepted -> RoomBookingStatus.ACCEPTED
+        ResponseType.Declined -> RoomBookingStatus.DECLINED
+        else -> RoomBookingStatus.PENDING
+    }
+
+    database.getEvent(eventId).fold(
+        ifLeft = {
+            logger.warn("Master event $calendarEventId points at event $eventId which no longer exists")
+        },
+        ifRight = { event ->
+            if (event.roomEmail == null) {
+                // Teams-only master event, no room to track.
+                return
+            }
+            if (event.roomStatus == newStatus) {
+                return
+            }
+            // Targeted UPDATE of room_status only, so a concurrent admin edit is never overwritten.
+            database.setRoomStatus(eventId, newStatus).fold(
+                ifLeft = { err ->
+                    logger.warn("Failed to update room status for event $eventId: $err")
+                },
+                ifRight = {
+                    logger.info("Room status for event $eventId updated to $newStatus")
+                }
+            )
+        }
+    )
 }
 
 private val eventsResourceRegex =

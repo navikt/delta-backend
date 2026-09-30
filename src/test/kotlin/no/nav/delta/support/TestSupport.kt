@@ -1,6 +1,7 @@
 package no.nav.delta.support
 
 import arrow.core.Either
+import arrow.core.left
 import arrow.core.right
 import com.auth0.jwk.Jwk
 import com.auth0.jwk.JwkProvider
@@ -29,6 +30,10 @@ import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
 import no.nav.delta.plugins.DatabaseConfig
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.room.RoomAvailability
+import no.nav.delta.room.RoomInfo
+import no.nav.delta.room.RoomList
+import no.nav.delta.room.MasterEventResult
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 
@@ -67,7 +72,8 @@ class TestDatabase private constructor(
 
 fun localTestEnvironment() =
     Environment(
-        faggruppeAdminGroupId = "test-admin-group",
+        // The local test principal is in LOCAL_PRINCIPAL_GROUP, so it counts as a maintainer.
+        maintainersGroupId = no.nav.delta.event.LOCAL_PRINCIPAL_GROUP,
         deltaEmailAddress = "delta@example.com",
         webhookClientState = "test-client-state",
         isDev = false,
@@ -119,6 +125,27 @@ class RecordingCloudClient : CloudClient {
     val deletedCalendarEventIds = mutableListOf<String>()
     val attendeeStatuses = mutableMapOf<String, Either<Throwable, ResponseType?>>()
     val userDisplayNames = mutableMapOf<String, String?>()
+    var roomListsResult: Either<Throwable, List<RoomList>> = emptyList<RoomList>().right()
+    var roomsResult: MutableMap<String, Either<Throwable, List<RoomInfo>>> = mutableMapOf()
+    var roomAvailabilityResult: Either<Throwable, List<RoomAvailability>> = emptyList<RoomAvailability>().right()
+    val createdMasterEvents = mutableListOf<Event>()
+    val updatedMasterEvents = mutableListOf<Pair<String, Event>>()
+    val deletedMasterEventIds = mutableListOf<String>()
+    var masterEventResult: Either<Throwable, MasterEventResult> =
+        MasterEventResult(
+            calendarEventId = "master-1",
+            roomStatus = null,
+            teamsJoinUrl = null,
+            teamsConferenceId = null,
+            teamsDialIn = null,
+        ).right()
+    /** Result for [updateMasterEvent]; falls back to [masterEventResult] when null. */
+    var updateMasterEventResult: Either<Throwable, MasterEventResult>? = null
+    var failDeleteMasterEvent: Boolean = false
+    var roomListsCalls = 0
+    var roomsCalls = 0
+    var allRoomsCalls = 0
+    var allRoomsResult: Either<Throwable, List<RoomInfo>> = emptyList<RoomInfo>().right()
 
     override fun sendEmail(
         subject: String,
@@ -194,6 +221,43 @@ class RecordingCloudClient : CloudClient {
 
     override fun getEventAttendeeStatus(calendarEventId: String): Either<Throwable, ResponseType?> =
         attendeeStatuses[calendarEventId] ?: ResponseType.Accepted.right()
+
+    override fun getRoomLists(): Either<Throwable, List<RoomList>> {
+        roomListsCalls++
+        return roomListsResult
+    }
+
+    override fun getAllRooms(): Either<Throwable, List<RoomInfo>> {
+        allRoomsCalls++
+        return allRoomsResult
+    }
+
+    override fun getRooms(roomListEmail: String): Either<Throwable, List<RoomInfo>> {
+        roomsCalls++
+        return roomsResult[roomListEmail] ?: emptyList<RoomInfo>().right()
+    }
+
+    override fun getRoomAvailability(
+        roomEmails: List<String>,
+        startTime: java.time.LocalDateTime,
+        endTime: java.time.LocalDateTime,
+        availabilityViewInterval: Int,
+    ): Either<Throwable, List<RoomAvailability>> = roomAvailabilityResult
+
+    override fun createMasterEvent(event: Event): Either<Throwable, MasterEventResult> {
+        createdMasterEvents += event
+        return masterEventResult
+    }
+
+    override fun updateMasterEvent(calendarEventId: String, event: Event): Either<Throwable, MasterEventResult> {
+        updatedMasterEvents += calendarEventId to event
+        return updateMasterEventResult ?: masterEventResult
+    }
+
+    override fun deleteMasterEvent(calendarEventId: String): Either<Throwable, Unit> {
+        deletedMasterEventIds += calendarEventId
+        return if (failDeleteMasterEvent) RuntimeException("graph delete failure").left() else Unit.right()
+    }
 }
 
 suspend fun waitUntilSuspending(

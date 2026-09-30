@@ -14,10 +14,14 @@ import java.time.LocalDateTime
 import java.util.UUID
 import no.nav.delta.event.CreateEvent
 import no.nav.delta.event.ParticipantType
+import no.nav.delta.event.RoomBookingStatus
 import no.nav.delta.event.addEvent
+import no.nav.delta.event.getEvent
 import no.nav.delta.event.getParticipants
 import no.nav.delta.event.registerForEvent
 import no.nav.delta.event.setCalendarEventId
+import no.nav.delta.event.setMasterCalendarEventId
+import no.nav.delta.event.setRoomStatus
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.support.RecordingCloudClient
 import no.nav.delta.support.TestDatabase
@@ -160,6 +164,140 @@ class WebhookRoutesTest {
         }
         assertFalse(cloudClient.deletedCalendarEventIds.contains("calendar-84"))
         assertTrue(database.getParticipants(event.id.toString()).getOrNull()!!.any { it.email == "person2@example.com" })
+    }
+
+    @Test
+    fun `master event notification with tentative or no response sets room status to pending`() = testApplication {
+        val env = localTestEnvironment()
+        application {
+            installTestApi(env, database) {
+                webhookApi(database, cloudClient, env)
+            }
+        }
+
+        listOf(ResponseType.TentativelyAccepted, null).forEachIndexed { index, response ->
+            val masterId = "master-calendar-pending-$index"
+            val event =
+                database.addEvent(futureEvent("master-pending-${UUID.randomUUID()}").copy(roomEmail = "room1@nav.no"))
+            database.setMasterCalendarEventId(event.id.toString(), masterId)
+            database.setRoomStatus(event.id.toString(), RoomBookingStatus.ACCEPTED)
+            cloudClient.attendeeStatuses[masterId] = response.right()
+
+            client.post("/webhook/calendar") {
+                contentType(ContentType.Application.Json)
+                setBody(
+                    notificationPayload(
+                        clientState = env.webhookClientState,
+                        resource = "users/delta@example.com/events/$masterId",
+                    )
+                )
+            }
+
+            waitUntilSuspending {
+                database.getEvent(event.id.toString()).getOrNull()?.roomStatus == RoomBookingStatus.PENDING
+            }
+        }
+    }
+
+    @Test
+    fun `master event notification with accepted room updates room status`() = testApplication {
+        val env = localTestEnvironment()
+        application {
+            installTestApi(env, database) {
+                webhookApi(database, cloudClient, env)
+            }
+        }
+
+        val event =
+            database.addEvent(futureEvent("master-accept-${UUID.randomUUID()}").copy(roomEmail = "room1@nav.no"))
+        database.setMasterCalendarEventId(event.id.toString(), "master-calendar-1")
+        cloudClient.attendeeStatuses["master-calendar-1"] = ResponseType.Accepted.right()
+
+        val response =
+            client.post("/webhook/calendar") {
+                contentType(ContentType.Application.Json)
+                setBody(
+                    notificationPayload(
+                        clientState = env.webhookClientState,
+                        resource = "users/delta@example.com/events/master-calendar-1",
+                    )
+                )
+            }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+
+        waitUntilSuspending {
+            database.getEvent(event.id.toString()).getOrNull()?.roomStatus == RoomBookingStatus.ACCEPTED
+        }
+    }
+
+    @Test
+    fun `master event notification with declined room updates room status without touching participants`() =
+        testApplication {
+            val env = localTestEnvironment()
+            application {
+                installTestApi(env, database) {
+                    webhookApi(database, cloudClient, env)
+                }
+            }
+
+            val event =
+                database.addEvent(
+                    futureEvent("master-decline-${UUID.randomUUID()}").copy(roomEmail = "room2@nav.no")
+                )
+            database.registerForEvent(event.id.toString(), "host@example.com", "Host User", ParticipantType.HOST)
+            database.registerForEvent(event.id.toString(), "participant@example.com", "Participant User")
+            database.setMasterCalendarEventId(event.id.toString(), "master-calendar-2")
+            cloudClient.attendeeStatuses["master-calendar-2"] = ResponseType.Declined.right()
+
+            val response =
+                client.post("/webhook/calendar") {
+                    contentType(ContentType.Application.Json)
+                    setBody(
+                        notificationPayload(
+                            clientState = env.webhookClientState,
+                            resource = "users/delta@example.com/events/master-calendar-2",
+                        )
+                    )
+                }
+
+            assertEquals(HttpStatusCode.Accepted, response.status)
+
+            waitUntilSuspending {
+                database.getEvent(event.id.toString()).getOrNull()?.roomStatus == RoomBookingStatus.DECLINED
+            }
+            assertTrue(database.getParticipants(event.id.toString()).getOrNull()!!.any { it.email == "participant@example.com" })
+        }
+
+    @Test
+    fun `master event notification for a teams-only event does not set a room status`() = testApplication {
+        val env = localTestEnvironment()
+        application {
+            installTestApi(env, database) {
+                webhookApi(database, cloudClient, env)
+            }
+        }
+
+        val event =
+            database.addEvent(futureEvent("master-teams-only-${UUID.randomUUID()}").copy(isOnlineMeeting = true))
+        database.setMasterCalendarEventId(event.id.toString(), "master-calendar-3")
+        cloudClient.attendeeStatuses["master-calendar-3"] = ResponseType.Accepted.right()
+
+        val response =
+            client.post("/webhook/calendar") {
+                contentType(ContentType.Application.Json)
+                setBody(
+                    notificationPayload(
+                        clientState = env.webhookClientState,
+                        resource = "users/delta@example.com/events/master-calendar-3",
+                    )
+                )
+            }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+
+        waitUntilSuspending { cloudClient.attendeeStatuses.containsKey("master-calendar-3") }
+        assertEquals(null, database.getEvent(event.id.toString()).getOrNull()?.roomStatus)
     }
 
     private fun notificationPayload(clientState: String, resource: String) =

@@ -139,7 +139,7 @@ private suspend fun ApplicationCall.isOwnerOrAdmin(
 ): Boolean {
     val email = principalEmail()
     val groups = principalGroups()
-    return groups.contains(env.faggruppeAdminGroupId) || database.isEier(faggruppeId, email)
+    return groups.contains(env.maintainersGroupId) || database.isEier(faggruppeId, email)
 }
 
 private fun ApplicationCall.principalEmail(): String {

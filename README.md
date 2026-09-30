@@ -29,6 +29,9 @@ Følgende hemmeligheter må injiseres som miljøvariabler i NAIS:
 | `DELTA_EMAIL_ADDRESS` | E-postadressen til Delta-postboksen (f.eks. `ikkesvar.delta@nav.no`) |
 | `WEBHOOK_BASE_URL` | Offentlig URL til nginx-relayet (f.eks. `https://delta-webhook.nav.no`) |
 | `WEBHOOK_CLIENT_STATE` | Hemmelig streng for å validere at webhook-varsler kommer fra MS Graph. Generer med: `openssl rand -hex 32` |
+| `DELTA_MAINTAINERS_GROUP_ID` | Entra ID-gruppe for Delta-forvaltere: faggruppe-admin og tilgang til funksjoner satt til `maintainers`. Gruppen må også stå under `azure.application.claims.groups` i `nais.yaml` |
+| `FEATURE_ROOM_BOOKING` | `off` (default), `maintainers` eller `all`. Slår på rombooking. Se `docs/teams-meeting-room-booking-plan.md` |
+| `FEATURE_TEAMS_MEETING` | `off` (default), `maintainers` eller `all`. Slår på Teams-møter på hendelser |
 
 `WEBHOOK_CLIENT_STATE` lagres inn i Nais console secret `delta-backend-webhook-secret` og refereres i `nais.yaml`.
 
@@ -39,4 +42,8 @@ App-registreringen trenger følgende **application permissions** (ikke delegated
 | Permission | Begrunnelse |
 |---|---|
 | `Calendars.Read` | Lese kalenderhendelser og opprette/fornye/slette webhook-subscriptions på postboksen |
+| `Calendars.ReadWrite` | Opprette/oppdatere/slette kalenderhendelser i Delta-postboksen (brukes i dag selv om README tidligere kun nevnte `Calendars.Read`) |
+| `Mail.Send` | Sende e-postvarsler fra Delta-postboksen |
+| `User.Read.All` | Slå opp visningsnavn for deltakere |
+| `Place.Read.All` | Rombooking (feature-tolget bak `FEATURE_ROOM_BOOKING`) — liste rom/romlister og sjekke tilgjengelighet |
 
