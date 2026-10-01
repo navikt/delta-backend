@@ -49,9 +49,9 @@ spec:
     # Room booking / Teams meeting feature toggles (see docs/teams-meeting-room-booking-plan.md):
     # "off", "maintainers" (only DELTA_MAINTAINERS_GROUP_ID members, for prod testing) or "all".
     - name: FEATURE_ROOM_BOOKING
-      value: "maintainers"
+      value: "all"
     - name: FEATURE_TEAMS_MEETING
-      value: "maintainers"
+      value: "all"
   envFrom:
     - secret: delta-backend-webhook-secret
   leaderElection: true
