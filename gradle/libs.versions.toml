@@ -1,16 +1,16 @@
 [versions]
-kotlin = "2.4.10"
+kotlin = "2.4.20"
 ktor = "3.6.0"
-logback = "1.6.1"
+logback = "1.6.3"
 logstash = "9.0"
 postgresql = "42.7.13"
 hikari = "7.1.0"
 flyway = "12.11.0"
-jackson = "2.22.1"
+jackson = "2.22.3"
 arrow = "2.2.3"
-microsoft-graph = "6.65.0"
-azure-identity = "1.18.4"
-junit = "6.1.1"
+microsoft-graph = "6.70.0"
+azure-identity = "1.18.6"
+junit = "6.1.3"
 testcontainers = "1.21.4"
 
 [plugins]
