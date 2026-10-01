@@ -285,7 +285,7 @@ paths:
     get:
       tags:
         - rooms
-      description: "Room lists (typically one per building). Cached on the server for 1 hour."
+      description: "Room lists (typically one per building). Cached on the server for 24 hours."
       operationId: getRoomLists
       responses:
         "200":
@@ -308,7 +308,7 @@ paths:
         Search all rooms in the tenant by name or email. Case-insensitive; every term must
         match, in any order; punctuation is ignored. "fya1 a347" or "kaptein" both find
         "(RV) FYA1 - A347 Kaptein - Videokonf". Rooms with a word starting with the first term
-        come first. The full room list is cached on the server for 1 hour.
+        come first. The full room list is cached on the server for 24 hours.
       operationId: searchRooms
       parameters:
         - name: q
@@ -341,7 +341,7 @@ paths:
     get:
       tags:
         - rooms
-      description: "Rooms in a room list. Cached on the server for 1 hour per list."
+      description: "Rooms in a room list. Cached on the server for 24 hours per list."
       operationId: getRooms
       parameters:
         - name: roomListEmail

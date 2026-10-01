@@ -65,6 +65,31 @@ class CalendarEventNotFoundException(calendarEventId: String, cause: Throwable? 
 private fun graphFailure(what: String, e: Exception): Throwable =
     RuntimeException("$what (${describeGraphError(e)})", e)
 
+private const val PLACES_PAGE_SIZE = 999
+private const val PLACES_MAX_PAGES = 50
+
+/**
+ * Graph's `/places` endpoints page with `$top`/`$skip` and don't reliably return
+ * `@odata.nextLink`, so a nextLink-only loop silently stops after the first page. Keeps
+ * fetching until a page is empty or yields no new items (in case `$skip` is ignored).
+ */
+internal fun <T> fetchAllPlaces(
+    key: (T) -> String?,
+    fetchPage: (top: Int, skip: Int) -> List<T>?,
+): List<T> {
+    val items = LinkedHashMap<String, T>()
+    var skip = 0
+    repeat(PLACES_MAX_PAGES) {
+        val page = fetchPage(PLACES_PAGE_SIZE, skip).orEmpty()
+        if (page.isEmpty()) return items.values.toList()
+        val before = items.size
+        page.forEachIndexed { i, item -> items.putIfAbsent(key(item) ?: "#${skip + i}", item) }
+        if (items.size == before) return items.values.toList()
+        skip += page.size
+    }
+    return items.values.toList()
+}
+
 interface CloudClient {
     fun sendEmail(
         subject: String,
@@ -458,14 +483,12 @@ class AzureCloudClient(
 
     override fun getRoomLists(): Either<Throwable, List<RoomList>> {
         return try {
-            val lists = mutableListOf<RoomList>()
-            var page = graphClient.places().graphRoomList().get()
-            while (page != null) {
-                page.value?.forEach { lists += RoomList(displayName = it.displayName, emailAddress = it.emailAddress) }
-                val next = page.odataNextLink ?: break
-                page = graphClient.places().graphRoomList().withUrl(next).get()
-            }
-            lists.toList().also { graphLogger.info("Graph room lists: ${it.size} returned") }.right()
+            fetchAllPlaces({ it.emailAddress }) { top, skip ->
+                graphClient.places().graphRoomList().get {
+                    it.queryParameters?.top = top
+                    it.queryParameters?.skip = skip
+                }?.value?.map { RoomList(displayName = it.displayName, emailAddress = it.emailAddress) }
+            }.also { graphLogger.info("Graph room lists: ${it.size} returned") }.right()
         } catch (e: Exception) {
             graphFailure("Failed to get room lists", e).left()
         }
@@ -473,15 +496,12 @@ class AzureCloudClient(
 
     override fun getAllRooms(): Either<Throwable, List<RoomInfo>> {
         return try {
-            val rooms = mutableListOf<RoomInfo>()
-            var page = graphClient.places().graphRoom().get { it.queryParameters?.top = 999 }
-            while (page != null) {
-                page.value?.forEach { rooms += it.toRoomInfo() }
-                val next = page.odataNextLink ?: break
-                page = graphClient.places().graphRoom().withUrl(next).get()
-            }
-            graphLogger.info("Graph all rooms: ${rooms.size} returned")
-            rooms.right()
+            fetchAllPlaces({ it.emailAddress }) { top, skip ->
+                graphClient.places().graphRoom().get {
+                    it.queryParameters?.top = top
+                    it.queryParameters?.skip = skip
+                }?.value?.map { it.toRoomInfo() }
+            }.also { graphLogger.info("Graph all rooms: ${it.size} returned") }.right()
         } catch (e: Exception) {
             graphFailure("Failed to get all rooms", e).left()
         }
@@ -489,15 +509,13 @@ class AzureCloudClient(
 
     override fun getRooms(roomListEmail: String): Either<Throwable, List<RoomInfo>> {
         return try {
-            val rooms = mutableListOf<RoomInfo>()
             val builder = graphClient.places().byPlaceId(roomListEmail).graphRoomList().rooms()
-            var page = builder.get()
-            while (page != null) {
-                page.value?.forEach { rooms += it.toRoomInfo() }
-                val next = page.odataNextLink ?: break
-                page = builder.withUrl(next).get()
-            }
-            rooms.toList().also { graphLogger.info("Graph rooms for list $roomListEmail: ${it.size} returned") }.right()
+            fetchAllPlaces({ it.emailAddress }) { top, skip ->
+                builder.get {
+                    it.queryParameters?.top = top
+                    it.queryParameters?.skip = skip
+                }?.value?.map { it.toRoomInfo() }
+            }.also { graphLogger.info("Graph rooms for list $roomListEmail: ${it.size} returned") }.right()
         } catch (e: Exception) {
             graphFailure("Failed to get rooms for room list $roomListEmail", e).left()
         }

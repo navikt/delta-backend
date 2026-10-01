@@ -18,6 +18,7 @@ import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
 import io.ktor.server.request.path
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -25,10 +26,12 @@ import io.ktor.server.routing.routing
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
+import no.nav.delta.FeatureAccess
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.eventApi
 import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.feature.featureApi
+import no.nav.delta.room.RoomCatalog
 import no.nav.delta.room.roomApi
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.webhook.LeaderElection
@@ -94,6 +97,7 @@ fun Application.mySetup(
     installDeltaApiPlugins(env, jwkProvider)
 
     val subscriptionService = SubscriptionService(cloudClient, database, env, leaderElection)
+    val roomCatalog = RoomCatalog(cloudClient)
 
     routing {
         swaggerUI(path = "openapi")
@@ -101,7 +105,7 @@ fun Application.mySetup(
         faggruppeApi(database, cloudClient, env)
         webhookApi(database, cloudClient, env)
         featureApi(env)
-        roomApi(cloudClient, env)
+        roomApi(cloudClient, env, roomCatalog)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")
         }
@@ -122,5 +126,8 @@ fun Application.mySetup(
     // from webhook subscription health so the app can degrade gracefully.
     if (startBackgroundTasks) {
         launch { subscriptionService.initialize(this) }
+        if (env.featureRoomBooking != FeatureAccess.OFF) {
+            launch(Dispatchers.IO) { roomCatalog.warmUp() }
+        }
     }
 }

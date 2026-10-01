@@ -175,10 +175,10 @@ On `event`:
 
 ### Room discovery API
 
-All authenticated users. Rooms cached in memory ~1 hour.
+All authenticated users. Rooms and room lists cached in memory per pod for 24 h (stale-while-revalidate: after 24 h the cached data is served while a background refresh runs; a failed refresh keeps the old data and retries after 5 min). Search data is preloaded at startup when room booking is not `off`.
 
 - `GET /rooms` — room lists (`GET /places/microsoft.graph.roomlist`)
-- `GET /rooms/search?q=&limit=` — name/email search over all rooms (`GET /places/microsoft.graph.room`, all pages, cached 1 h; filtered in the backend since Graph `places` has no free-text search)
+- `GET /rooms/search?q=&limit=` — name/email search over all rooms (`GET /places/microsoft.graph.room`, all pages via `$top`/`$skip` since Graph `places` doesn't reliably return `@odata.nextLink`, cached 24 h; filtered in the backend since Graph `places` has no free-text search)
 - `GET /rooms/{roomListEmail}` — rooms in a list (`GET /places/{email}/microsoft.graph.roomlist/rooms`)
 - `POST /rooms/availability` — body: room emails + start/end; uses `POST /users/{deltaEmail}/calendar/getSchedule`
 
@@ -254,7 +254,8 @@ Main code, in the order the plan touches them:
 | `Environment.kt` | `maintainersGroupId`, `FeatureAccess`, `featureRoomBooking`/`featureTeamsMeeting`, `isRoomBookingEnabledFor(groups)`/`isTeamsMeetingEnabledFor(groups)` |
 | `feature/Routes.kt` | `GET /features` |
 | `room/Models.kt` | `RoomList`, `RoomInfo`, `RoomAvailability`, `RoomAvailabilityRequest`, `MasterEventResult` |
-| `room/Routes.kt` | `GET /rooms/search` + `searchRooms`, `GET /rooms`, `GET /rooms/{roomListEmail}`, `POST /rooms/availability`, 1h in-memory cache |
+| `room/Routes.kt` | `GET /rooms/search` + `searchRooms`, `GET /rooms`, `GET /rooms/{roomListEmail}`, `POST /rooms/availability` |
+| `room/RoomCache.kt` | `RoomCatalog` + `StaleWhileRevalidateCache` (24 h, background refresh, preloaded at startup) |
 | `email/CloudClient.kt` | `getRoomLists/getRooms/getRoomAvailability`, `createMasterEvent/updateMasterEvent/deleteMasterEvent`, `prepareMasterCalendarEvent` (never touches `body`), `buildInviteBodyHtml` (top-level fn) |
 | `event/Models.kt` | `Event`/`CreateEvent` room+Teams fields, `RoomBookingStatus` enum |
 | `event/Database.kt` | `toEvent()`, `addEvent`, `updateEvent` (room/Teams columns), `getMasterCalendarEventId`/`setMasterCalendarEventId`/`getEventIdByMasterCalendarEventId`, `setRoomStatus`, `isRecurringOccurrence` |
