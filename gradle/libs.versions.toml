@@ -1,0 +1,95 @@
+[versions]
+kotlin = "2.4.10"
+ktor = "3.6.0"
+logback = "1.6.1"
+logstash = "9.0"
+postgresql = "42.7.13"
+hikari = "7.1.0"
+flyway = "12.11.0"
+jackson = "2.22.1"
+arrow = "2.2.3"
+microsoft-graph = "6.65.0"
+azure-identity = "1.18.4"
+junit = "6.1.1"
+testcontainers = "1.21.4"
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+
+[libraries]
+ktor-server-core = { module = "io.ktor:ktor-server-core-jvm", version.ref = "ktor" }
+ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging", version.ref = "ktor" }
+ktor-server-auth-core = { module = "io.ktor:ktor-server-auth-jvm", version.ref = "ktor" }
+ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt-jvm", version.ref = "ktor" }
+ktor-server-swagger = { module = "io.ktor:ktor-server-swagger-jvm", version.ref = "ktor" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation-jvm", version.ref = "ktor" }
+ktor-serialization-jackson = { module = "io.ktor:ktor-serialization-jackson-jvm", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json-jvm", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty-jvm", version.ref = "ktor" }
+ktor-client-core = { module = "io.ktor:ktor-client-core-jvm", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio-jvm", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host-jvm", version.ref = "ktor" }
+
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstash" }
+
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+
+jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
+jackson-module-jaxb-annotations = { module = "com.fasterxml.jackson.module:jackson-module-jaxb-annotations", version.ref = "jackson" }
+jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+
+arrow-core = { module = "io.arrow-kt:arrow-core", version.ref = "arrow" }
+arrow-fx-coroutines = { module = "io.arrow-kt:arrow-fx-coroutines", version.ref = "arrow" }
+
+microsoft-graph = { module = "com.microsoft.graph:microsoft-graph", version.ref = "microsoft-graph" }
+azure-identity = { module = "com.azure:azure-identity", version.ref = "azure-identity" }
+
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+
+[bundles]
+ktor = [
+    "ktor-server-core",
+    "ktor-server-call-logging",
+    "ktor-server-auth-core",
+    "ktor-server-auth-jwt",
+    "ktor-server-swagger",
+    "ktor-server-content-negotiation",
+    "ktor-serialization-jackson",
+    "ktor-serialization-kotlinx-json",
+    "ktor-server-netty",
+    "ktor-client-core",
+    "ktor-client-cio"
+]
+
+serialization = [
+    "jackson-module-kotlin",
+    "jackson-module-jaxb-annotations",
+    "jackson-datatype-jsr310"
+]
+
+test = [
+    "testcontainers-postgresql",
+    "testcontainers-junit-jupiter",
+    "junit-bom",
+    "junit-jupiter",
+    "ktor-server-test-host"
+]
+
+logging = [
+    "logback-classic",
+    "logstash-logback-encoder"
+]
+
+database = [
+    "postgresql",
+    "hikari",
+    "flyway-postgresql"
+]

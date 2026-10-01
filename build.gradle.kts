@@ -1,26 +1,18 @@
-val ktor_version = "3.5.1"
-val logback_version = "1.5.38"
-val logstash_version = "9.0"
-val postgres_version = "42.7.13"
-val hikari_version = "7.1.0"
-val flyway_version = "12.11.0"
-val jackson_version = "2.22.1"
-val arrow_version = "2.2.3"
-val microsoft_sdk_version = "6.65.0"
-val azure_identity_version = "1.18.4"
-
-val junit_version = "6.1.1"
-val testcontainers_version = "1.21.4"
-
 val appMainClass = "no.nav.delta.ApplicationKt"
 
 plugins {
-    kotlin("jvm") version "2.4.0"
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.0"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
+    application
+}
+
+application {
+    mainClass = appMainClass
+    applicationName = "delta"
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
 }
 
 group = "no.nav.delta"
@@ -30,68 +22,22 @@ repositories {
 }
 
 dependencies {
-    implementation("io.ktor:ktor-server-core-jvm:$ktor_version")
-    implementation("io.ktor:ktor-server-call-logging:$ktor_version")
-    implementation("io.ktor:ktor-server-auth-jvm:$ktor_version")
-    implementation("io.ktor:ktor-server-auth-jwt-jvm:$ktor_version")
-    implementation("io.ktor:ktor-server-swagger-jvm:$ktor_version")
-    implementation("io.ktor:ktor-server-content-negotiation-jvm:$ktor_version")
-    implementation("io.ktor:ktor-serialization-jackson-jvm:$ktor_version")
-    implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktor_version")
-    implementation("io.ktor:ktor-server-netty-jvm:$ktor_version")
-    implementation("io.ktor:ktor-client-core-jvm:$ktor_version")
-    implementation("io.ktor:ktor-client-cio-jvm:$ktor_version")
+    implementation(libs.bundles.ktor)
+    implementation(libs.bundles.logging)
+    implementation(libs.bundles.database)
+    implementation(libs.bundles.serialization)
 
-    implementation("ch.qos.logback:logback-classic:$logback_version")
-    implementation("net.logstash.logback:logstash-logback-encoder:$logstash_version")
+    implementation(libs.arrow.core)
+    implementation(libs.arrow.fx.coroutines)
 
-    //Database
-    implementation("org.postgresql:postgresql:$postgres_version")
-    implementation("com.zaxxer:HikariCP:$hikari_version")
-    implementation("org.flywaydb:flyway-database-postgresql:$flyway_version")
+    implementation(libs.microsoft.graph)
+    implementation(libs.azure.identity)
 
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jackson_version")
-    implementation("com.fasterxml.jackson.module:jackson-module-jaxb-annotations:$jackson_version")
-    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:$jackson_version")
-
-    implementation("io.arrow-kt:arrow-core:$arrow_version")
-    implementation("io.arrow-kt:arrow-fx-coroutines:$arrow_version")
-
-    implementation("com.microsoft.graph:microsoft-graph:$microsoft_sdk_version")
-    implementation("com.azure:azure-identity:$azure_identity_version")
-
-    testImplementation("org.testcontainers:postgresql:$testcontainers_version")
-    testImplementation("org.testcontainers:junit-jupiter:$testcontainers_version")
-    testImplementation(platform("org.junit:junit-bom:$junit_version"))
-    testImplementation("org.junit.jupiter:junit-jupiter")
-    testImplementation("io.ktor:ktor-server-test-host-jvm:$ktor_version")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation(libs.bundles.test)
+    testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 tasks {
-    withType<Jar> {
-        archiveBaseName.set("app")
-
-        manifest {
-            attributes["Main-Class"] = appMainClass
-            attributes["Class-Path"] = configurations.runtimeClasspath.get().joinToString(separator = " ") {
-                it.name
-            }
-        }
-
-        doLast {
-            configurations.runtimeClasspath.get().forEach {
-                val file = File("${layout.buildDirectory.get()}/libs/${it.name}")
-                if (!file.exists())
-                    it.copyTo(file)
-            }
-        }
-    }
-
-    withType<Wrapper> {
-        gradleVersion = "9.4.0"
-    }
-
     withType<Test> {
         useJUnitPlatform()
         testLogging {
