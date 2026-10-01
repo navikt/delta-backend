@@ -78,7 +78,7 @@ serialization = [
 test = [
     "testcontainers-postgresql",
     "testcontainers-junit-jupiter",
-    "junit-bom",
+    "junit-platform-launcher",
     "junit-jupiter",
     "ktor-server-test-host"
 ]

@@ -33,8 +33,9 @@ dependencies {
     implementation(libs.microsoft.graph)
     implementation(libs.azure.identity)
 
+
     testImplementation(libs.bundles.test)
-    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(platform(libs.junit.bom))
 }
 
 tasks {
