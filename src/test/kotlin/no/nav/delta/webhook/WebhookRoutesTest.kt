@@ -1,5 +1,6 @@
 package no.nav.delta.webhook
 
+import arrow.core.left
 import arrow.core.right
 import com.microsoft.graph.models.ResponseType
 import io.ktor.client.request.get
@@ -12,6 +13,7 @@ import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import java.time.LocalDateTime
 import java.util.UUID
+import no.nav.delta.email.CalendarEventNotFoundException
 import no.nav.delta.event.CreateEvent
 import no.nav.delta.event.ParticipantType
 import no.nav.delta.event.RoomBookingStatus
@@ -298,6 +300,37 @@ class WebhookRoutesTest {
 
         waitUntilSuspending { cloudClient.attendeeStatuses.containsKey("master-calendar-3") }
         assertEquals(null, database.getEvent(event.id.toString()).getOrNull()?.roomStatus)
+    }
+
+    @Test
+    fun `master event notification for an already deleted master leaves room status unchanged`() = testApplication {
+        val env = localTestEnvironment()
+        application {
+            installTestApi(env, database) {
+                webhookApi(database, cloudClient, env)
+            }
+        }
+
+        val event =
+            database.addEvent(futureEvent("master-deleted-${UUID.randomUUID()}").copy(roomEmail = "room1@nav.no"))
+        database.setMasterCalendarEventId(event.id.toString(), "master-calendar-deleted")
+        database.setRoomStatus(event.id.toString(), RoomBookingStatus.ACCEPTED)
+        cloudClient.attendeeStatuses["master-calendar-deleted"] =
+            CalendarEventNotFoundException("master-calendar-deleted").left()
+
+        val response =
+            client.post("/webhook/calendar") {
+                contentType(ContentType.Application.Json)
+                setBody(
+                    notificationPayload(
+                        clientState = env.webhookClientState,
+                        resource = "users/delta@example.com/events/master-calendar-deleted",
+                    )
+                )
+            }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertEquals(RoomBookingStatus.ACCEPTED, database.getEvent(event.id.toString()).getOrNull()?.roomStatus)
     }
 
     private fun notificationPayload(clientState: String, resource: String) =

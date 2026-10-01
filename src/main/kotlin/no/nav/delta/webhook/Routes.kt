@@ -13,6 +13,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.coroutines.launch
 import no.nav.delta.Environment
+import no.nav.delta.email.CalendarEventNotFoundException
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.RoomBookingStatus
 import no.nav.delta.event.getEvent
@@ -107,7 +108,11 @@ private fun processNotification(
 
     val attendeeStatus = cloudClient.getEventAttendeeStatus(calendarEventId).fold(
         ifLeft = { err ->
-            logger.error("Failed to get attendee status for $calendarEventId: ${err.message}", err)
+            if (err is CalendarEventNotFoundException) {
+                logger.info("Calendar event $calendarEventId was deleted before the notification was processed, ignoring")
+            } else {
+                logger.error("Failed to get attendee status for $calendarEventId: ${err.message}", err)
+            }
             return
         },
         ifRight = { it }
@@ -149,7 +154,11 @@ private fun processMasterEventNotification(
 ) {
     val attendeeStatus = cloudClient.getEventAttendeeStatus(calendarEventId).fold(
         ifLeft = { err ->
-            logger.error("Failed to get room attendee status for master event $calendarEventId: ${err.message}", err)
+            if (err is CalendarEventNotFoundException) {
+                logger.info("Master event $calendarEventId was deleted before the notification was processed, ignoring")
+            } else {
+                logger.error("Failed to get room attendee status for master event $calendarEventId: ${err.message}", err)
+            }
             return
         },
         ifRight = { it }
