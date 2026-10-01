@@ -1,4 +1,6 @@
-FROM gcr.io/distroless/java21-debian12
-COPY build/libs/*.jar /app/
+FROM europe-north1-docker.pkg.dev/cgr-nav/pull-through/nav.no/jre:openjdk-25
+
 WORKDIR /app
-CMD [ "app.jar" ]
+COPY --chmod=755 build/install/delta/ /app/
+ENV JDK_JAVA_OPTIONS="-XX:InitialRAMPercentage=40 -XX:MaxRAMPercentage=75"
+CMD ["-cp", "/app/lib/*", "no.nav.delta.ApplicationKt"]

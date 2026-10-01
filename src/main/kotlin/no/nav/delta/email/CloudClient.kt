@@ -54,6 +54,14 @@ private fun Room.toRoomInfo() =
         isWheelChairAccessible = isWheelChairAccessible,
     )
 
+/**
+ * The calendar event no longer exists in Graph. Expected when a webhook notification races with
+ * our own deletion (e.g. deleting an event or unregistering a participant), so callers should
+ * treat it as a no-op rather than an error.
+ */
+class CalendarEventNotFoundException(calendarEventId: String, cause: Throwable? = null) :
+    RuntimeException("Calendar event $calendarEventId no longer exists", cause)
+
 private fun graphFailure(what: String, e: Exception): Throwable =
     RuntimeException("$what (${describeGraphError(e)})", e)
 
@@ -437,6 +445,12 @@ class AzureCloudClient(
                 ?.let { attendees -> attendees.firstOrNull { it.type == AttendeeType.Resource } ?: attendees.firstOrNull() }
                 ?.status?.response
             status.right()
+        } catch (e: ApiException) {
+            if (e.responseStatusCode == 404) {
+                CalendarEventNotFoundException(calendarEventId, e).left()
+            } else {
+                graphFailure("Failed to get attendee status for event $calendarEventId", e).left()
+            }
         } catch (e: Exception) {
             RuntimeException("Failed to get attendee status for event $calendarEventId", e).left()
         }

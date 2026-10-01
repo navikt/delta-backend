@@ -8,6 +8,8 @@ updates:
       github:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: gradle
     directory: "/"
@@ -17,8 +19,13 @@ updates:
       gradle:
         patterns:
           - "*"
-
-  - package-ecosystem: docker
-    directory: "/"
-    schedule:
-      interval: weekly
+        update-types:
+          - "minor"
+          - "patch"
+      gradle-major:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+    cooldown:
+      default-days: 7

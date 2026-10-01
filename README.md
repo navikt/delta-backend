@@ -4,9 +4,11 @@ Backenden som hører til [delta-frontend](https://github.com/navikt/delta-fronte
 
 ## Avhengigheter
 
-- Java 21
+- Java 25
 - Docker (På Mac anbefales [Colima](https://github.com/abiosoft/colima))
 - docker-compose (Mac: `brew install docker-compose`, Ubuntu: `apt install docker-compose`)
+
+Versjoner for Gradle-avhengigheter og plugins ligger i `gradle/libs.versions.toml`.
 
 ## Hvordan kjøre backenden
 
@@ -46,4 +48,3 @@ App-registreringen trenger følgende **application permissions** (ikke delegated
 | `Mail.Send` | Sende e-postvarsler fra Delta-postboksen |
 | `User.Read.All` | Slå opp visningsnavn for deltakere |
 | `Place.Read.All` | Rombooking (feature-tolget bak `FEATURE_ROOM_BOOKING`) — liste rom/romlister og sjekke tilgjengelighet |
-
