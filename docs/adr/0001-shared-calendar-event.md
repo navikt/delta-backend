@@ -1,4 +1,4 @@
-# ADR-0001: One shared calendar event per Delta event
+# ADR-0001: Shared calendar event and invitations
 
 **Date:** 2026-10-02
 **Status:** Proposed
@@ -6,221 +6,331 @@
 
 ## Context
 
-### Problem
+Delta puts events in people's Outlook calendars, but each calendar entry is private to one person:
 
-Users report that some participants don't get calendar updates when a host edits an event, while
-others do. The only workaround is to sign off and sign up again, which creates a fresh invite.
-This has been going on for months.
+- Every participant gets **their own Graph calendar event**, sent from Delta's mailbox
+  (`ikkesvar.delta@nav.no`). The participant is the only attendee, and the event id is stored in
+  `participant.calendar_event_id` (`prepareCalendarEvent` in `email/CloudClient.kt`).
+- An event with a room or Teams meeting also gets a **master event**, where the room is the only
+  attendee (`docs/teams-meeting-room-booking-plan.md`). It's kept separate only because putting the
+  room or Teams meeting on N personal events would create N bookings or N meetings.
+- When a host edits an event, all N copies are updated in a background thread nobody checks on.
+  Some of those updates get lost, which is why some participants end up with outdated invites.
+- The only way to become a participant is to sign up in Delta. Hosts can't invite colleagues or a
+  team from Delta. Today they send a separate Outlook invite with a link to Delta.
 
-### How invites work today
-
-- Delta sends **one Graph calendar event per participant** from its own mailbox
-  (`prepareCalendarEvent` in `email/CloudClient.kt`, with `attendees = listOf(participant)`). The id
-  is stored in `participant.calendar_event_id`.
-- A host edit with `sendNotificationEmail = true` PATCHes all N invites in one Graph JSON batch
-  (`batchUpdateOrCreateEvents`), in a fire-and-forget `Thread` (`event/Routes.kt`, `POST /admin/event/{id}`).
-- Events with a room or Teams also get a separate **master event** that has only the room as an
-  attendee (`docs/teams-meeting-room-booking-plan.md`). The master is separate only because a room
-  or Teams meeting on N per-participant events would mean N bookings or N meetings.
-- Declines in Outlook come in through the Graph webhook and unregister the participant
-  (`webhook/Routes.kt`).
-
-### Why participants miss updates
-
-Each edit makes N separate Graph writes, and the system has no retry, no persisted sync state and
-no reconciliation:
-
-1. **Lost writes.** A failed step (429, 5xx, timeout) is only logged
-   (`batchSendUpdateOrCreationNotification` in `email/Email.kt`) and never retried. If the
-   background thread fails or the pod restarts, the update is gone. Before 541036f (March 2026)
-   every participant got its own thread at once. That breaks Outlook's limit of
-   [4 concurrent requests per mailbox](https://learn.microsoft.com/en-us/graph/throttling-limits#outlook-service-limits).
-   Since then Graph runs at most 4 batch steps at a time, but those requests still share the
-   mailbox with concurrent sign-ups, the second replica and the webhook. The webhook calls `GET` on
-   every event we just PATCHed, so each edit generates load on the same mailbox. *Confirm against
-   production logs (`Failed to update/create calendar event`) before relying on the exact mix.*
-2. **Signup-and-edit race.** A sign-up creates its invite in a background thread. An edit that runs
-   before the id is saved creates a second invite, and only one of the two is updated afterwards.
-3. **Invites deleted in Outlook** return 404 on PATCH and are never recreated.
-4. **`sendNotificationEmail = false`** on an edit skips the calendar update completely.
-
-Points 1–3 come from keeping N copies of the same data in sync, which the per-participant model
-requires.
+Hosts want to **invite people when they create an event**, and later, and have the invitation show
+up as an ordinary Outlook meeting.
 
 ### Constraints
 
-- Participants are already visible to each other in Delta, so a shared attendee list exposes
-  nothing new. If we ever need to hide it, Graph has a native `hideAttendees` property. We do not
-  plan for it now.
-- 2 replicas (`nais.yaml`). Leader election already exists (`webhook/LeaderElection.kt`).
-- Dev and local use `DummyCloudClient`, so Exchange behaviour can't be verified in dev.
+- Participants can already see each other in Delta, so sharing the attendee list exposes nothing
+  new. If we ever need to hide attendees, Graph's `hideAttendees` does that. We aren't planning for
+  it.
+- Production runs 2 replicas (`nais.yaml`). Leader election already exists
+  (`webhook/LeaderElection.kt`).
+- Graph access is app-only, through the Delta mailbox. Granted application permissions:
+  `Calendars.ReadWrite`, `Mail.Send`, `Place.Read.All`, `GroupMember.Read.All`. For users, only
+  `User.Read` is granted, which reads the signed-in user's profile and gives nothing to an app
+  running without a signed-in user. `User.Read.All` and `User.ReadBasic.All` are **not** granted.
+- Dev and local use `DummyCloudClient`, so we can't check how Exchange behaves in dev.
+- `participantLimit = 0` means unlimited. Hosts count towards the limit (`checkIfEventIsFull`).
 
 ## Decision
 
-Each Delta event (each occurrence, for recurring series) gets **exactly one Graph calendar event**
-in Delta's mailbox. **All participants and hosts are attendees on it.** It is the existing master
-event made general. The room, if any, is a resource attendee on the same event, and the Teams
-meeting lives on it natively.
+### 1. One shared calendar event per Delta event
 
-Calendar state is changed **only by a persisted, per-event sync job** that builds the desired state
-from the database:
+Each Delta event (each occurrence, for recurring series) gets **exactly one Graph event**, based on
+today's master event. All hosts, participants and invitees are attendees on it. The room, if any,
+is a resource attendee, and the Teams meeting is attached to the event itself.
+`responseRequested = true`.
 
-1. A `calendar_sync` table (one row per event, so repeated changes are coalesced) holds a flag for
-   whether attendees or details changed, plus `next_attempt_at`, `attempts` and `last_error`.
-   Routes write this row **in the same transaction** as the database change and stop starting
-   threads.
-2. A worker picks due rows with `SELECT … FOR UPDATE SKIP LOCKED`, so each event is synced one job
-   at a time across replicas. It then:
-   - **Attendees changed** (sign-up, sign-off, decline): PATCH **only** `attendees`, with the full
-     list from the database plus the room resource. Graph sends a meeting update only to attendees
-     who were added or removed
-     ([Update event](https://learn.microsoft.com/en-us/graph/api/event-update?view=graph-rest-1.0)).
-     New participants get an invite and those removed get a cancellation, with no noise for others.
-   - **Details changed** (host edit): PATCH title, time, location and body. Exchange sends the
-     update to everyone. The body is read first, the Delta-managed section is replaced and the
-     Teams meeting blob is kept, as the Graph docs require for online meetings.
-   - On 429 or 5xx it backs off (honouring `Retry-After`) and reschedules. Permanent errors are
-     stored and logged.
-3. **Delete** calls `POST /events/{id}/cancel` with a comment. Exchange cancels for every attendee
-   and frees the room, which replaces the per-participant cancellation emails.
-4. **Declines**: the webhook reads all attendee responses on the shared event. Each registered
-   participant whose response is `declined` is unregistered and gets an attendee sync, which removes
-   them. This keeps a later sign-up working: it re-adds them, which sends a new invite.
+### 2. Calendar changes go through a stored sync job, one event at a time
+
+Routes add a `calendar_sync` row **in the same transaction** as the database change, instead of
+starting threads. There is one row per event, so several changes in a row are handled together. A
+worker picks rows that are due using `SELECT … FOR UPDATE SKIP LOCKED`, so the two replicas never
+sync the same event at once:
+
+- **Attendees changed:** first GET the event's current attendees and **reconcile** any people
+  Delta doesn't know about (see *Forwarding*), so a forward Exchange added moments ago is never
+  overwritten. Then PATCH **only** `attendees`, with the full list built from the database
+  plus the room. Graph then sends a meeting update only to the people added or removed
+  ([Update event](https://learn.microsoft.com/en-us/graph/api/event-update?view=graph-rest-1.0)).
+- **Details changed:** PATCH title, time, location and body, which notifies everyone. The worker
+  reads the body first and keeps the Teams join section, as the Graph docs require.
+- **Delete:** `POST /events/{id}/cancel`. Exchange sends the cancellation to every attendee and
+  frees the room.
+- On 429 or 5xx errors, the worker waits (using the `Retry-After` header when Graph sends it) and
+  tries again later. Permanent errors are saved in `last_error`.
+
+### 3. Invitations
+
+Hosts can invite **individual people** (by email) and **distribution lists or M365 groups**, both
+when they create an event and later. An invitation is **pending**: the person appears as an
+attendee in Outlook and as *invited* in Delta. They become a participant when they accept in
+Outlook or sign up in Delta. **An invitation reserves a spot** under `participantLimit`.
+
+**Groups are expanded into their members when the invite is sent.** If we added a distribution
+list as an attendee, Exchange would keep it as one attendee and wouldn't tell us how each member
+answered. We then couldn't reserve a spot per person or match Outlook answers to people. So Delta
+fetches the group's members at that moment
+(`GET /groups/{id}/transitiveMembers/microsoft.graph.user`) and invites each of them. It records
+which group each person came from, so the UI can show "invited via *Team X*". People who join the
+group later are not invited.
+
+**This needs `User.ReadBasic.All`.** With only `GroupMember.Read.All`, Graph returns each member's
+`id` and type, and every other property, including `mail`, is `null`
+([limited information for member objects](https://learn.microsoft.com/en-us/graph/permissions-overview#limited-information-returned-for-inaccessible-member-objects)).
+Attendees need an email address, so we can't expand a group without it. `GroupMember.Read.All` is
+enough to search groups and read group names.
+
+#### Participant status
+
+`participant` gets a `status` column, separate from `type` (HOST/PARTICIPANT):
+
+| Status | Meaning | Takes a spot | Outlook attendee |
+|---|---|---|---|
+| `INVITED` | Invited, no answer yet or answered *tentative* | yes, until `signupDeadline` | yes |
+| `REGISTERED` | Signed up in Delta or accepted in Outlook | yes | yes |
+| `DECLINED` | Declined in Outlook | no | yes (kept so they don't get a cancellation) |
+| `FORWARDED` | Added by someone forwarding the invite in Outlook, no answer yet | no | yes |
+
+The table also gets `invited_by`, `invited_at` and `invited_via_group` (group id and name), for
+audit and display. Existing rows become `REGISTERED`.
+
+#### Transitions
+
+| What happens | Result |
+|---|---|
+| Host invites a person or group | Add `INVITED` rows. If there aren't enough spots, the whole invite is rejected and the response says how many spots are left. People already registered are skipped. Attendees are synced. |
+| Accepts in Outlook (webhook) | `INVITED` or `DECLINED` becomes `REGISTERED`. The spot is already reserved, or is taken again if one is free. |
+| Declines in Outlook (webhook) | Becomes `DECLINED` and frees the spot, but the person stays an attendee. Replaces today's behaviour, which unregisters the person and deletes their invite. |
+| Signs up in Delta | `INVITED` becomes `REGISTERED`, with no new invite. `DECLINED` becomes `REGISTERED`, and the sync removes and re-adds them so they get a new invite. Anyone else becomes `REGISTERED` through the normal signup checks. |
+| Signs off in Delta | Row is deleted and attendees are synced, so the person gets a cancellation. |
+| Host revokes an invitation | Row is deleted and attendees are synced, so the person gets a cancellation. |
+| Someone Delta doesn't know about turns up on the event (forwarded invite) | See *Forwarding* below. |
+| `signupDeadline` passes | `INVITED` stops holding a spot. The person stays `INVITED` and stays an attendee. Nothing is sent to Graph. |
+
+**Unanswered invitations release their spot at the signup deadline.** This is computed when the
+spot count is checked (`INVITED` counts only while `signupDeadline` is null or in the future), so
+no job is needed. Events without a `signupDeadline` keep the reservation until the event.
+
+Before the deadline, an invitee can accept even if the event has filled up, because their spot is
+reserved. After the deadline, accepting follows the normal signup rules. If the event is full, the
+person becomes `DECLINED` and is told why by email. *Check in the spike whether answers like this
+should also be visible in Outlook.*
+
+#### Forwarding
+
+When an attendee with a Microsoft 365 mailbox forwards the invite, Exchange sends it to the new
+person, **adds them to the attendee list on Delta's copy** and notifies the organizer
+([Forward event](https://learn.microsoft.com/en-us/graph/api/event-forward?view=graph-rest-1.0)).
+Graph has no setting to block forwarding, and Delta is meant to be open, so we **adopt**
+forwarded people instead of fighting it.
+
+The webhook (on any attendee change) and every attendee sync compare the Graph attendees with
+the database. Each attendee Delta doesn't know about is handled like this:
+
+| Attendee | Result |
+|---|---|
+| `@nav.no` person, room left under the 490 limit | Insert as `FORWARDED`. Holds **no** spot, so participants can't reserve spots for others by forwarding. They stay an attendee and get updates. |
+| `@nav.no` person, 490 limit reached | Removed by the attendee sync, so they get a cancellation. |
+| External address or group/distribution list | Removed by the attendee sync. Delta can't register them (Entra login, per-person status). |
+
+| What happens next | Result |
+|---|---|
+| `FORWARDED` accepts in Outlook | Registers under the normal signup rules (capacity, deadline). If refused, they become `DECLINED` and get an email saying why. |
+| `FORWARDED` signs up in Delta | Becomes `REGISTERED` under the normal rules. No new invite. |
+| `FORWARDED` declines | Becomes `DECLINED`. |
+| Host removes a `FORWARDED` person | Same as revoking an invitation: row deleted, attendee sync, cancellation. |
+
+- `invited_by` stays `null` for forwarded people. Only the organizer's notification email says who
+  forwarded, and reading it would need `Mail.Read` on the mailbox, which we don't want.
+- Hosts see `FORWARDED` people in the "Invited" list, marked "via forwarding".
+- Forwarding defeats the rule that only participants see Teams details. Removing someone doesn't
+  take back a link they've already received. We accept this, because the Teams lobby is the
+  control for meeting access.
+
+#### API (overview; details go in OpenAPI)
+
+- `CreateEvent.invitees: List<InviteeRequest>?`, where `InviteeRequest` is either `{ email }` or
+  `{ groupId }`.
+- `POST /admin/event/{id}/invitations` (same body) and `DELETE /admin/event/{id}/invitations`
+  (`{ email }`). Hosts only.
+- `FullEvent.invited: List<Invitation>` (email, name, status, viaGroup), shown to the same people
+  who can see `participants`. Only hosts see `DECLINED` invitees.
+- `GET /directory/search?q=` finds people and groups for the frontend's invite picker. Group
+  search works with today's permissions. People search needs `User.ReadBasic.All`.
+
+#### Limits (against misuse, and Exchange limits)
+
+- Only Nav addresses (`@nav.no`). Anything else gets a 400.
+- At most **490 attendees** per event, since Exchange caps a message at 500 recipients. A group
+  with more members than that is rejected.
+- Exchange also caps a mailbox at 10,000 recipients a day, and every edit to a large event counts
+  each attendee again. Track recipients per day and alert at 70%.
+- Keep an audit log of who invited whom, without email addresses in ordinary log lines.
+
+### 4. Out of scope for v1
+
+- **No invitations on recurring series** in v1, the same rule as for room and Teams today. Each
+  occurrence is its own Graph event, so a weekly series would send each person one invite per
+  occurrence. Fixing that means using Graph's built-in recurring events, which needs its own ADR.
+- Only new events use this. Existing events keep their personal invites until the event is over.
 
 ## Alternatives considered
 
-### A: One shared event with a persisted sync job (chosen)
-- **Pros:** an edit is 1 Graph write instead of N, so a partial update can't happen. Exchange does
-  delivery, update, cancellation and RSVP natively. Room and Teams become native, and the master/
-  participant split and the Delta-rendered Teams block go away. Because the sync is persisted and
-  built from the database, it has no race and recovers after restarts or errors. It also removes a
-  lot of code: batching, per-participant ids and recreating invites.
-- **Cons:** a migration period with two invite modes. Attendee PATCH replaces the whole list, which
-  is why per-event serialization is required. Changing details always notifies everyone. Exchange
-  has a recipient limit (see Risks).
-- **Nav assessment:** less accidental complexity, and it uses the platform (Exchange) for what it is
-  built for. No new infrastructure.
+### A: Shared event, group expansion and a stored sync job (chosen)
+- **Pros:** invitations are ordinary Outlook meetings, and Exchange handles delivery, updates,
+  cancellations and replies. Replies map to a Delta status per person. Edits always reach everyone,
+  with 1 Graph write instead of N. Room and Teams work natively. Removes a lot of code.
+- **Cons:** needs one new Graph permission (`User.ReadBasic.All`). Group
+  invites use the membership at the time of the invite. Two invite models run in parallel for a
+  while. Every details edit notifies everyone.
 
-### B: Keep one invite per participant and add a persisted sync job with retry
-- **Pros:** no migration and no change in behaviour for users.
-- **Cons:** still N writes per edit and N webhook notifications. Each participant can still end up
-  in a different state, so we'd need reconciliation. Keeps the master/participant split and our own
-  Teams block. The fix covers symptoms and adds code.
-- **Nav assessment:** workable, but it keeps complexity we don't need.
+### B: Invite distribution lists as a single attendee
+- **Pros:** no new permission, and people who join the group later get the invite.
+- **Cons:** Graph doesn't report each member's answer, so there's no status, no reserved spot and
+  no "accept = registered". It can't be combined with "an invitation reserves a spot".
+- **Rejected** because of the spot reservation requirement.
 
-### C: Keep two Graph events (master plus one shared participant event)
-- **Pros:** the master body is never touched.
-- **Cons:** two invites for the same occurrence and two lifecycles to keep in sync. The original
-  reason for the split (N bookings) no longer applies.
-- **Nav assessment:** rejected.
+### C: Keep personal invites, and send each invitee their own invite too
+- **Pros:** no change to the invite model.
+- **Cons:** each edit is still N Graph writes, which is why updates get lost today. No shared
+  attendee list, and the master/participant split remains. Invitations would be built on a weak
+  base.
 
 ### D: Do nothing
-- **Pros:** no effort.
-- **Cons:** participants keep missing updates (time and place changes), and trust in Delta goes down.
-- **Nav assessment:** not acceptable.
+- Hosts keep sending Outlook invites next to Delta, and the participant list and the calendars
+  drift apart.
 
 ## Nav-specific considerations
 
 ### Security
-- **Data:** Nav employees' names and work emails, already visible to other participants in Delta.
-  Classification is unchanged (internal).
-- **Auth:** the same app-only Graph access through the Delta mailbox (`ClientSecretCredential`). No
-  new Graph permissions.
-- **PII:** `calendar_sync` holds only `event_id`, timestamps and error text. New logging must not
-  include email addresses. Existing logs do, which is a separate cleanup.
+- **Data:** names and email addresses of Nav employees, plus group names and members (internal).
+  "Invited via" shows a group's members to the event's participants, which is acceptable for
+  distribution lists. *Ask the security champion whether we should reject security groups that
+  can't receive email.* Recommendation: only allow mail-enabled groups (`mailEnabled = true`).
+- **Auth:** nothing changes for users (Entra ID). `GroupMember.Read.All` (application) is already
+  granted and covers group search and group names. **One new application permission:**
+  `User.ReadBasic.All`, to read members' email addresses when expanding groups and to search
+  people. It is the narrowest user-read permission (name, email, photo; no profile data) and needs
+  admin consent and a security review.
+- **If `User.ReadBasic.All` is refused:** individual invites by email still work, since the host
+  types the address and Delta needs no lookup. The name shows as the email until the person signs
+  in to Delta. Group invites are then not possible with reserved spots (see alternative B).
+- **Misuse:** every Nav employee can create events (`allowAllUsers`), so the limits above (domain,
+  490 attendees, rate limit per host) are required in v1. Consider requiring a role to invite
+  groups.
+- **PII in logs:** don't log email addresses or group members. `calendar_sync.last_error` must not
+  contain recipient lists.
 
 ### Platform
-- **Nais:** no manifest changes. One new Flyway migration (`calendar_sync`, plus `event.invite_mode`).
-- **Resources:** much fewer Graph calls per edit. The worker polls every few seconds with an
-  indexed query.
-- **Observability:** gauges for pending and failed `calendar_sync` rows and the age of the oldest
-  due row. A counter of sync outcomes by result. Alert when rows have failed for more than 1 hour.
+- **Nais:** no manifest changes. Flyway migrations: `calendar_sync`, `event.invite_mode` and the
+  new `participant` columns.
+- **Monitoring:** gauges for pending and failed `calendar_sync` rows and the age of the oldest due
+  row. Counters for invitations (people, groups, and rejections for capacity or group size),
+  recipients per day, and status changes from the webhook. Alert when a row has been failing for
+  over 1 hour, and when recipients pass the threshold.
+- **Testing:** dev never calls Graph. We need a **way to test against real Graph**, such as a test
+  mailbox in the dev tenant behind a toggle, to check how Exchange behaves before prod.
 
 ### Team impact
-- **Affected teams:** Delta only. Frontend: the meaning of `sendNotificationEmail` changes (see open
-  questions). Users: an edit shows as one meeting update instead of a new per-person invite.
+- **Delta frontend:** a person and group picker when creating and editing an event, an "Invited"
+  list with status, a way to revoke invitations, capacity that counts reserved spots, and a note
+  that recurring series can't have invitations.
+- **Users:** invitations come from `ikkesvar.delta@nav.no`. Answering in Outlook updates Delta, but
+  **nobody reads comments written in a reply**. The invite text must say so.
 
 ### Migration
-- **Backward compatibility:** add `event.invite_mode` (`PER_PARTICIPANT` | `SHARED`). Existing rows
-  stay `PER_PARTICIPANT`, so all current code paths keep working for them. Only new events get
-  `SHARED`.
-- **Rollout:** run both modes side by side, behind the existing feature-toggle mechanism (the one
-  used for room booking). Start with the team, then everyone.
-- **Rollback:** turn the toggle off so new events use `PER_PARTICIPANT` again. Events already
-  `SHARED` keep working, because the `SHARED` path stays until exit.
-- **Rollback trigger:** sync failures above the alert threshold, or reports of missing or duplicate
-  invites on `SHARED` events.
-- **Exit criteria:** no upcoming events left in `PER_PARTICIPANT` mode. We don't actively migrate
-  them: converting would send each participant a cancellation followed by a new invite. They run
-  out naturally.
-- **Decommissioning:** remove `batchUpdateOrCreateEvents`, the per-participant
-  create/update/delete, `participant.calendar_event_id`, `buildInviteBodyHtml`'s Teams block and
-  `invite_mode`. Update `docs/teams-meeting-room-booking-plan.md`.
+- **Backward compatibility:** `event.invite_mode` (`PER_PARTICIPANT` | `SHARED`). Existing events
+  stay `PER_PARTICIPANT`. New events get `SHARED` behind a feature toggle (the same mechanism as
+  room booking). Invitations require `SHARED`.
+- **Rollback:** turn the toggle off, and new events go back to `PER_PARTICIPANT` and invitations
+  are hidden. Events already `SHARED` keep working, because that code stays until the migration is
+  done.
+- **When to roll back:** sync rows stuck or failing above the threshold, duplicate or missing
+  invites, or a recipient alert.
+- **Done when:** no upcoming events are `PER_PARTICIPANT`. We don't convert old events, because
+  that would send every participant a cancellation followed by a new invite.
+- **Cleanup:** remove the per-participant create/update/delete, `batchUpdateOrCreateEvents`,
+  `participant.calendar_event_id`, the Teams block Delta adds in `buildInviteBodyHtml`, and
+  `invite_mode`. Update the room/Teams plan doc.
 
 ## Consequences
 
 ### Positive
-- All participants see the same up-to-date invite, which fixes the reported bug at its root.
-- Native Outlook features: a shared attendee list, the Teams join button, the room and cancellation.
-- Less code and fewer Graph calls.
+- Hosts can invite people and teams from Delta, and the invitation is an ordinary Outlook meeting.
+- Everyone shares one calendar entry that is always up to date, which also fixes the lost updates.
+- Room, Teams, replies and cancellations work natively. Less code and fewer Graph calls.
 
 ### Negative
-- About 2 releases of extra complexity while both modes exist.
-- Details edits always notify all attendees. Updating the calendar without notifying everyone is no
-  longer possible.
+- One new Graph permission, and we depend on the identity admins to grant it.
+- Group invites use the membership at the time of the invite, so people who join later aren't
+  added.
+- Every details edit notifies all attendees.
+- Two invite models run side by side for about 2 releases.
 
 ### Risks
-- **Recipient limit:** Exchange Online accepts at most 500 recipients per message. A details update
-  to an event with more attendees may fail. *Action: check the largest participant count in prod.*
-  If it's close to the limit, cap `participantLimit` or keep large events on `PER_PARTICIPANT`.
-- **Attendee PATCH preserving RSVPs:** we expect existing attendees' responses to survive a
-  full-list PATCH, but this must be verified (spike).
-- **Body edits with Teams:** keeping the meeting blob when editing the body must be verified (spike).
-  The fallback is to never PATCH the body and put the description link in the location or subject.
-- **Decline races:** someone signs up again right after declining in Outlook. Handled by the
-  per-event sync running one job at a time and the list being built from the database, but it must
-  be covered by tests.
+- **Unanswered invitations hold spots** until the signup deadline. Events without a deadline can
+  look full of people who never answer. The frontend should suggest a deadline when inviting.
+- **Attendee updates and replies:** existing answers should survive a PATCH of the full attendee
+  list. Must be checked in the spike.
+- **Editing the text of a Teams meeting:** keeping the Teams join section must be checked in the
+  spike. If it doesn't work, we never PATCH the body.
+- **Signing up again after declining:** the person gets a cancellation and then a new invite. Check
+  that this looks acceptable in Outlook.
 
-## Open questions
+## Decided questions (2026-10-02)
 
-1. `sendNotificationEmail = false` on edits: drop the flag, so the calendar is always correct, or
-   keep it and leave the calendar stale? Recommendation: drop it.
-2. Should the organizer (the Delta mailbox) send a cancellation with a comment, or do we also keep
-   our own cancellation email?
+1. **Unanswered invitations** release their spot at `signupDeadline`. They stay `INVITED`.
+2. **Forwarded invites:** Nav users added by forwarding are adopted as `FORWARDED` (no spot held).
+   External addresses and groups are removed. See *Forwarding*.
+3. **`sendNotificationEmail`** is dropped for `SHARED` events. The calendar always matches Delta.
+4. **Every host can invite groups**, within the 490 limit.
+5. **Only mail-enabled groups** (`mailEnabled = true`) can be invited.
 
 ## Action items
 
-- [ ] Check production logs and data: how often `Failed to update/create calendar event` happens,
-      broken down by status code, and the largest number of participants per event.
-- [ ] Spike against a test mailbox (dev uses `DummyCloudClient`): adding and removing attendees
-      only notifies the changed attendees, RSVPs are preserved, editing the body keeps Teams, and
-      `/cancel` frees the room.
-- [ ] Settle the open questions.
-- [ ] Flyway migration: `calendar_sync` and `event.invite_mode`.
-- [ ] Sync worker with backoff, `FOR UPDATE SKIP LOCKED` and metrics/alerts.
-- [ ] Route `SHARED` events in create, edit, sign-up, sign-off, delete and the webhook through the
-      sync job.
-- [ ] Integration tests for serialized sync per event, retry, decline, and sign-up after a decline.
-- [ ] Feature toggle and gradual rollout. Tell the frontend about `sendNotificationEmail`.
-- [ ] Decommission the `PER_PARTICIPANT` path when the exit criteria are met. Update the
-      room/Teams plan doc.
+- [ ] Request `User.ReadBasic.All` (Application) with admin consent. `GroupMember.Read.All` is
+      already granted. Note: `getUserDisplayName` (faggruppe owners) needs it too, and returns
+      `null` today.
+- [ ] Security review of the permission and misuse limits (security champion).
+- [ ] Spike against a test mailbox: a PATCH of only attendees notifies only the changed people,
+      replies survive, editing the text keeps Teams, `/cancel` frees the room, and removing and
+      re-adding someone looks acceptable. Forward from an attendee's mailbox: check that the
+      forwardee appears on Delta's copy, that a webhook notification fires, and what their reply
+      looks like.
+- [ ] Flyway: `calendar_sync`, `event.invite_mode`, and `participant.status`/`invited_by`/
+      `invited_at`/`invited_via_group`.
+- [ ] Sync worker (retry with backoff, `SKIP LOCKED`, metrics and alerts).
+- [ ] `SHARED` handling in create, edit, sign-up, sign-off, delete and the webhook (status changes).
+- [ ] Invitation API, group expansion, person and group search, limits and audit log.
+- [ ] OpenAPI and frontend handoff (picker, status, capacity, no invitations on recurring series).
+- [ ] Integration tests: one sync per event at a time, retries, every status change, capacity when
+      inviting, the 490 limit, and forwarding (adopt, accept when full, external removed, and a
+      forward arriving between the GET and PATCH of an attendee sync).
+- [ ] Feature toggle and gradual rollout.
+- [ ] Remove `PER_PARTICIPANT` once the migration is done.
 
 ## Review
 
 | Axis | Finding |
 |------|---------|
-| Architecture | Removes the root cause (N copies of the same state) rather than patching it. The persisted sync job is the only new mechanism and it's justified: fire-and-forget threads are part of why updates get lost today. |
-| Security | No new permissions or data flows. Attendee visibility is unchanged from Delta's own UI. Concern: existing logs contain emails. Not introduced by this ADR, but don't add more. |
-| Platform | Works with 2 replicas through row locks. No new infrastructure. Needs alerting on stuck sync rows, or failures will stay as invisible as today. |
-| Migration | Running both modes side by side with `invite_mode` is additive and reversible. Exit criteria and decommissioning are defined. Open risk: events over 500 recipients. |
+| Architecture | One shared event lets Exchange do the work it's built for, and replaces N copies of the same data. Expanding groups is the only way to combine group invites with reserved spots and an answer per person. The cost is new permissions and using group membership at the time of the invite, which we accept. |
+| Security | **Concern:** the new `User.ReadBasic.All` permission gives read access to basic profile data for every user in the directory, and needs a security review. **Concern:** mass invites from the shared mailbox. The limits must ship in v1, not later. **Accepted:** forwarding spreads the Teams link beyond Delta's participant list, which the Teams lobby mitigates. What participants can see is otherwise unchanged. |
+| Platform | No new infrastructure. Row locks handle the 2 replicas. Exchange's limit of 10,000 recipients per mailbox per day is a real ceiling for large events and must be monitored. Dev can't test Graph, so we need a test mailbox. |
+| Migration | Running both models side by side through `invite_mode` only adds code and can be rolled back. When the migration is done and what to clean up are both defined. |
 
 ```
-Inspected:     email/CloudClient.kt, email/Email.kt, event/Routes.kt (create/edit/delete/signup routes),
-               event/Database.kt (participant + master id queries), webhook/Routes.kt, nais.yaml,
-               docs/teams-meeting-room-booking-plan.md, git history of Email.kt, Graph docs
-               (event-update, Outlook throttling/JSON batching)
-Not inspected: production logs/data (no access), RecurringDatabase.kt in full, frontend repo,
-               live Exchange behaviour (dev uses DummyCloudClient)
-Findings:      0 blocking, 3 concerns (recipient limit, RSVP preservation, body/Teams blob — all spike items)
+Inspected:     email/CloudClient.kt, email/Email.kt, event/Routes.kt, event/Models.kt,
+               event/Database.kt (registerForEvent, checkIfEventIsFull, participant queries),
+               webhook/Routes.kt, nais.yaml, docs/teams-meeting-room-booking-plan.md (permissions),
+               Graph docs (event-update, event-forward, event resource, Outlook throttling)
+Not inspected: frontend repo, production data (largest event, recipient volume), Entra app
+               registration (actual granted permissions), live Exchange behaviour, RecurringDatabase.kt
+Findings:      0 blocking, 3 concerns (new User.ReadBasic.All permission, misuse limits,
+               Exchange behaviour not yet checked)
 Verdict:       CONCERNS
 ```
