@@ -64,6 +64,36 @@ sync the same event at once:
 - On 429 or 5xx errors, the worker waits (using the `Retry-After` header when Graph sends it) and
   tries again later. Permanent errors are saved in `last_error`.
 
+#### Notification rules
+
+Adding participants, processing their RSVP and adopting a forwarded invite must not send a
+meeting update to everyone.
+
+Microsoft explicitly documents that an event update containing **only `attendees` in the request
+body** sends a meeting update **only to attendees that have changed**
+([Update event: notes for updating specific properties](https://learn.microsoft.com/en-us/graph/api/event-update?view=graph-rest-1.0#notes-for-updating-specific-properties)).
+We use the same `PATCH /users/{mailbox}/events/{id}` endpoint for attendee changes, but send only
+the `attendees` property. We must not reuse a details-update payload containing `subject`, `body`,
+`start`, `end`, location or other event properties for this operation.
+
+The documented exception is removing an attendee specified as a member of a distribution list:
+that sends an update to all attendees. Delta therefore expands groups into individual attendees
+before sending invitations; no distribution list is added to the Graph event. Recording a person's
+source group in Delta does not make them a distribution-list attendee in Graph.
+
+- **RSVP:** the webhook updates Delta's database only. It does not PATCH the Graph event or
+  enqueue an attendee sync merely because an existing attendee accepted, declined or answered
+  tentatively.
+- **Forwarding:** adopting someone Exchange has already added is a database insert only. It does
+  not require an attendee PATCH. Removing an unwanted individual forwardee uses the same
+  attendees-only PATCH as other removals. A forwarded distribution list needs separate attention:
+  do not assume the selective-notification rule covers removing its members.
+- **Details edits:** changing the meeting's details still intentionally notifies everyone.
+
+Selective attendee notifications are documented API behaviour, not an undocumented assumption.
+The mailbox spike must still verify the actual request payload, preservation of existing replies
+and forwarding behaviour before rollout.
+
 ### 3. Invitations
 
 Hosts can invite **individual people** (by email) and **distribution lists or M365 groups**, both
