@@ -24,7 +24,15 @@ data class Event(
     val teamsJoinUrl: String? = null,
     val teamsConferenceId: String? = null,
     val teamsDialIn: String? = null,
+    val inviteMode: InviteMode = InviteMode.PER_PARTICIPANT,
+    val calendarSyncStatus: CalendarSyncStatus? = null,
 )
+
+enum class InviteMode { PER_PARTICIPANT, SHARED }
+enum class CalendarSyncStatus { PENDING, SYNCED, FAILED }
+enum class ParticipantStatus { INVITED, REGISTERED, DECLINED, FORWARDED }
+data class InviteeRequest(val email: String)
+data class Invitation(val name: String, val email: String, val status: ParticipantStatus)
 
 enum class RoomBookingStatus {
     PENDING,
@@ -39,6 +47,8 @@ data class FullEvent(
     val hosts: List<Participant>,
     val categories: List<Category>,
     val recurringSeries: RecurringSeriesSummary? = null,
+    val invited: List<Invitation> = emptyList(),
+    val calendarSyncError: String? = null,
 )
 
 data class Participant(
@@ -84,6 +94,7 @@ data class CreateEvent(
     val roomEmail: String? = null,
     val roomName: String? = null,
     val isOnlineMeeting: Boolean? = null,
+    val invitees: List<InviteeRequest>? = null,
 )
 
 data class Category(

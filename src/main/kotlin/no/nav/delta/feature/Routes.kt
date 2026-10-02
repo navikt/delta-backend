@@ -12,6 +12,8 @@ import no.nav.delta.event.principalGroups
 data class Features(
     val roomBooking: Boolean,
     val teamsMeeting: Boolean,
+    val sharedCalendar: Boolean = false,
+    val peopleSearch: Boolean = false,
 )
 
 fun Route.featureApi(env: Environment) {
@@ -22,6 +24,8 @@ fun Route.featureApi(env: Environment) {
                     Features(
                         roomBooking = env.isRoomBookingEnabledFor(call.principalGroups()),
                         teamsMeeting = env.isTeamsMeetingEnabledFor(call.principalGroups()),
+                        sharedCalendar = env.isSharedCalendarEnabledFor(call.principalGroups()),
+                        peopleSearch = env.isSharedCalendarEnabledFor(call.principalGroups()),
                     )
                 )
             }

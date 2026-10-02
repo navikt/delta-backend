@@ -45,6 +45,16 @@ class FeatureRoutesTest {
     }
 
     @Test
+    fun `shared calendar and people search follow shared rollout access`() = testApplication {
+        val env = localTestEnvironment().copy(featureSharedCalendar = no.nav.delta.FeatureAccess.MAINTAINERS)
+        application { installTestApi(env, database) { featureApi(env) } }
+        val features = readJson<Features>(client.get("/features").bodyAsText())
+        assertEquals(true, features.sharedCalendar)
+        assertEquals(true, features.peopleSearch)
+        assertEquals(false, features.roomBooking)
+    }
+
+    @Test
     fun `room booking is reported enabled for a maintainer`() = testApplication {
         val env =
             localTestEnvironment()

@@ -10,6 +10,8 @@ import java.time.Duration
 import java.time.LocalDate
 import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.calendar.SharedCalendarRepository
+import no.nav.delta.calendar.sharedResultTransaction
 
 data class RecurringEventMutationResult(
     val referenceEventId: UUID,
@@ -42,14 +44,17 @@ fun DatabaseInterface.createRecurringEventSeries(
     createEvent: CreateEvent,
     hostEmail: String,
     hostName: String,
+    inviteMode: InviteMode = InviteMode.PER_PARTICIPANT,
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
+    if (!createEvent.invitees.isNullOrEmpty())
+        return UnsupportedRecurringOperationException("Invitations are not supported for recurring series").left()
     val draft =
         when (val seriesDraft = createEvent.toRecurringSeriesDraft(hostEmail)) {
             is Either.Left -> return seriesDraft
             is Either.Right -> seriesDraft.value
         }
 
-    return connection.use { connection ->
+    return sharedResultTransaction { connection ->
         val seriesId = insertRecurringSeries(connection, draft)
         replaceSeriesCategories(connection, seriesId, draft.categories)
 
@@ -70,7 +75,9 @@ fun DatabaseInterface.createRecurringEventSeries(
                 insertRecurringOccurrence(connection, seriesId, event.id, occurrence.occurrenceIndex, occurrence.occurrenceDate)
                 insertParticipant(connection, event.id, hostEmail, hostName, ParticipantType.HOST)
                 replaceEventCategories(connection, event.id, draft.categories)
-                event
+                if (inviteMode == InviteMode.SHARED)
+                    SharedCalendarRepository(this).initializeOccurrence(connection, event, createEvent.invitees ?: emptyList())
+                else event
             }
 
         connection.commit()
@@ -86,7 +93,9 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
     createEvent: CreateEvent,
     updatedByEmail: String,
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
-    return connection.use { connection ->
+    if (!createEvent.invitees.isNullOrEmpty())
+        return UnsupportedRecurringOperationException("Invitations are not supported for recurring series").left()
+    return sharedResultTransaction { connection ->
         val selectedOccurrence =
             loadRecurringOccurrence(connection, UUID.fromString(eventId))
                 ?: return UnsupportedRecurringOperationException(
@@ -210,6 +219,9 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                 if (createEvent.categories != null) {
                     replaceEventCategories(connection, updatedEvent.id, createEvent.categories)
                 }
+                if (updatedEvent.inviteMode == InviteMode.SHARED) {
+                    SharedCalendarRepository(this).initializeOccurrence(connection, updatedEvent, createEvent.invitees ?: emptyList())
+                }
                 updateRecurringOccurrence(
                     connection = connection,
                     eventId = updatedEvent.id,
@@ -217,7 +229,9 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                     occurrenceIndex = if (!isSplit) occurrence.occurrenceIndex else index,
                     occurrenceDate = desired.occurrenceDate,
                 )
-                updatedEvent
+                if (updatedEvent.inviteMode == InviteMode.SHARED)
+                    updatedEvent.copy(calendarSyncStatus = CalendarSyncStatus.PENDING)
+                else updatedEvent
             }
 
         // Delete occurrences that fall beyond the new untilDate (shortening)
@@ -253,7 +267,9 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                 }
                 replaceEventCategories(connection, newEvent.id, targetCategories)
                 insertRecurringOccurrence(connection, targetSeriesId, newEvent.id, absoluteIndex, desired.occurrenceDate)
-                newEvent
+                if (selectedOccurrence.event.inviteMode == InviteMode.SHARED)
+                    SharedCalendarRepository(this).initializeOccurrence(connection, newEvent, createEvent.invitees ?: emptyList())
+                else newEvent
             }
 
         if (isSplit) {
@@ -274,7 +290,7 @@ fun DatabaseInterface.deleteRecurringSeriesFromOccurrence(
     eventId: String,
     deletedByEmail: String,
 ): Either<ExceptionWithDefaultResponse, List<Pair<Event, List<Pair<Participant, Option<String>>>>>> {
-    return connection.use { connection ->
+    return sharedResultTransaction { connection ->
         val selectedOccurrence =
             loadRecurringOccurrence(connection, UUID.fromString(eventId))
                 ?: return UnsupportedRecurringOperationException(

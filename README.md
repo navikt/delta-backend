@@ -34,6 +34,7 @@ Følgende hemmeligheter må injiseres som miljøvariabler i NAIS:
 | `DELTA_MAINTAINERS_GROUP_ID` | Entra ID-gruppe for Delta-forvaltere: faggruppe-admin og tilgang til funksjoner satt til `maintainers`. Gruppen må også stå under `azure.application.claims.groups` i `nais.yaml` |
 | `FEATURE_ROOM_BOOKING` | `off` (default), `maintainers` eller `all`. Slår på rombooking. Se `docs/teams-meeting-room-booking-plan.md` |
 | `FEATURE_TEAMS_MEETING` | `off` (default), `maintainers` eller `all`. Slår på Teams-møter på hendelser |
+| `FEATURE_SHARED_CALENDAR` | `off` (default), `maintainers` eller `all`. Nye hendelser får en felles kalenderinvitasjon. Eksisterende hendelser beholder kalendermodellen sin. Se `docs/adr/0001-shared-calendar-event.md` |
 
 `WEBHOOK_CLIENT_STATE` lagres inn i Nais console secret `delta-backend-webhook-secret` og refereres i `nais.yaml`.
 
@@ -46,5 +47,17 @@ App-registreringen trenger følgende **application permissions** (ikke delegated
 | `Calendars.Read` | Lese kalenderhendelser og opprette/fornye/slette webhook-subscriptions på postboksen |
 | `Calendars.ReadWrite` | Opprette/oppdatere/slette kalenderhendelser i Delta-postboksen (brukes i dag selv om README tidligere kun nevnte `Calendars.Read`) |
 | `Mail.Send` | Sende e-postvarsler fra Delta-postboksen |
-| `User.Read.All` | Slå opp visningsnavn for deltakere |
+| `User.ReadBasic.All` | Søke etter personer til invitasjonsvelgeren og slå opp grunnleggende visningsnavn. Krever admin consent før personsøk tas i bruk |
 | `Place.Read.All` | Rombooking (feature-tolget bak `FEATURE_ROOM_BOOKING`) — liste rom/romlister og sjekke tilgjengelighet |
+
+## Felles kalender og invitasjoner
+
+Nye hendelser med `FEATURE_SHARED_CALENDAR` aktivert lagres før Microsoft Graph
+svarer. API-et viser om kalendersynkroniseringen venter, er ferdig eller har feilet.
+V1 støtter individuelle invitasjoner og personsøk, ikke gruppeinvitasjoner.
+Lokalt brukes en kalenderadapter som ikke sender ekte invitasjoner.
+
+Frontend-kontrakten er beskrevet i
+[`docs/frontend-shared-calendar-handoff.md`](docs/frontend-shared-calendar-handoff.md).
+Drift og kontroll mot en ekte postboks er beskrevet i
+[`docs/shared-calendar-operations.md`](docs/shared-calendar-operations.md).

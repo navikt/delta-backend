@@ -28,6 +28,10 @@ import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
 import no.nav.delta.FeatureAccess
 import no.nav.delta.email.CloudClient
+import no.nav.delta.directory.directoryApi
+import no.nav.delta.calendar.sharedCalendarApi
+import no.nav.delta.calendar.SharedCalendarRepository
+import no.nav.delta.calendar.CalendarSyncWorker
 import no.nav.delta.event.eventApi
 import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.feature.featureApi
@@ -98,19 +102,29 @@ fun Application.mySetup(
 
     val subscriptionService = SubscriptionService(cloudClient, database, env, leaderElection)
     val roomCatalog = RoomCatalog(cloudClient)
+    val sharedCalendar = SharedCalendarRepository(database)
+    val calendarWorker = CalendarSyncWorker(sharedCalendar, cloudClient)
 
     routing {
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient, env)
+        sharedCalendarApi(database)
         faggruppeApi(database, cloudClient, env)
         webhookApi(database, cloudClient, env)
         featureApi(env)
+        directoryApi(cloudClient, env)
         roomApi(cloudClient, env, roomCatalog)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")
         }
         get("/internal/is_ready") {
             call.respondText("I'm ready! :)")
+        }
+        get("/internal/metrics") {
+            call.respondText(
+                calendarWorker.metrics.scrape(sharedCalendar.statistics()),
+                io.ktor.http.ContentType.parse("text/plain; version=0.0.4"),
+            )
         }
         get("/internal/webhook_subscription_ready") {
             if (subscriptionService.isHealthy()) {
@@ -125,6 +139,7 @@ fun Application.mySetup(
     // don't block the server from becoming alive. General readiness is decoupled
     // from webhook subscription health so the app can degrade gracefully.
     if (startBackgroundTasks) {
+        calendarWorker.initialize(this)
         launch { subscriptionService.initialize(this) }
         if (env.featureRoomBooking != FeatureAccess.OFF) {
             launch(Dispatchers.IO) { roomCatalog.warmUp() }
