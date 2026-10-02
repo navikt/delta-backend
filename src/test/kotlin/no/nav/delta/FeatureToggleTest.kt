@@ -10,6 +10,17 @@ class FeatureToggleTest {
     private val maintainers = "maintainers-group"
 
     @Test
+    fun `shared calendar rollout controls new invitations and people search`() {
+        val env = Environment(
+            maintainersGroupId = maintainers,
+            featureSharedCalendar = FeatureAccess.MAINTAINERS,
+        )
+        assertTrue(env.isSharedCalendarEnabledFor(listOf(maintainers)))
+        assertFalse(env.isSharedCalendarEnabledFor(emptyList()))
+        assertFalse(Environment().isSharedCalendarEnabledFor(listOf(maintainers)))
+    }
+
+    @Test
     fun `off disables the feature, even for maintainers`() {
         val env = Environment(maintainersGroupId = maintainers, featureRoomBooking = FeatureAccess.OFF)
         assertFalse(env.isRoomBookingEnabledFor(listOf(maintainers)))

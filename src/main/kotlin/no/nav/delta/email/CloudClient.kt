@@ -12,9 +12,11 @@ import com.microsoft.graph.serviceclient.GraphServiceClient
 import com.microsoft.graph.models.*
 import com.microsoft.graph.users.item.sendmail.SendMailPostRequestBody
 import com.microsoft.graph.users.item.calendar.getschedule.GetSchedulePostRequestBody
+import com.microsoft.graph.users.item.events.item.cancel.CancelPostRequestBody
 import com.microsoft.graph.models.odataerrors.ODataError
 import com.microsoft.kiota.ApiException
 import java.lang.RuntimeException
+import java.net.URI
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import no.nav.delta.Environment
@@ -162,6 +164,40 @@ interface CloudClient {
 
     fun deleteMasterEvent(calendarEventId: String): Either<Throwable, Unit>
 
+    /**
+     * A returned Graph ID proves creation, not completed synchronization. When Teams was requested
+     * callers must persist that ID and retry until native teamsJoinUrl is present before marking synced.
+     */
+    fun createSharedEvent(
+        event: Event,
+        attendees: List<Participant>,
+        transactionId: String,
+    ): Either<Throwable, MasterEventResult> = UnsupportedOperationException("Shared events unsupported").left()
+
+    fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> =
+        UnsupportedOperationException("Shared events unsupported").left()
+
+    /**
+     * Attendees-only PATCH preserving supplied Graph responses. An opaque [changeKey] is not
+     * a precondition; only a quoted ETag (from snapshot.etag) is eligible for If-Match.
+     * Graph event If-Match behavior must be validated before relying on it for concurrency.
+     */
+    fun updateSharedAttendees(
+        calendarEventId: String,
+        attendees: List<SharedCalendarAttendee>,
+        changeKey: String? = null,
+    ): Either<Throwable, Unit> = UnsupportedOperationException("Shared events unsupported").left()
+
+    fun updateSharedDetails(calendarEventId: String, event: Event): Either<Throwable, MasterEventResult> =
+        UnsupportedOperationException("Shared events unsupported").left()
+
+    fun cancelSharedEvent(calendarEventId: String): Either<Throwable, Unit> =
+        UnsupportedOperationException("Shared events unsupported").left()
+
+    /** Requires application permission User.ReadBasic.All; groups are deliberately excluded. */
+    fun searchPeople(query: String): Either<Throwable, List<DirectoryPerson>> =
+        UnsupportedOperationException("Directory search unsupported").left()
+
     companion object {
         fun fromEnvironment(env: Environment): CloudClient {
             if (env.isDev || env.isLocal) {
@@ -181,30 +217,34 @@ interface CloudClient {
     }
 }
 
-class AzureCloudClient(
+class AzureCloudClient internal constructor(
     private val applicationEmailAddress: String,
-    azureAppClientId: String,
-    azureAppTenantId: String,
-    azureAppClientSecret: String
+    private val graphClient: GraphServiceClient,
 ) : CloudClient {
-    private val graphClient: GraphServiceClient
-
-    init {
-        val authProvider = AzureIdentityAuthenticationProvider(
-            ClientSecretCredentialBuilder()
-                .clientId(azureAppClientId)
-                .clientSecret(azureAppClientSecret)
-                .tenantId(azureAppTenantId)
+    constructor(
+        applicationEmailAddress: String,
+        azureAppClientId: String,
+        azureAppTenantId: String,
+        azureAppClientSecret: String,
+    ) : this(
+        applicationEmailAddress,
+        GraphServiceClient(
+            AzureIdentityAuthenticationProvider(
+                ClientSecretCredentialBuilder()
+                    .clientId(azureAppClientId)
+                    .clientSecret(azureAppClientSecret)
+                    .tenantId(azureAppTenantId)
+                    .build(),
+                arrayOf<String>(),
+                "https://graph.microsoft.com/.default",
+            ),
+            GraphClientFactory.create()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .callTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                 .build(),
-            arrayOf<String>(),
-            "https://graph.microsoft.com/.default"
-        )
-
-        this.graphClient = GraphServiceClient(
-            authProvider,
-            GraphClientFactory.create().build()
-        )
-    }
+        ),
+    )
 
     private fun emailAsRecipient(email: String) =
         Recipient().apply { emailAddress = EmailAddress().apply { address = email } }
@@ -699,9 +739,341 @@ class AzureCloudClient(
 
     override fun deleteMasterEvent(calendarEventId: String): Either<Throwable, Unit> =
         deleteEvent(calendarEventId)
+
+    private fun <T> sharedRequest(block: () -> T): Either<Throwable, T> {
+        if (applicationEmailAddress.isBlank()) {
+            return SharedGraphException(null, "MissingMailbox", null).left()
+        }
+        return try {
+            block().right()
+        } catch (e: SharedGraphException) {
+            e.left()
+        } catch (e: Exception) {
+            val api = e as? ApiException
+            val retryAfter = api?.responseHeaders?.entries
+                ?.firstOrNull { it.key.equals("Retry-After", ignoreCase = true) }
+                ?.value?.firstOrNull()?.toLongOrNull()?.takeIf { it >= 0 }
+            SharedGraphException(
+                api?.responseStatusCode,
+                (e as? ODataError)?.error?.code,
+                retryAfter,
+                e,
+            ).left()
+        }
+    }
+
+    private fun toSharedEventResult(
+        calendarEventId: String,
+        graphEvent: com.microsoft.graph.models.Event,
+    ): MasterEventResult {
+        val resource = graphEvent.attendees?.firstOrNull { it.type == AttendeeType.Resource }
+        return toMasterEventResult(calendarEventId, graphEvent).copy(
+            roomStatus = resource?.status?.response.toRoomBookingStatus(resource != null),
+        )
+    }
+
+    override fun createSharedEvent(
+        event: Event,
+        attendees: List<Participant>,
+        transactionId: String,
+    ): Either<Throwable, MasterEventResult> = sharedRequest {
+        if (transactionId.isBlank()) throw SharedGraphException(null, "MissingTransactionId", null)
+        requireIndividualAttendees(attendees.map { it.email })
+        val payload = prepareMasterCalendarEvent(event).apply {
+            this.attendees = sharedAttendees(event, attendees).map { it.toGraphAttendee() }
+            responseRequested = true
+            this.transactionId = transactionId
+            location = Location().apply { displayName = event.roomName ?: event.location }
+            body = ItemBody().apply {
+                contentType = BodyType.Html
+                content = sharedDescriptionHtml(event)
+            }
+        }
+        val created = graphClient.users().byUserId(applicationEmailAddress).calendar().events().post(payload)
+            ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+        val id = created.id ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+        val refreshed = if (event.isOnlineMeeting && created.onlineMeeting?.joinUrl == null) {
+            graphClient.users().byUserId(applicationEmailAddress).events().byEventId(id).get()
+                ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+        } else created
+        toSharedEventResult(id, refreshed)
+    }
+
+    override fun updateSharedAttendees(
+        calendarEventId: String,
+        attendees: List<SharedCalendarAttendee>,
+        changeKey: String?,
+    ): Either<Throwable, Unit> = sharedRequest {
+        requireIndividualAttendees(attendees.filterNot { it.isResource }.map { it.email })
+        val payload = com.microsoft.graph.models.Event().apply {
+            // Remove the SDK's default discriminator without marking it as a null PATCH field.
+            backingStore.clear()
+            this.attendees = attendees.map { it.toGraphAttendee() }
+        }
+        graphClient.users().byUserId(applicationEmailAddress).events().byEventId(calendarEventId)
+            .patch(payload) { config ->
+                // A changeKey is not an ETag. Only pass a genuine quoted ETag supplied by the caller.
+                // Graph event If-Match support still requires tenant validation; this is not a lock.
+                changeKey?.takeIf(::isQuotedEtag)?.let { config.headers.add("If-Match", it) }
+            }
+        Unit
+    }
+
+    private fun readSharedGraphEvent(calendarEventId: String): com.microsoft.graph.models.Event =
+        graphClient.users().byUserId(applicationEmailAddress).events().byEventId(calendarEventId).get {
+            it.queryParameters?.select = arrayOf(
+                "id", "attendees", "body", "changeKey", "onlineMeeting", "isOnlineMeeting", "isCancelled",
+            )
+        } ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+
+    override fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> = sharedRequest {
+        val graphEvent = readSharedGraphEvent(calendarEventId)
+        val result = toSharedEventResult(calendarEventId, graphEvent)
+        val classifications = mutableMapOf<String, Boolean>()
+        val attendees = graphEvent.attendees.orEmpty()
+        if (attendees.size > SHARED_MAX_ATTENDEES) {
+            throw SharedGraphException(null, "TooManyGraphAttendees", null)
+        }
+        SharedCalendarSnapshot(
+            attendees = attendees.map { attendee ->
+                val email = attendee.emailAddress?.address
+                    ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+                val isResource = attendee.type == AttendeeType.Resource
+                SharedCalendarAttendee(
+                    email = email,
+                    name = attendee.emailAddress?.name ?: attendee.emailAddress?.address.orEmpty(),
+                    response = attendee.status?.response,
+                    responseTime = attendee.status?.time,
+                    isResource = isResource,
+                    isIndividual = !isResource && classifications.getOrPut(email.lowercase()) {
+                        isIndividuallyAddressed(email)
+                    },
+                )
+            },
+            body = graphEvent.body?.content,
+            changeKey = graphEvent.changeKey,
+            roomStatus = result.roomStatus,
+            teamsJoinUrl = result.teamsJoinUrl,
+            teamsConferenceId = result.teamsConferenceId,
+            teamsDialIn = result.teamsDialIn,
+            isCancelled = graphEvent.isCancelled == true,
+            etag = (graphEvent.additionalData["@odata.etag"] as? String)?.takeIf(::isQuotedEtag),
+        )
+    }
+
+    /** GroupMember.Read.All grants the basic group fields needed for this bounded lookup. */
+    private fun isIndividuallyAddressed(email: String): Boolean {
+        val groups = graphClient.groups().get {
+            it.queryParameters?.select = arrayOf("id")
+            it.queryParameters?.filter = "mail eq '${email.replace("'", "''")}' or " +
+                "proxyAddresses/any(p:p eq 'smtp:${email.lowercase().replace("'", "''")}' or " +
+                "p eq 'SMTP:${email.lowercase().replace("'", "''")}')"
+            it.queryParameters?.top = 1
+            it.queryParameters?.count = true
+            it.headers.add("ConsistencyLevel", "eventual")
+        } ?: throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+        val values = groups.value ?: throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+        if (values.isEmpty() && groups.odataNextLink != null) {
+            throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+        }
+        return values.isEmpty()
+    }
+
+    private fun requireIndividualAttendees(emails: List<String>) {
+        if (emails.size > SHARED_MAX_ATTENDEES) throw SharedGraphException(400, "TooManyAttendees", null)
+        if (emails.distinctBy { it.lowercase() }.any { !isIndividuallyAddressed(it) }) {
+            throw SharedGraphException(400, "GroupInvitationsNotSupported", null)
+        }
+    }
+
+    override fun updateSharedDetails(
+        calendarEventId: String,
+        event: Event,
+    ): Either<Throwable, MasterEventResult> = sharedRequest {
+        val existing = readSharedGraphEvent(calendarEventId)
+        if (existing.isOnlineMeeting == true &&
+            (existing.body?.content == null || existing.body?.contentType != BodyType.Html)) {
+            throw SharedGraphException(null, "MissingMeetingBody", null)
+        }
+        val payload = com.microsoft.graph.models.Event().apply {
+            subject = event.title
+            start = event.startTime.toDateTimeTimeZone()
+            end = event.endTime.toDateTimeTimeZone()
+            location = Location().apply { displayName = event.roomName ?: event.location }
+            body = ItemBody().apply {
+                contentType = BodyType.Html
+                content = updateSharedBody(
+                    existing.body?.content?.takeIf { existing.body?.contentType == BodyType.Html },
+                    event,
+                )
+            }
+            if (event.isOnlineMeeting) {
+                isOnlineMeeting = true
+                onlineMeetingProvider = OnlineMeetingProviderType.TeamsForBusiness
+            }
+        }
+        graphClient.users().byUserId(applicationEmailAddress).events().byEventId(calendarEventId).patch(payload)
+        toSharedEventResult(calendarEventId, readSharedGraphEvent(calendarEventId))
+    }
+
+    override fun cancelSharedEvent(calendarEventId: String): Either<Throwable, Unit> = sharedRequest {
+        graphClient.users().byUserId(applicationEmailAddress).events().byEventId(calendarEventId)
+            .cancel().post(CancelPostRequestBody())
+        Unit
+    }
+
+    override fun searchPeople(query: String): Either<Throwable, List<DirectoryPerson>> = sharedRequest {
+        // /users is intentional: /people needs broader permissions and can include external contacts.
+        // The caller validates query length before this adapter is invoked.
+        val escaped = query.replace("'", "''")
+        val users = graphClient.users()
+        var page = users.get {
+            it.queryParameters?.select = arrayOf("id", "displayName", "mail")
+            it.queryParameters?.filter = "startswith(displayName,'$escaped') or startswith(mail,'$escaped')"
+            it.queryParameters?.top = DIRECTORY_MAX_RESULTS
+        } ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+        val people = LinkedHashMap<String, DirectoryPerson>()
+        val visited = mutableSetOf<String>()
+        for (pageNumber in 1..DIRECTORY_MAX_PAGES) {
+            for (user in page.value.orEmpty()) {
+                if (user.odataType != null && user.odataType != "#microsoft.graph.user") continue
+                val id = user.id ?: continue
+                val name = user.displayName ?: continue
+                val mail = user.mail?.takeIf(::isNavMail) ?: continue
+                people.putIfAbsent(mail.lowercase(), DirectoryPerson(id, name, mail))
+                if (people.size == DIRECTORY_MAX_RESULTS) return@sharedRequest people.values.toList()
+            }
+            val next = page.odataNextLink ?: break
+            if (pageNumber == DIRECTORY_MAX_PAGES || !visited.add(next)) break
+            val uri = URI(next)
+            if (uri.scheme != "https" || uri.host != "graph.microsoft.com" ||
+                uri.path != "/v1.0/users" || uri.userInfo != null || uri.port !in listOf(-1, 443)) {
+                throw SharedGraphException(null, "InvalidDirectoryNextLink", null)
+            }
+            page = users.withUrl(next).get() ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
+        }
+        people.values.toList()
+    }
 }
 
-class DummyCloudClient : CloudClient {
+class DummyCloudClient(
+    private val directoryPeople: List<DirectoryPerson> = listOf(
+        DirectoryPerson("dummy-person-1", "Alex Example", "alex.example@nav.no"),
+        DirectoryPerson("dummy-person-2", "Robin Example", "robin.example@nav.no"),
+    ),
+) : CloudClient {
+    private data class StoredSharedEvent(
+        val event: Event,
+        val snapshot: SharedCalendarSnapshot,
+        val result: MasterEventResult,
+    )
+
+    private val sharedEvents = mutableMapOf<String, StoredSharedEvent>()
+    private val sharedTransactions = mutableMapOf<String, String>()
+
+    @Synchronized
+    override fun createSharedEvent(
+        event: Event,
+        attendees: List<Participant>,
+        transactionId: String,
+    ): Either<Throwable, MasterEventResult> {
+        if (transactionId.isBlank()) return SharedGraphException(null, "MissingTransactionId", null).left()
+        sharedTransactions[transactionId]?.let { return sharedEvents.getValue(it).result.right() }
+        val id = "dummy-shared-" + java.util.UUID.nameUUIDFromBytes(transactionId.toByteArray(Charsets.UTF_8))
+        val result = dummyMasterEventResult(id, event).copy(
+            roomStatus = if (event.roomEmail != null) RoomBookingStatus.PENDING else null,
+        )
+        val people = sharedAttendees(event, attendees)
+        sharedEvents[id] = StoredSharedEvent(
+            event,
+            SharedCalendarSnapshot(
+                attendees = people,
+                body = sharedDescriptionHtml(event),
+                changeKey = "1",
+                roomStatus = result.roomStatus,
+                teamsJoinUrl = result.teamsJoinUrl,
+                teamsConferenceId = result.teamsConferenceId,
+                teamsDialIn = result.teamsDialIn,
+            ),
+            result,
+        )
+        sharedTransactions[transactionId] = id
+        return result.right()
+    }
+
+    @Synchronized
+    override fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> =
+        sharedEvents[calendarEventId]?.snapshot?.right()
+            ?: SharedGraphException(404, "ErrorItemNotFound", null).left()
+
+    @Synchronized
+    override fun updateSharedAttendees(
+        calendarEventId: String,
+        attendees: List<SharedCalendarAttendee>,
+        changeKey: String?,
+    ): Either<Throwable, Unit> {
+        val stored = sharedEvents[calendarEventId]
+            ?: return SharedGraphException(404, "ErrorItemNotFound", null).left()
+        if (stored.snapshot.isCancelled) return SharedGraphException(410, "EventCancelled", null).left()
+        // Like the Azure adapter, an opaque changeKey is not treated as an If-Match lock.
+        val snapshot = stored.snapshot.copy(
+            attendees = attendees.toList(),
+            changeKey = nextDummyVersion(stored.snapshot),
+            roomStatus = attendees.firstOrNull { it.isResource }?.response.toRoomBookingStatus(attendees.any { it.isResource }),
+        )
+        sharedEvents[calendarEventId] = stored.copy(
+            snapshot = snapshot,
+            result = stored.result.copy(roomStatus = snapshot.roomStatus),
+        )
+        return Unit.right()
+    }
+
+    @Synchronized
+    override fun updateSharedDetails(calendarEventId: String, event: Event): Either<Throwable, MasterEventResult> {
+        val stored = sharedEvents[calendarEventId]
+            ?: return SharedGraphException(404, "ErrorItemNotFound", null).left()
+        if (stored.snapshot.isCancelled) return SharedGraphException(410, "EventCancelled", null).left()
+        val meeting = if (event.isOnlineMeeting && stored.result.teamsJoinUrl == null) {
+            dummyMasterEventResult(calendarEventId, event)
+        } else stored.result
+        val snapshot = stored.snapshot.copy(
+            body = updateSharedBody(stored.snapshot.body, event),
+            changeKey = nextDummyVersion(stored.snapshot),
+            teamsJoinUrl = meeting.teamsJoinUrl,
+            teamsConferenceId = meeting.teamsConferenceId,
+            teamsDialIn = meeting.teamsDialIn,
+        )
+        val result = stored.result.copy(
+            teamsJoinUrl = snapshot.teamsJoinUrl,
+            teamsConferenceId = snapshot.teamsConferenceId,
+            teamsDialIn = snapshot.teamsDialIn,
+        )
+        sharedEvents[calendarEventId] = StoredSharedEvent(event, snapshot, result)
+        return result.right()
+    }
+
+    private fun nextDummyVersion(snapshot: SharedCalendarSnapshot): String =
+        ((snapshot.changeKey?.toLongOrNull() ?: 0) + 1).toString()
+
+    @Synchronized
+    override fun cancelSharedEvent(calendarEventId: String): Either<Throwable, Unit> {
+        val stored = sharedEvents[calendarEventId]
+            ?: return SharedGraphException(404, "ErrorItemNotFound", null).left()
+        if (!stored.snapshot.isCancelled) {
+            sharedEvents[calendarEventId] = stored.copy(snapshot = stored.snapshot.copy(
+                isCancelled = true,
+                changeKey = nextDummyVersion(stored.snapshot),
+            ))
+        }
+        return Unit.right()
+    }
+
+    override fun searchPeople(query: String): Either<Throwable, List<DirectoryPerson>> =
+        directoryPeople.filter {
+            isNavMail(it.email) &&
+                (it.name.startsWith(query, ignoreCase = true) || it.email.startsWith(query, ignoreCase = true))
+        }.distinctBy { it.email.lowercase() }.take(DIRECTORY_MAX_RESULTS).right()
+
     override fun sendEmail(
         subject: String,
         body: String,
@@ -901,6 +1273,71 @@ private fun String.escapeHtml(): String =
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
+
+private fun sharedDescriptionHtml(event: Event): String =
+    """<div id="delta-shared-description">${event.description.replace("\n", "<br>")}</div>"""
+
+private fun sharedAttendees(event: Event, attendees: List<Participant>): List<SharedCalendarAttendee> =
+    attendees.filterNot { it.email.equals(event.roomEmail, ignoreCase = true) }
+        .distinctBy { it.email.lowercase() }
+        .map { SharedCalendarAttendee(it.email, it.name) } +
+        listOfNotNull(event.roomEmail?.let {
+            SharedCalendarAttendee(it, event.roomName ?: it, isResource = true)
+        })
+
+private fun SharedCalendarAttendee.toGraphAttendee(): Attendee =
+    Attendee().apply {
+        emailAddress = EmailAddress().apply {
+            address = email
+            name = this@toGraphAttendee.name
+        }
+
+        type = if (isResource) AttendeeType.Resource else AttendeeType.Required
+        if (response != null || responseTime != null) {
+            status = ResponseStatus().apply {
+                response = this@toGraphAttendee.response
+                time = responseTime
+            }
+        }
+    }
+
+private fun isQuotedEtag(value: String): Boolean =
+    Regex("(?:W/)?\"[\\x21\\x23-\\x7E]+\"").matches(value)
+
+private const val DIRECTORY_MAX_RESULTS = 50
+private const val DIRECTORY_MAX_PAGES = 5
+private const val SHARED_MAX_ATTENDEES = 500
+
+private fun isNavMail(email: String): Boolean =
+    Regex("""[^@\s]+@nav\.no""", RegexOption.IGNORE_CASE).matches(email)
+
+private fun ResponseType?.toRoomBookingStatus(hasResource: Boolean): RoomBookingStatus? =
+    if (!hasResource) null else when (this) {
+        ResponseType.Accepted -> RoomBookingStatus.ACCEPTED
+        ResponseType.Declined -> RoomBookingStatus.DECLINED
+        else -> RoomBookingStatus.PENDING
+    }
+
+private fun updateSharedBody(existingBody: String?, event: Event): String {
+    val description = sharedDescriptionHtml(event)
+    if (existingBody == null) return description
+    val opening = Regex("""<div\b[^>]*\bid\s*=\s*["']delta-shared-description["'][^>]*>""", RegexOption.IGNORE_CASE)
+        .find(existingBody)
+    if (opening != null) {
+        var depth = 1
+        for (tag in Regex("""</?div\b[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(existingBody, opening.range.last + 1)) {
+            depth += if (tag.value.startsWith("</")) -1 else 1
+            if (depth == 0) return existingBody.replaceRange(opening.range.first, tag.range.last + 1, description)
+        }
+        throw SharedGraphException(null, "InvalidMeetingBody", null)
+    }
+    // Exchange may normalize away our marker. Preserve the entire unknown body rather than
+    // attempting to identify or reconstruct its native Teams join blob.
+    val bodyTag = Regex("""<body\b[^>]*>""", RegexOption.IGNORE_CASE).find(existingBody)
+    return if (bodyTag != null) existingBody.replaceRange(bodyTag.range.last + 1, bodyTag.range.last + 1, description)
+    else description + existingBody
+}
 
 /**
  * Builds the participant invite body: the event description, plus a Delta-rendered room/Teams

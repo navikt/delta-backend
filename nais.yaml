@@ -38,6 +38,9 @@ spec:
     autoInstrumentation:
       enabled: true
       runtime: java
+  prometheus:
+    enabled: true
+    path: /internal/metrics
   env:
     - name: DELTA_EMAIL_ADDRESS
       value: "ikkesvar.delta@nav.no"
@@ -52,6 +55,8 @@ spec:
       value: "all"
     - name: FEATURE_TEAMS_MEETING
       value: "all"
+    - name: FEATURE_SHARED_CALENDAR
+      value: "off"
   envFrom:
     - secret: delta-backend-webhook-secret
   leaderElection: true

@@ -13,6 +13,8 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.coroutines.launch
 import no.nav.delta.Environment
+import no.nav.delta.calendar.SharedCalendarRepository
+import java.sql.SQLException
 import no.nav.delta.email.CalendarEventNotFoundException
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.RoomBookingStatus
@@ -30,6 +32,7 @@ fun Route.webhookApi(
     cloudClient: CloudClient,
     env: Environment,
 ) {
+    val sharedCalendar = SharedCalendarRepository(database)
     route("/webhook/calendar") {
         // Support GET as well, though Graph validates notificationUrl with POST.
         get {
@@ -53,12 +56,32 @@ fun Route.webhookApi(
                 return@post
             }
 
-            // Acknowledge immediately — MS Graph requires a response within 10 seconds.
+            val legacyNotifications = mutableListOf<GraphNotification>()
+            try {
+                for (notification in payload.value) {
+                    if (notification.clientState != env.webhookClientState) {
+                        logger.warn("Received notification with invalid clientState, ignoring")
+                        continue
+                    }
+                    if (notification.changeType != "updated") {
+                        continue
+                    }
+                    val calendarId = extractCalendarEventId(notification.resource)
+                    if (calendarId == null || !sharedCalendar.enqueueReconciliation(calendarId)) {
+                        legacyNotifications.add(notification)
+                    }
+                }
+            } catch (error: SQLException) {
+                logger.error("Could not persist shared calendar reconciliation", error)
+                return@post call.respond(HttpStatusCode.ServiceUnavailable)
+            }
+
+            // Shared notifications are durable before acknowledging; legacy processing is unchanged.
             // Processing is offloaded to a background coroutine so the 202 is committed first.
             call.respond(HttpStatusCode.Accepted)
 
             call.application.launch {
-                for (notification in payload.value) {
+                for (notification in legacyNotifications) {
                     if (notification.clientState != env.webhookClientState) {
                         logger.warn("Received notification with invalid clientState, ignoring")
                         continue

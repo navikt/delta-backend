@@ -12,7 +12,9 @@ paths:
       tags:
         - admin
       description: >-
-        Create an event. With room/Teams fields (see CreateEvent), a room booking and/or Teams
+        Create an event. Shared-mode events save immediately with PENDING calendar sync;
+        invitations and room/Teams provisioning complete in the background. For legacy events,
+        with room/Teams fields (see CreateEvent), a room booking and/or Teams
         meeting is created synchronously before the event is saved, so the response already
         contains roomStatus and the Teams details. This adds ~0.3–0.8 s to the request.
       operationId: createEvent
@@ -68,6 +70,8 @@ paths:
         Any change (title, time, ...) is also applied to an existing room booking/Teams meeting.
         A new roomEmail+roomName changes the room (roomStatus becomes PENDING until the room
         answers). A room cannot be removed and Teams cannot be turned off; delete the event instead.
+        Shared-mode changes save immediately and expose pending/failed calendar sync.
+        sendNotificationEmail cannot suppress synchronization in shared mode.
       operationId: changeEvent
       parameters:
         - name: id
@@ -93,6 +97,118 @@ paths:
           $ref: "#/components/responses/RoomTeamsBadRequest"
         "502":
           $ref: "#/components/responses/RoomTeamsBadGateway"
+  /admin/event/{id}/invitations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [admin]
+      operationId: invitePeople
+      description: >-
+        Hosts invite individual Nav users to a SHARED event. No group invitations or
+        invitations on recurring occurrences. The batch is atomic and reserves capacity.
+        Calendar delivery is asynchronous; a saved invitation is not yet delivered.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/InviteeRequest"
+      responses:
+        "200":
+          description: Invitations saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FullEvent"
+        "400":
+          description: Invalid input, capacity or attendee limit, or unsupported event mode
+        "403":
+          description: Caller is not a host
+        "404":
+          description: Event not found
+    delete:
+      tags: [admin]
+      operationId: revokeInvitation
+      description: Hosts revoke an invitation; the individual's calendar cancellation is queued.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailObject"
+      responses:
+        "200":
+          description: Invitation revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FullEvent"
+        "400":
+          description: Invalid removal or unsupported event mode
+        "403":
+          description: Caller is not a host
+        "404":
+          description: Event or invitation not found
+  /admin/event/{id}/calendar/retry:
+    post:
+      tags: [admin]
+      operationId: retryCalendarSync
+      description: Hosts retry failed shared calendar synchronization using the existing durable intent.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Retry queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FullEvent"
+        "400":
+          description: Event does not use shared calendars
+        "403":
+          description: Caller is not a host
+        "404":
+          description: Event not found
+  /directory/search:
+    get:
+      tags: [general]
+      operationId: searchPeople
+      description: >-
+        Search basic Nav people records for the invitation picker. Requires peopleSearch
+        feature access and User.ReadBasic.All. Groups are not included.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 100
+      responses:
+        "200":
+          description: Matching people
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DirectoryPerson"
+        "400":
+          description: Feature disabled or invalid query
+        "502":
+          description: Directory search unavailable
   /admin/event/{id}/category:
     post:
       tags:
@@ -699,6 +815,13 @@ components:
           type: integer
         sendNotificationEmail:
           type: boolean
+          description: Ignored for SHARED events, which always synchronize their calendars.
+        invitees:
+          type: array
+          nullable: true
+          description: Individual invitations; SHARED non-recurring events only. Groups are deferred.
+          items:
+            $ref: "#/components/schemas/InviteeRequest"
         categories:
           type: array
           items:
@@ -735,6 +858,14 @@ components:
     Event:
       type: object
       properties:
+        inviteMode:
+          type: string
+          enum: [PER_PARTICIPANT, SHARED]
+        calendarSyncStatus:
+          type: string
+          enum: [PENDING, SYNCED, FAILED]
+          nullable: true
+          description: Shared calendar synchronization, independent of room acceptance.
         title:
           type: string
         description:
@@ -799,6 +930,42 @@ components:
           type: boolean
         teamsMeeting:
           type: boolean
+        sharedCalendar:
+          type: boolean
+          description: Caller can create new shared-calendar events.
+        peopleSearch:
+          type: boolean
+          description: Caller can use directory-backed people search.
+    InviteeRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Individually addressed Nav user; no distribution lists or groups.
+    DirectoryPerson:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+    Invitation:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        status:
+          type: string
+          enum: [INVITED, REGISTERED, DECLINED, FORWARDED]
     RoomList:
       type: object
       properties:
@@ -873,6 +1040,15 @@ components:
     FullEvent:
       type: object
       properties:
+        invited:
+          type: array
+          description: Invitation states; DECLINED is visible to hosts only.
+          items:
+            $ref: "#/components/schemas/Invitation"
+        calendarSyncError:
+          type: string
+          nullable: true
+          description: Sanitized shared-sync error visible to hosts only.
         event:
           $ref: "#/components/schemas/Event"
         participants:
