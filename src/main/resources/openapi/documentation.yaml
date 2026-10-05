@@ -32,6 +32,8 @@ paths:
                 $ref: "#/components/schemas/FullEvent"
         "400":
           $ref: "#/components/responses/RoomTeamsBadRequest"
+        "409":
+          description: Capacity or shared-calendar attendee limit conflict
         "502":
           $ref: "#/components/responses/RoomTeamsBadGateway"
   /admin/event/{id}:
@@ -95,6 +97,8 @@ paths:
                 $ref: '#/components/schemas/FullEvent'
         "400":
           $ref: "#/components/responses/RoomTeamsBadRequest"
+        "409":
+          description: Capacity or shared-calendar attendee limit conflict
         "502":
           $ref: "#/components/responses/RoomTeamsBadGateway"
   /admin/event/{id}/invitations:
@@ -128,7 +132,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/FullEvent"
         "400":
-          description: Invalid input, capacity or attendee limit, or unsupported event mode
+          description: Invalid input or unsupported event mode
+        "409":
+          description: Capacity or calendar attendee limit conflict
         "403":
           description: Caller is not a host
         "404":
@@ -187,7 +193,7 @@ paths:
       operationId: searchPeople
       description: >-
         Search basic Nav people records for the invitation picker. Requires peopleSearch
-        feature access and User.ReadBasic.All. Groups are not included.
+        feature access and the User.Read.All application permission. Groups are not included.
       parameters:
         - name: q
           in: query

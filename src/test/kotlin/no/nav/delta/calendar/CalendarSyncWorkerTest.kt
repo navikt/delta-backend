@@ -23,6 +23,29 @@ import org.junit.jupiter.api.Test
 
 class CalendarSyncWorkerTest {
     @Test
+    fun `cancellation retry treats an already cancelled Graph event as complete`() {
+        TestDatabase.create().use { db ->
+            val repository = SharedCalendarRepository(db.database)
+            val dummy = DummyCloudClient()
+            var cancelCalls = 0
+            val cloud = object : CloudClient by dummy {
+                override fun getSharedEvent(calendarEventId: String) = dummy.getSharedEvent(calendarEventId)
+                override fun getSharedEventForCancellation(calendarEventId: String) =
+                    getSharedEvent(calendarEventId).map { it.copy(isCancelled = true) }
+                override fun cancelSharedEvent(calendarEventId: String) =
+                    dummy.cancelSharedEvent(calendarEventId).also { cancelCalls++ }
+            }
+            val event = repository.create(futureEvent(), Participant("host@nav.no", "Host"))
+            val worker = CalendarSyncWorker(repository, cloud)
+            worker.runOnce()
+            assertTrue(repository.delete(event.id).isRight())
+            assertTrue(worker.runOnce())
+            assertEquals(0, cancelCalls)
+            assertEquals(0, repository.statistics().pending)
+        }
+    }
+
+    @Test
     fun `periodic reconciliation heals missed RSVP without sending meeting updates`() {
         TestDatabase.create().use { db ->
             val repository = SharedCalendarRepository(db.database)
@@ -37,6 +60,8 @@ class CalendarSyncWorkerTest {
                         } else it
                     })
                 }
+                override fun getSharedEventForSync(calendarEventId: String, knownAttendeeEmails: Set<String>) =
+                    getSharedEvent(calendarEventId)
                 override fun updateSharedAttendees(calendarEventId: String, attendees: List<SharedCalendarAttendee>, changeKey: String?) =
                     dummy.updateSharedAttendees(calendarEventId, attendees, changeKey).also { writes++ }
             }
@@ -61,6 +86,8 @@ class CalendarSyncWorkerTest {
             val cloud = object : CloudClient by dummy {
                 override fun getSharedEvent(calendarEventId: String) =
                     dummy.getSharedEvent(calendarEventId).map { it.copy(teamsJoinUrl = null) }
+                override fun getSharedEventForSync(calendarEventId: String, knownAttendeeEmails: Set<String>) =
+                    getSharedEvent(calendarEventId)
                 override fun updateSharedDetails(calendarEventId: String, event: no.nav.delta.event.Event) =
                     dummy.updateSharedDetails(calendarEventId, event).map {
                         writes++
@@ -129,6 +156,8 @@ class CalendarSyncWorkerTest {
             var mailThrottled = true
             val cloud = object : CloudClient by dummy {
                 override fun getSharedEvent(calendarEventId: String) = snapshot?.right() ?: dummy.getSharedEvent(calendarEventId)
+                override fun getSharedEventForSync(calendarEventId: String, knownAttendeeEmails: Set<String>) =
+                    getSharedEvent(calendarEventId)
                 override fun sendEmail(subject: String, body: String, toRecipients: List<String>,
                     ccRecipients: List<String>, bccRecipients: List<String>) {
                     if (mailThrottled) {
@@ -257,6 +286,13 @@ class CalendarSyncWorkerTest {
                     attendees: List<SharedCalendarAttendee>,
                     changeKey: String?,
                 ) = dummy.updateSharedAttendees(calendarEventId, attendees, changeKey).also { attendeeWrites++ }
+
+                override fun updateSharedAttendees(
+                    calendarEventId: String,
+                    attendees: List<SharedCalendarAttendee>,
+                    changeKey: String?,
+                    existingAttendeeEmails: Set<String>,
+                ) = dummy.updateSharedAttendees(calendarEventId, attendees, changeKey).also { attendeeWrites++ }
             }
             val event = repository.create(futureEvent(), Participant("host@nav.no", "Host"))
             val worker = CalendarSyncWorker(repository, cloud)
@@ -321,6 +357,8 @@ class CalendarSyncWorkerTest {
             val cloud = object : CloudClient by dummy {
                 override fun getSharedEvent(calendarEventId: String) =
                     overrideSnapshot?.right() ?: dummy.getSharedEvent(calendarEventId)
+                override fun getSharedEventForSync(calendarEventId: String, knownAttendeeEmails: Set<String>) =
+                    getSharedEvent(calendarEventId)
 
                 override fun updateSharedAttendees(
                     calendarEventId: String,

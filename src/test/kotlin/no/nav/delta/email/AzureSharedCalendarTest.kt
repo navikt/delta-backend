@@ -294,6 +294,57 @@ class AzureSharedCalendarTest {
     }
 
     @Test
+    fun `reconciliation checks only previously unknown forwarded attendees`() {
+        val client = client(
+            200 to """{"attendees":[
+                {"emailAddress":{"address":"host@nav.no"},"type":"required"},
+                {"emailAddress":{"address":"person@nav.no"},"type":"required"},
+                {"emailAddress":{"address":"forwarded-group@nav.no"},"type":"required"}]}""",
+            200 to """{"value":[{"id":"group-id"}]}""",
+        )
+        val snapshot = client.getSharedEventForSync(
+            "shared", setOf("host@nav.no", "person@nav.no"),
+        ).getOrNull()!!
+        assertTrue(snapshot.attendees[0].isIndividual)
+        assertTrue(snapshot.attendees[1].isIndividual)
+        assertFalse(snapshot.attendees[2].isIndividual)
+        assertEquals(2, requests.size)
+        assertTrue(requests.last().url.queryParameter("\$filter")!!.contains("forwarded-group@nav.no"))
+    }
+
+    @Test
+    fun `cancellation snapshot does not perform per-attendee group lookups`() {
+        val client = client(
+            200 to """{"attendees":[
+                {"emailAddress":{"address":"host@nav.no"},"type":"required"},
+                {"emailAddress":{"address":"group@nav.no"},"type":"required"}]}""",
+        )
+        val snapshot = client.getSharedEventForCancellation("shared").getOrNull()!!
+        assertEquals(2, snapshot.attendees.size)
+        assertEquals(1, requests.size)
+    }
+
+    @Test
+    fun `attendee patch validates only newly added addresses`() {
+        val client = client(
+            200 to """{"value":[]}""",
+            200 to "",
+        )
+        assertTrue(client.updateSharedAttendees(
+            "shared",
+            listOf(
+                SharedCalendarAttendee("existing@nav.no", "Existing"),
+                SharedCalendarAttendee("new@nav.no", "New"),
+            ),
+            null,
+            setOf("existing@nav.no"),
+        ).isRight())
+        assertEquals(2, requests.size)
+        assertTrue(requests[0].url.encodedPath.endsWith("/groups"))
+        assertTrue(requests[1].url.encodedPath.endsWith("/events/shared"))
+    }
+
+    @Test
     fun `group classification directory failures never silently classify attendee as user`() {
         val client = client(
             200 to """{"attendees":[{"emailAddress":{"address":"group@nav.no"},"type":"required"}]}""",

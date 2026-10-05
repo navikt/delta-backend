@@ -1,7 +1,7 @@
 # Shared calendar operations
 
 `FEATURE_SHARED_CALENDAR` starts at `off`. Enable `maintainers` only when the
-frontend handles pending/failed saves and `User.ReadBasic.All` has admin consent
+frontend handles pending/failed saves and `User.Read.All` has admin consent
 for people search. Existing SHARED events continue synchronizing when the flag
 is turned off; it changes the model selected for new events, not existing ones.
 

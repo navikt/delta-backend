@@ -58,6 +58,13 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             it.oldestFailureAgeSeconds.toDouble(), it.estimatedRecipientsToday)
     }
 
+    fun knownAttendeeEmails(id: UUID): Set<String> = transaction { c ->
+        c.prepareStatement("SELECT email FROM participant WHERE event_id=?").use { s ->
+            s.setObject(1, id)
+            s.executeQuery().use { it.toList { getString(1).lowercase() }.toSet() }
+        }
+    }
+
     fun recordRecipients(count: Int) {
         if (count < 0) throw SharedCalendarValidationException(400, "Recipient estimate cannot be negative")
         transaction { c -> recordRecipients(c, count, Instant.now()) }
@@ -125,12 +132,14 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val event = c.prepareStatement("""
                 UPDATE event SET title=?,description=?,start_time=?,end_time=?,location=?,public=?,
                     participant_limit=?,signup_deadline=?,room_email=COALESCE(?,room_email),
-                    room_name=COALESCE(?,room_name),is_online_meeting=COALESCE(?,is_online_meeting)
+                    room_name=COALESCE(?,room_name),is_online_meeting=COALESCE(?,is_online_meeting),
+                    room_status=CASE WHEN CAST(? AS TEXT) IS NOT NULL AND room_email IS DISTINCT FROM CAST(? AS TEXT)
+                        THEN 'PENDING' ELSE room_status END
                 WHERE id=? RETURNING *
             """.trimIndent()).use { s ->
                 val values = listOf(draft.title, draft.description, draft.startTime, draft.endTime, draft.location,
                     draft.public, draft.participantLimit, draft.signupDeadline, draft.roomEmail, draft.roomName,
-                    draft.isOnlineMeeting, id)
+                    draft.isOnlineMeeting, draft.roomEmail, draft.roomEmail, id)
                 values.forEachIndexed { index, value -> s.setObject(index + 1, value) }
                 s.executeQuery().use { it.next(); it.toEvent() }
             }
@@ -294,12 +303,24 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         return enqueueReconciliation(id).isRight()
     }
 
-    internal fun initializeOccurrence(c: Connection, event: Event, requests: List<InviteeRequest>): Event {
-        c.exec("UPDATE event SET invite_mode='SHARED',calendar_sync_status='PENDING' WHERE id=?", event.id)
-        enqueue(c, event.id, details = true)
+    internal fun initializeOccurrence(
+        c: Connection,
+        event: Event,
+        requests: List<InviteeRequest>,
+        detailsChanged: Boolean = true,
+    ): Event {
+        c.exec("""
+            UPDATE event SET invite_mode='SHARED',
+                calendar_sync_status=CASE WHEN ? THEN 'PENDING' ELSE calendar_sync_status END
+            WHERE id=?
+        """.trimIndent(), detailsChanged, event.id)
+        enqueue(c, event.id, details = detailsChanged)
         invite(c, event, requests)
         requireCapacity(c, event, 0)
-        return event.copy(inviteMode = InviteMode.SHARED, calendarSyncStatus = CalendarSyncStatus.PENDING)
+        return event.copy(
+            inviteMode = InviteMode.SHARED,
+            calendarSyncStatus = if (detailsChanged) CalendarSyncStatus.PENDING else event.calendarSyncStatus,
+        )
     }
 
     fun reconcile(id: UUID, snapshots: List<SharedCalendarAttendeeSnapshot>): Either<ExceptionWithDefaultResponse, Unit> =

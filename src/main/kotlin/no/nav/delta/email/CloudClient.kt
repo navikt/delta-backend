@@ -177,6 +177,14 @@ interface CloudClient {
     fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> =
         UnsupportedOperationException("Shared events unsupported").left()
 
+    fun getSharedEventForSync(
+        calendarEventId: String,
+        knownAttendeeEmails: Set<String>,
+    ): Either<Throwable, SharedCalendarSnapshot> = getSharedEvent(calendarEventId)
+
+    fun getSharedEventForCancellation(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> =
+        getSharedEvent(calendarEventId)
+
     /**
      * Attendees-only PATCH preserving supplied Graph responses. An opaque [changeKey] is not
      * a precondition; only a quoted ETag (from snapshot.etag) is eligible for If-Match.
@@ -188,13 +196,20 @@ interface CloudClient {
         changeKey: String? = null,
     ): Either<Throwable, Unit> = UnsupportedOperationException("Shared events unsupported").left()
 
+    fun updateSharedAttendees(
+        calendarEventId: String,
+        attendees: List<SharedCalendarAttendee>,
+        changeKey: String?,
+        existingAttendeeEmails: Set<String>,
+    ): Either<Throwable, Unit> = updateSharedAttendees(calendarEventId, attendees, changeKey)
+
     fun updateSharedDetails(calendarEventId: String, event: Event): Either<Throwable, MasterEventResult> =
         UnsupportedOperationException("Shared events unsupported").left()
 
     fun cancelSharedEvent(calendarEventId: String): Either<Throwable, Unit> =
         UnsupportedOperationException("Shared events unsupported").left()
 
-    /** Requires application permission User.ReadBasic.All; groups are deliberately excluded. */
+    /** Requires application permission User.Read.All; groups are deliberately excluded. */
     fun searchPeople(query: String): Either<Throwable, List<DirectoryPerson>> =
         UnsupportedOperationException("Directory search unsupported").left()
 
@@ -803,8 +818,20 @@ class AzureCloudClient internal constructor(
         calendarEventId: String,
         attendees: List<SharedCalendarAttendee>,
         changeKey: String?,
+    ): Either<Throwable, Unit> = updateSharedAttendees(
+        calendarEventId, attendees, changeKey, emptySet(),
+    )
+
+    override fun updateSharedAttendees(
+        calendarEventId: String,
+        attendees: List<SharedCalendarAttendee>,
+        changeKey: String?,
+        existingAttendeeEmails: Set<String>,
     ): Either<Throwable, Unit> = sharedRequest {
-        requireIndividualAttendees(attendees.filterNot { it.isResource }.map { it.email })
+        requireIndividualAttendees(
+            attendees.filterNot { it.isResource }.map { it.email },
+            existingAttendeeEmails,
+        )
         val payload = com.microsoft.graph.models.Event().apply {
             // Remove the SDK's default discriminator without marking it as a null PATCH field.
             backingStore.clear()
@@ -826,7 +853,26 @@ class AzureCloudClient internal constructor(
             )
         } ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
 
-    override fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> = sharedRequest {
+    override fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> =
+        sharedRequest { readSharedSnapshot(calendarEventId) { true } }
+
+    override fun getSharedEventForSync(
+        calendarEventId: String,
+        knownAttendeeEmails: Set<String>,
+    ): Either<Throwable, SharedCalendarSnapshot> {
+        val known = knownAttendeeEmails.mapTo(mutableSetOf()) { it.lowercase() }
+        return sharedRequest { readSharedSnapshot(calendarEventId) { email -> email.lowercase() !in known } }
+    }
+
+    override fun getSharedEventForCancellation(
+        calendarEventId: String,
+    ): Either<Throwable, SharedCalendarSnapshot> =
+        sharedRequest { readSharedSnapshot(calendarEventId) { false } }
+
+    private fun readSharedSnapshot(
+        calendarEventId: String,
+        shouldClassify: (String) -> Boolean,
+    ): SharedCalendarSnapshot {
         val graphEvent = readSharedGraphEvent(calendarEventId)
         val result = toSharedEventResult(calendarEventId, graphEvent)
         val classifications = mutableMapOf<String, Boolean>()
@@ -834,7 +880,7 @@ class AzureCloudClient internal constructor(
         if (attendees.size > SHARED_MAX_ATTENDEES) {
             throw SharedGraphException(null, "TooManyGraphAttendees", null)
         }
-        SharedCalendarSnapshot(
+        return SharedCalendarSnapshot(
             attendees = attendees.map { attendee ->
                 val email = attendee.emailAddress?.address
                     ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
@@ -845,9 +891,8 @@ class AzureCloudClient internal constructor(
                     response = attendee.status?.response,
                     responseTime = attendee.status?.time,
                     isResource = isResource,
-                    isIndividual = !isResource && classifications.getOrPut(email.lowercase()) {
-                        isIndividuallyAddressed(email)
-                    },
+                    isIndividual = isResource || !shouldClassify(email) ||
+                        classifications.getOrPut(email.lowercase()) { isIndividuallyAddressed(email) },
                 )
             },
             body = graphEvent.body?.content,
@@ -861,7 +906,7 @@ class AzureCloudClient internal constructor(
         )
     }
 
-    /** GroupMember.Read.All grants the basic group fields needed for this bounded lookup. */
+    /** GroupMember.Read.All authorizes the directory group lookup used to detect list aliases. */
     private fun isIndividuallyAddressed(email: String): Boolean {
         val groups = graphClient.groups().get {
             it.queryParameters?.select = arrayOf("id")
@@ -879,9 +924,13 @@ class AzureCloudClient internal constructor(
         return values.isEmpty()
     }
 
-    private fun requireIndividualAttendees(emails: List<String>) {
+    private fun requireIndividualAttendees(emails: List<String>, knownEmails: Set<String> = emptySet()) {
         if (emails.size > SHARED_MAX_ATTENDEES) throw SharedGraphException(400, "TooManyAttendees", null)
-        if (emails.distinctBy { it.lowercase() }.any { !isIndividuallyAddressed(it) }) {
+        val known = knownEmails.mapTo(mutableSetOf()) { it.lowercase() }
+        if (emails.distinctBy { it.lowercase() }.any {
+                it.lowercase() !in known && !isIndividuallyAddressed(it)
+            }
+        ) {
             throw SharedGraphException(400, "GroupInvitationsNotSupported", null)
         }
     }

@@ -219,8 +219,11 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                 if (createEvent.categories != null) {
                     replaceEventCategories(connection, updatedEvent.id, createEvent.categories)
                 }
+                val detailsChanged = sharedCalendarDetailsChanged(occurrence.event, updatedEvent)
                 if (updatedEvent.inviteMode == InviteMode.SHARED) {
-                    SharedCalendarRepository(this).initializeOccurrence(connection, updatedEvent, createEvent.invitees ?: emptyList())
+                    SharedCalendarRepository(this).initializeOccurrence(
+                        connection, updatedEvent, createEvent.invitees ?: emptyList(), detailsChanged,
+                    )
                 }
                 updateRecurringOccurrence(
                     connection = connection,
@@ -229,7 +232,7 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                     occurrenceIndex = if (!isSplit) occurrence.occurrenceIndex else index,
                     occurrenceDate = desired.occurrenceDate,
                 )
-                if (updatedEvent.inviteMode == InviteMode.SHARED)
+                if (updatedEvent.inviteMode == InviteMode.SHARED && detailsChanged)
                     updatedEvent.copy(calendarSyncStatus = CalendarSyncStatus.PENDING)
                 else updatedEvent
             }
@@ -968,3 +971,13 @@ private fun isHostOf(connection: Connection, eventId: UUID, email: String): Bool
     preparedStatement.setString(2, email)
     return preparedStatement.executeQuery().next()
 }
+
+private fun sharedCalendarDetailsChanged(before: Event, after: Event): Boolean =
+    before.title != after.title ||
+        before.description != after.description ||
+        before.startTime != after.startTime ||
+        before.endTime != after.endTime ||
+        before.location != after.location ||
+        before.roomEmail != after.roomEmail ||
+        before.roomName != after.roomName ||
+        before.isOnlineMeeting != after.isOnlineMeeting

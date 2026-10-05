@@ -112,9 +112,9 @@ class CalendarSyncWorker(
                 if (!repository.recordGraphId(work, graphId)) return
             }
             graphId?.let {
-                val snapshot = cloudClient.getSharedEvent(it).fold({ throw it }, { it })
+                val snapshot = cloudClient.getSharedEventForCancellation(it).fold({ throw it }, { it })
                 repository.recordEstimatedRecipients(work, snapshot.attendees.size)
-                cloudClient.cancelSharedEvent(it).fold({ throw it }, {})
+                if (!snapshot.isCancelled) cloudClient.cancelSharedEvent(it).fold({ throw it }, {})
             }
             repository.complete(work)
             metrics.succeeded()
@@ -139,7 +139,8 @@ class CalendarSyncWorker(
                 return
             }
         }
-        val snapshot = cloudClient.getSharedEvent(graphId).fold({ throw it }, { it })
+        val knownAttendees = repository.knownAttendeeEmails(work.eventId)
+        val snapshot = cloudClient.getSharedEventForSync(graphId, knownAttendees).fold({ throw it }, { it })
         if (snapshot.isCancelled) {
             repository.fail(work)
             metrics.failed()
@@ -209,7 +210,9 @@ class CalendarSyncWorker(
         val after = target.map { it.email.lowercase() to it.isResource }.toSet()
         if (before != after) {
             repository.recordEstimatedRecipients(work, (before - after).size + (after - before).size)
-            cloudClient.updateSharedAttendees(graphId, target, snapshot.etag).fold({ throw it }, {})
+            cloudClient.updateSharedAttendees(
+                graphId, target, snapshot.etag, snapshot.attendees.map { it.email }.toSet(),
+            ).fold({ throw it }, {})
         }
         val creationDetailsChanged = creation?.event?.let { original ->
             original.title != event.title || original.description != event.description ||

@@ -19,8 +19,9 @@ Shared recurring occurrences still synchronize their calendars normally.
 
 Use `GET /directory/search?q=...` for basic person records (`id`, `name`, `email`).
 Debounce input, require at least two characters, and display unavailable/search
-errors rather than treating them as empty results. Search requires the backend's
-`User.ReadBasic.All` permission; no group members or group metadata are returned.
+errors rather than treating them as empty results. App-only search requires the
+backend's `User.Read.All` application permission; the API returns only the basic
+fields in its response and does not expose group members or metadata.
 
 Creation can include `invitees: [{ "email": "colleague@nav.no" }]`.
 Only individually addressed Nav users are supported. Additional invitations use

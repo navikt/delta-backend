@@ -32,7 +32,7 @@ up as an ordinary Outlook meeting.
 - Graph access is app-only, through the Delta mailbox. Granted application permissions:
   `Calendars.ReadWrite`, `Mail.Send`, `Place.Read.All`, `GroupMember.Read.All`. For users, only
   `User.Read` is granted, which reads the signed-in user's profile and gives nothing to an app
-  running without a signed-in user. `User.Read.All` and `User.ReadBasic.All` are **not** granted.
+  running without a signed-in user. `User.Read.All` is **not** granted.
 - Dev and local use `DummyCloudClient`, so we can't check how Exchange behaves in dev.
 - `participantLimit = 0` means unlimited. Hosts count towards the limit (`checkIfEventIsFull`).
 
@@ -112,7 +112,9 @@ when they create an event and later. An invitation is **pending**: the person ap
 attendee in Outlook and as *invited* in Delta. They become a participant when they accept in
 Outlook or sign up in Delta. **An invitation reserves a spot** under `participantLimit`.
 
-V1 includes a **searchable people picker** backed by Graph and `User.ReadBasic.All`.
+V1 includes a **searchable people picker** backed by Graph and the `User.Read.All` application
+permission required by `GET /users`. The endpoint selects and returns only basic person fields,
+but the application permission itself allows broad user-profile reads.
 **Group invitations are deferred**, and there is no per-host batch rate limit. The attendee
 ceiling, capacity checks, audit trail and mailbox recipient monitoring still apply. Groups are
 not accepted in invitation requests or returned in directory search.
@@ -127,11 +129,12 @@ fetches the group's members at that moment
 which group each person came from, so the UI can show "invited via *Team X*". People who join the
 group later are not invited.
 
-**This needs `User.ReadBasic.All`.** With only `GroupMember.Read.All`, Graph returns each member's
-`id` and type, and every other property, including `mail`, is `null`
+**This needs a user-directory permission that exposes email addresses.** With only
+`GroupMember.Read.All`, Graph can return limited member objects containing the member's
+`id` and type while other properties, including `mail`, can be `null`
 ([limited information for member objects](https://learn.microsoft.com/en-us/graph/permissions-overview#limited-information-returned-for-inaccessible-member-objects)).
-Attendees need an email address, so we can't expand a group without it. `GroupMember.Read.All` is
-enough to search groups and read group names.
+Attendees need an email address, so group expansion must first confirm the app-only permission
+needed for member email access. `GroupMember.Read.All` remains the permission used to query groups.
 
 #### Participant status
 
@@ -212,7 +215,7 @@ the database. Each attendee Delta doesn't know about is handled like this:
 - `FullEvent.invited: List<Invitation>` (email, name, status), shown to the same people
   who can see `participants`. Only hosts see `DECLINED` invitees.
 - `GET /directory/search?q=` finds people for the frontend's invite picker. People search needs
-  `User.ReadBasic.All`; groups are deferred.
+  `User.Read.All` application permission; groups are deferred.
 
 #### Limits (against misuse, and Exchange limits)
 
@@ -236,7 +239,7 @@ the database. Each attendee Delta doesn't know about is handled like this:
 - **Pros:** invitations are ordinary Outlook meetings, and Exchange handles delivery, updates,
   cancellations and replies. Replies map to a Delta status per person. Edits always reach everyone,
   with 1 Graph write instead of N. Room and Teams work natively. Removes a lot of code.
-- **Cons:** people search needs one new Graph permission (`User.ReadBasic.All`). Two invite models run in parallel for a
+- **Cons:** app-only people search needs the broad Graph permission (`User.Read.All`). Two invite models run in parallel for a
   while. Every details edit notifies everyone.
 
 ### B: Invite distribution lists as a single attendee
@@ -261,11 +264,11 @@ the database. Each attendee Delta doesn't know about is handled like this:
 - **Data:** names and email addresses of Nav employees. Group names, members and invitation
   provenance are deferred with group invitations.
 - **Auth:** nothing changes for users (Entra ID). `GroupMember.Read.All` (application) is already
-  granted but group search/expansion is deferred. **One new application permission:**
-  `User.ReadBasic.All`, to search
-  people. It is the narrowest user-read permission (name, email, photo; no profile data) and needs
-  admin consent and a security review.
-- **If `User.ReadBasic.All` is refused:** the planned searchable picker cannot work. Individual
+  granted and is used to identify forwarded group addresses. App-only people search via
+  `GET /users` requires the additional `User.Read.All` application permission. The endpoint
+  returns only selected basic fields, but the permission is broad and needs admin consent and a
+  security review.
+- **If `User.Read.All` is refused:** the planned searchable picker cannot work. Individual
   invitation endpoints need no directory lookup, but silently replacing the agreed picker with
   an email-only UI is not part of this decision.
 - **Misuse:** every Nav employee can create events (`allowAllUsers`). Domain validation,
@@ -343,8 +346,8 @@ the database. Each attendee Delta doesn't know about is handled like this:
 
 ## Action items
 
-- [ ] Request `User.ReadBasic.All` (Application) with admin consent. `GroupMember.Read.All` is
-      already granted. Note: `getUserDisplayName` (faggruppe owners) needs it too, and returns
+- [ ] Request `User.Read.All` (Application) with admin consent. `GroupMember.Read.All` is
+      already granted. Note: `getUserDisplayName` (faggruppe owners) needs user-directory access too, and returns
       `null` today.
 - [ ] Security review of the permission and misuse limits (security champion).
 - [ ] Spike against a test mailbox: a PATCH of only attendees notifies only the changed people,
@@ -369,7 +372,7 @@ the database. Each attendee Delta doesn't know about is handled like this:
 | Axis | Finding |
 |------|---------|
 | Architecture | One shared event replaces N copies of the same data. V1 supports individual invitations and reserved spots; group expansion is deferred. People search still requires a new permission. |
-| Security | **Concern:** the new `User.ReadBasic.All` permission gives read access to basic profile data for every user in the directory, and needs a security review. **Concern:** mass invites from the shared mailbox. The limits must ship in v1, not later. **Accepted:** forwarding spreads the Teams link beyond Delta's participant list, which the Teams lobby mitigates. What participants can see is otherwise unchanged. |
+| Security | **Concern:** the required app-only `User.Read.All` permission grants broad directory profile access although this endpoint returns only selected basic fields; it needs security review and admin consent. **Concern:** mass invites from the shared mailbox. The limits must ship in v1, not later. **Accepted:** forwarding spreads the Teams link beyond Delta's participant list, which the Teams lobby mitigates. What participants can see is otherwise unchanged. |
 | Platform | No new infrastructure. Row locks handle the 2 replicas. Exchange's limit of 10,000 recipients per mailbox per day is a real ceiling for large events and must be monitored. Dev can't test Graph, so we need a test mailbox. |
 | Migration | Running both models side by side through `invite_mode` only adds code and can be rolled back. When the migration is done and what to clean up are both defined. |
 
@@ -380,7 +383,7 @@ Inspected:     email/CloudClient.kt, email/Email.kt, event/Routes.kt, event/Mode
                Graph docs (event-update, event-forward, event resource, Outlook throttling)
 Not inspected: frontend repo, production data (largest event, recipient volume), Entra app
                registration (actual granted permissions), live Exchange behaviour, RecurringDatabase.kt
-Findings:      0 blocking, 3 concerns (new User.ReadBasic.All permission, misuse limits,
+Findings:      0 blocking, 3 concerns (new User.Read.All permission, misuse limits,
                Exchange behaviour not yet checked)
 Verdict:       CONCERNS
 ```

@@ -47,7 +47,8 @@ App-registreringen trenger følgende **application permissions** (ikke delegated
 | `Calendars.Read` | Lese kalenderhendelser og opprette/fornye/slette webhook-subscriptions på postboksen |
 | `Calendars.ReadWrite` | Opprette/oppdatere/slette kalenderhendelser i Delta-postboksen (brukes i dag selv om README tidligere kun nevnte `Calendars.Read`) |
 | `Mail.Send` | Sende e-postvarsler fra Delta-postboksen |
-| `User.ReadBasic.All` | Søke etter personer til invitasjonsvelgeren og slå opp grunnleggende visningsnavn. Krever admin consent før personsøk tas i bruk |
+| `User.Read.All` | App-only personsøk (`GET /users`) for invitasjonsvelgeren; Graph krever denne application permission for brukerlisten. Krever admin consent før personsøk tas i bruk |
+| `GroupMember.Read.All` | Klassifisere videresendte deltakere mot gruppers e-postadresse og `proxyAddresses`; allerede gitt admin consent |
 | `Place.Read.All` | Rombooking (feature-tolget bak `FEATURE_ROOM_BOOKING`) — liste rom/romlister og sjekke tilgjengelighet |
 
 ## Felles kalender og invitasjoner

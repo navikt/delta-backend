@@ -75,6 +75,24 @@ class SharedCalendarRepositoryTest {
     }
 
     @Test
+    fun `changing selected room resets previously accepted booking status`() {
+        val event = repository.create(draft().copy(
+            roomEmail = "room-one@nav.no", roomName = "Room One",
+        ), "host@nav.no", "Host").getOrNull()!!
+        db.connection.use { c ->
+            c.prepareStatement("UPDATE event SET room_status='ACCEPTED' WHERE id=?").use {
+                it.setObject(1, event.id)
+                it.executeUpdate()
+            }
+            c.commit()
+        }
+        val updated = repository.update(event.id, draft().copy(
+            roomEmail = "room-two@nav.no", roomName = "Room Two",
+        )).getOrNull()!!
+        assertEquals(RoomBookingStatus.PENDING, updated.roomStatus)
+    }
+
+    @Test
     fun `create acknowledgement after deletion preserves id and cancellation`() {
         val event = repository.create(draft(), "host@nav.no", "Host").getOrNull()!!
         val create = repository.claimNext()!!
@@ -267,11 +285,34 @@ class SharedCalendarRepositoryTest {
             "host@nav.no").getOrNull()!!
         assertEquals(1, shortened.affectedEvents.size)
         assertEquals(InviteMode.SHARED, shortened.affectedEvents.single().inviteMode)
-        assertEquals(CalendarSyncStatus.PENDING, shortened.affectedEvents.single().calendarSyncStatus)
+        assertEquals(CalendarSyncStatus.SYNCED, shortened.affectedEvents.single().calendarSyncStatus)
         val jobs = generateSequence { repository.claimNext()?.also { repository.complete(it) } }.toList()
         assertEquals(3, jobs.size)
         assertEquals(2, jobs.count { it.cancel })
         assertTrue(jobs.filter { it.cancel }.all { it.graphEventId != null })
+    }
+
+    @Test
+    fun `metadata-only UPCOMING edit does not queue recurring calendar detail patches`() {
+        val request = draft().copy(
+            invitees = null,
+            recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, LocalDateTime.now().plusDays(19).toLocalDate()),
+        )
+        val created = db.createRecurringEventSeries(request, "host@nav.no", "Host", InviteMode.SHARED).getOrNull()!!
+        created.affectedEvents.forEach {
+            val work = repository.claimNext()!!
+            repository.recordGraphId(work, "graph-${work.eventId}")
+            repository.complete(work)
+        }
+        val changed = db.updateRecurringSeriesFromOccurrence(
+            created.referenceEventId.toString(),
+            request.copy(public = false, participantLimit = request.participantLimit + 1),
+            "host@nav.no",
+        ).getOrNull()!!
+        assertTrue(changed.affectedEvents.all { it.calendarSyncStatus == CalendarSyncStatus.SYNCED })
+        val work = generateSequence { repository.claimNext()?.also { repository.complete(it) } }.toList()
+        assertEquals(changed.affectedEvents.size, work.size)
+        assertTrue(work.all { !it.details })
     }
 
     @Test
