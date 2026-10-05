@@ -1,6 +1,7 @@
 package no.nav.delta.application
 
 import com.auth0.jwk.JwkProvider
+import com.auth0.jwt.interfaces.JWTVerifier
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer
@@ -17,6 +18,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.swagger.swaggerUI
+import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,11 +58,13 @@ fun createApplicationEngine(
 fun Application.installDeltaApiPlugins(
     env: Environment,
     jwkProvider: JwkProvider,
+    testVerifier: JWTVerifier? = null,
 ) {
-    setupAuth(jwkProvider, env)
+    setupAuth(jwkProvider, env, testVerifier)
     install(CallLogging) {
         level = Level.INFO
         disableDefaultColors()
+        format { call -> "${call.request.httpMethod.value} ${call.request.path()}" }
         // Do not log any calls under internal path
         filter { call ->
             call.request.path().startsWith("/internal").not()
