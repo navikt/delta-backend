@@ -201,7 +201,14 @@ paths:
       description: >-
         Get events. teamsJoinUrl, teamsConferenceId and teamsDialIn are null unless the caller is
         a registered participant or host of the event (isOnlineMeeting is always shown).
+        M2M callers must have the delta.read application role. They can only list public events;
+        onlyMine and onlyJoined are not available to M2M callers. M2M callers can instead provide
+        exactly one category, participantEmail, from and to to find public events in that category
+        where the email is registered as a participant and the event start is in [from, to).
+        from and to are ISO local date-times. The role cannot be used to call mutation routes.
       operationId: getEvents
+      security:
+        - bearerAuth: []
       parameters:
         - in: query
           name: categories
@@ -233,6 +240,27 @@ paths:
           required: false
           schema:
             type: boolean
+        - in: query
+          name: participantEmail
+          description: "M2M attendance lookup: email of a registered participant; requires categories, from and to"
+          required: false
+          schema:
+            type: string
+            format: email
+        - in: query
+          name: from
+          description: "Inclusive ISO local date-time lower bound for the event start; requires categories and participantEmail"
+          required: false
+          schema:
+            type: string
+            example: "2026-10-01T00:00:00"
+        - in: query
+          name: to
+          description: "Exclusive ISO local date-time upper bound for the event start; requires categories and participantEmail"
+          required: false
+          schema:
+            type: string
+            example: "2026-11-01T00:00:00"
       responses:
         "200":
           description: "Matching events"
@@ -242,14 +270,24 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/FullEvent"
+        "403":
+          description: "M2M token is missing the delta.read application role"
+        "400":
+          description: >-
+            onlyMine and onlyJoined are not available to M2M callers; attendance lookup parameters
+            are M2M-only and require exactly one category, a valid participantEmail, and from/to
+            ISO local date-times with from before to
   /event/{id}:
     get:
       tags:
         - general
       description: >-
         Get an event. teamsJoinUrl, teamsConferenceId and teamsDialIn are null unless the caller
-        is a registered participant or host (isOnlineMeeting is always shown).
+        is a registered participant or host (isOnlineMeeting is always shown). M2M callers with
+        delta.read cannot use this endpoint until the private-event visibility boundary is decided.
       operationId: getEvent
+      security:
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
@@ -265,6 +303,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FullEvent"
+        "403":
+          description: "M2M token is missing the delta.read application role"
   /features:
     get:
       tags:
@@ -394,8 +434,12 @@ paths:
     get:
       tags:
         - category
-      description: "Get all categories"
+      description: >-
+        Get all categories. M2M callers must have the delta.read application role. This role
+        cannot be used to call mutation routes.
       operationId: getCategories
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: "All categories"
@@ -405,6 +449,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Category"
+        "403":
+          description: "M2M token is missing the delta.read application role"
     put:
       tags:
         - category

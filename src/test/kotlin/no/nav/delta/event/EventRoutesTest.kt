@@ -2,6 +2,10 @@ package no.nav.delta.event
 
 import arrow.core.left
 import arrow.core.right
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+import com.auth0.jwt.interfaces.JWTVerifier
+import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -32,6 +36,9 @@ import org.junit.jupiter.api.TestInstance
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class EventRoutesTest {
+    private val testJwtSecret = "event-routes-test-secret-that-is-long-enough"
+    private val testJwtVerifier: JWTVerifier =
+        JWT.require(Algorithm.HMAC256(testJwtSecret)).build()
     private lateinit var testDatabase: TestDatabase
     private lateinit var database: DatabaseInterface
     private lateinit var cloudClient: RecordingCloudClient
@@ -72,6 +79,177 @@ class EventRoutesTest {
         val fullEvent = readJson<FullEvent>(response.bodyAsText())
         assertEquals(title, fullEvent.event.title)
         assertEquals("test@localhost", fullEvent.hosts.single().email)
+    }
+
+    @Test
+    fun `M2M token with delta read role can read approved endpoints`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val token = m2mToken(listOf("delta.read"))
+        val eventsResponse = client.get("/event") { bearerAuth(token) }
+        val categoriesResponse = client.get("/category") { bearerAuth(token) }
+
+        assertEquals(HttpStatusCode.OK, eventsResponse.status)
+        assertEquals(HttpStatusCode.OK, categoriesResponse.status)
+    }
+
+    @Test
+    fun `M2M attendance lookup filters by category participant and event start period`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val category = database.createCategory(CreateCategory(shortName("attendance"))).getOrNull()!!
+        val otherCategory = database.createCategory(CreateCategory(shortName("other"))).getOrNull()!!
+        val from = LocalDateTime.now().plusDays(10).withNano(0)
+        val to = from.plusDays(2)
+
+        fun createRegisteredEvent(
+            title: String,
+            startTime: LocalDateTime,
+            public: Boolean,
+            categoryId: Int,
+            email: String = "person@example.com",
+        ): Event {
+            val event =
+                database.addEvent(
+                    futureEvent(title).copy(
+                        startTime = startTime,
+                        endTime = startTime.plusHours(1),
+                        public = public,
+                    )
+                )
+            database.registerForEvent(event.id.toString(), email, "Test Person")
+            database.setCategories(event.id.toString(), listOf(categoryId))
+            return event
+        }
+
+        val included = createRegisteredEvent("included-${UUID.randomUUID()}", from, true, category.id)
+        createRegisteredEvent("private-${UUID.randomUUID()}", from.plusHours(1), false, category.id)
+        createRegisteredEvent("outside-${UUID.randomUUID()}", to, true, category.id)
+        createRegisteredEvent("other-category-${UUID.randomUUID()}", from, true, otherCategory.id)
+        createRegisteredEvent("other-user-${UUID.randomUUID()}", from, true, category.id, "other@example.com")
+
+        val response =
+            client.get(
+                "/event?categories=${category.id}&participantEmail=person%40example.com&from=$from&to=$to"
+            ) {
+                bearerAuth(m2mToken(listOf("delta.read")))
+            }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val events = readJson<List<FullEvent>>(response.bodyAsText())
+        assertEquals(listOf(included.id), events.map { it.event.id })
+    }
+
+    @Test
+    fun `M2M attendance lookup requires category email and valid period`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val response =
+            client.get("/event?participantEmail=person%40example.com") {
+                bearerAuth(m2mToken(listOf("delta.read")))
+            }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+
+        val from = LocalDateTime.now().plusDays(10).withNano(0)
+        val query =
+            "/event?categories=1&participantEmail=person%40example.com&from=$from&to=${from.plusDays(1)}"
+        val userTokenResponse =
+            client.get(query) {
+                bearerAuth(userToken())
+            }
+        assertEquals(HttpStatusCode.BadRequest, userTokenResponse.status)
+
+        val reversedPeriodResponse =
+            client.get(
+                "/event?categories=1&participantEmail=person%40example.com&from=$from&to=$from"
+            ) {
+                bearerAuth(m2mToken(listOf("delta.read")))
+            }
+
+        assertEquals(HttpStatusCode.BadRequest, reversedPeriodResponse.status)
+    }
+
+    @Test
+    fun `M2M token without delta read role cannot read events`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val response = client.get("/event") { bearerAuth(m2mToken(emptyList())) }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+    }
+
+    @Test
+    fun `M2M token with delta read role cannot read events by id`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val response =
+            client.get("/event/${UUID.randomUUID()}") {
+                bearerAuth(m2mToken(listOf("delta.read")))
+            }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+    }
+
+    @Test
+    fun `M2M token cannot use caller-specific event filters`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val response =
+            client.get("/event?onlyJoined=true") {
+                bearerAuth(m2mToken(listOf("delta.read")))
+            }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+    }
+
+    @Test
+    fun `M2M token with delta read role cannot write events`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+
+        val response =
+            client.put("/admin/event") {
+                bearerAuth(m2mToken(listOf("delta.read")))
+                contentType(ContentType.Application.Json)
+                setBody("{}")
+            }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
     }
 
     @Test
@@ -1043,6 +1221,17 @@ class EventRoutesTest {
             signupDeadline = LocalDateTime.now().plusDays(1),
             sendNotificationEmail = false,
         )
+
+    private fun m2mToken(roles: List<String>): String =
+        JWT.create()
+            .withClaim("idtyp", "app")
+            .withArrayClaim("roles", roles.toTypedArray())
+            .sign(Algorithm.HMAC256(testJwtSecret))
+
+    private fun userToken(): String =
+        JWT.create()
+            .withClaim("preferred_username", "person@example.com")
+            .sign(Algorithm.HMAC256(testJwtSecret))
 
     private fun shortName(prefix: String) = "$prefix-${UUID.randomUUID().toString().take(8)}"
 }

@@ -15,11 +15,13 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import java.util.UUID
 import no.nav.delta.Environment
+import no.nav.delta.application.enforceM2mReadOnlyAccess
 import no.nav.delta.email.CloudClient
 import no.nav.delta.plugins.DatabaseInterface
 
 fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, env: Environment) {
     authenticate("jwt") {
+        enforceM2mReadOnlyAccess()
         route("/api/faggrupper") {
             get {
                 call.respond(database.getAllActiveFaggrupper())
