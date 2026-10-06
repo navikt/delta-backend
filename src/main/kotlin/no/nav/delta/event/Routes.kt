@@ -9,11 +9,13 @@ import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.*
+import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import no.nav.delta.Environment
 import no.nav.delta.calendar.SharedCalendarRepository
 import no.nav.delta.calendar.sharedMutation
+import no.nav.delta.application.enforceM2mReadOnlyAccess
 import no.nav.delta.email.CloudClient
 import no.nav.delta.email.batchSendUpdateOrCreationNotification
 import no.nav.delta.email.sendCancellationNotification
@@ -27,27 +29,118 @@ private val logger = LoggerFactory.getLogger("no.nav.delta.event.Routes")
 fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: Environment) {
     val sharedCalendar = SharedCalendarRepository(database)
     authenticate("jwt") {
+        enforceM2mReadOnlyAccess()
         route("/event") {
             get {
-                val email = call.principalEmail()
-
                 val onlyFuture = call.parameters["onlyFuture"]?.toBoolean() ?: false
                 val onlyPast = call.parameters["onlyPast"]?.toBoolean() ?: false
 
                 val onlyMine = call.parameters["onlyMine"]?.toBoolean() ?: false
+                val onlyJoined = call.parameters["onlyJoined"]?.toBoolean() ?: false
+                val isApplicationToken =
+                    call.principal<JWTPrincipal>()?.payload?.getClaim("idtyp")?.asString() == "app"
+                if (isApplicationToken && (onlyMine || onlyJoined)) {
+                    return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        "onlyMine and onlyJoined are not available to M2M callers",
+                    )
+                }
+                val participantEmailParameter = call.parameters["participantEmail"]
+                val fromParameter = call.parameters["from"]
+                val toParameter = call.parameters["to"]
+                val attendanceLookupRequested =
+                    participantEmailParameter != null || fromParameter != null || toParameter != null
+                var attendanceCategoryId: Int? = null
+                var attendanceEmail: String? = null
+                var startsAtOrAfter: LocalDateTime? = null
+                var startsBefore: LocalDateTime? = null
+                if (attendanceLookupRequested) {
+                    if (!isApplicationToken) {
+                        return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            "participantEmail, from, and to are only available to M2M callers",
+                        )
+                    }
+                    val categoryValues =
+                        call.request.queryParameters.getAll("categories")?.flatMap { it.split(",") }
+                    attendanceCategoryId =
+                        categoryValues
+                            ?.singleOrNull()
+                            ?.toIntOrNull()
+                            ?.takeIf { it > 0 }
+                    if (attendanceCategoryId == null) {
+                        return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            "Attendance lookup requires exactly one positive integer category",
+                        )
+                    }
+                    attendanceEmail =
+                        participantEmailParameter
+                            ?.trim()
+                            ?.lowercase()
+                            ?.takeIf { it.isNotBlank() && it.matches(Regex("[^\\s@]+@[^\\s@]+")) }
+                            ?: return@get call.respond(
+                                HttpStatusCode.BadRequest,
+                                "participantEmail must be a valid email address",
+                            )
+                    val parsedFrom =
+                        fromParameter?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+                            ?: return@get call.respond(
+                                HttpStatusCode.BadRequest,
+                                "from must be an ISO local date-time",
+                            )
+                    val parsedTo =
+                        toParameter?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+                            ?: return@get call.respond(
+                                HttpStatusCode.BadRequest,
+                                "to must be an ISO local date-time",
+                            )
+                    if (!parsedFrom.isBefore(parsedTo)) {
+                        return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            "from must be before to",
+                        )
+                    }
+                    startsAtOrAfter = parsedFrom
+                    startsBefore = parsedTo
+                }
+                val email = if (isApplicationToken) "" else call.principalEmail()
                 val hostedBy = if (onlyMine) email.some() else none()
 
-                val onlyJoined = call.parameters["onlyJoined"]?.toBoolean() ?: false
-                val joinedBy = if (onlyJoined) email.some() else none()
+                val joinedBy =
+                    when {
+                        attendanceEmail != null -> attendanceEmail.some()
+                        onlyJoined -> email.some()
+                        else -> none()
+                    }
 
                 val onlyPublic = !onlyMine && !onlyJoined
 
                 val categories =
-                    call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
+                    if (attendanceLookupRequested) {
+                        listOf(
+                            attendanceCategoryId
+                                ?: return@get call.respond(
+                                    HttpStatusCode.BadRequest,
+                                    "Attendance lookup requires exactly one positive integer category",
+                                )
+                        )
+                    } else {
+                        call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
+                    }
 
                 call.respond(
                     database
-                        .getFullEvents(categories, onlyFuture, onlyPast, onlyPublic, hostedBy, joinedBy)
+                        .getFullEvents(
+                            categories,
+                            onlyFuture,
+                            onlyPast,
+                            onlyPublic,
+                            hostedBy,
+                            joinedBy,
+                            startsAtOrAfter,
+                            startsBefore,
+                        )
                         .map { it.hideTeamsDetailsUnlessParticipantOrHost(email) }
                 )
             }
@@ -58,8 +151,11 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@get it.left().unwrapAndRespond(call)
                         }
 
-                    database.getFullEvent(id.toString())
-                        .map { it.hideTeamsDetailsUnlessParticipantOrHost(call.principalEmail()) }
+                    val isApplicationToken =
+                        call.principal<JWTPrincipal>()?.payload?.getClaim("idtyp")?.asString() == "app"
+                    val email = if (isApplicationToken) "" else call.principalEmail()
+                    database.getFullEvent(id.toString(), onlyPublic = isApplicationToken)
+                        .map { it.hideTeamsDetailsUnlessParticipantOrHost(email) }
                         .unwrapAndRespond(call)
                 }
             }

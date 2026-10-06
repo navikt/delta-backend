@@ -11,6 +11,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import java.time.Duration
 import no.nav.delta.Environment
+import no.nav.delta.application.enforceM2mReadOnlyAccess
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.principalGroups
 import org.slf4j.LoggerFactory
@@ -33,6 +34,7 @@ fun Route.roomApi(
 ) {
 
     authenticate("jwt") {
+        enforceM2mReadOnlyAccess()
         route("/rooms") {
             get {
                 if (!env.isRoomBookingEnabledFor(call.principalGroups())) {

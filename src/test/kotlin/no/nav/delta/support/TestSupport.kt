@@ -5,6 +5,7 @@ import arrow.core.left
 import arrow.core.right
 import com.auth0.jwk.Jwk
 import com.auth0.jwk.JwkProvider
+import com.auth0.jwt.interfaces.JWTVerifier
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -83,9 +84,10 @@ fun localTestEnvironment() =
 fun Application.installTestApi(
     env: Environment,
     database: DatabaseInterface,
+    testVerifier: JWTVerifier? = null,
     routes: Routing.() -> Unit,
 ) {
-    installDeltaApiPlugins(env, NoopJwkProvider)
+    installDeltaApiPlugins(env, NoopJwkProvider, testVerifier)
     routing(routes)
 }
 

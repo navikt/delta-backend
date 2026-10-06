@@ -7,6 +7,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import no.nav.delta.Environment
+import no.nav.delta.application.enforceM2mReadOnlyAccess
 import no.nav.delta.event.principalGroups
 
 data class Features(
@@ -18,6 +19,7 @@ data class Features(
 
 fun Route.featureApi(env: Environment) {
     authenticate("jwt") {
+        enforceM2mReadOnlyAccess()
         route("/features") {
             get {
                 call.respond(

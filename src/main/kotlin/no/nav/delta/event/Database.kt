@@ -10,6 +10,7 @@ import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Timestamp
+import java.time.LocalDateTime
 import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
 
@@ -99,22 +100,25 @@ WHERE  id = Uuid(?);
     }
 }
 
-fun DatabaseInterface.getFullEvent(id: String): Either<EventNotFoundException, FullEvent> {
-    return getCategories(id).map { categories ->
-        connection.use { connection ->
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
+fun DatabaseInterface.getFullEvent(
+    id: String,
+    onlyPublic: Boolean = false,
+): Either<EventNotFoundException, FullEvent> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                """
 SELECT *
 FROM   event
        LEFT JOIN participant
               ON event.id = participant.event_id
-WHERE  id = Uuid(?);
+WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
 """)
-            preparedStatement.setString(1, id)
-            val result = preparedStatement.executeQuery()
-            if (!result.next()) return EventNotFoundException.left()
+        preparedStatement.setString(1, id)
+        val result = preparedStatement.executeQuery()
+        if (!result.next()) return EventNotFoundException.left()
 
+        getCategories(connection, id).map { categories ->
             val event = result.toEvent()
             val calendarSyncError = result.getString("calendar_sync_error")
             val participant =
@@ -387,6 +391,8 @@ private fun buildEventFilterClause(
     onlyPublic: Boolean,
     byHost: Option<String>,
     joinedBy: Option<String>,
+    startsAtOrAfter: LocalDateTime? = null,
+    startsBefore: LocalDateTime? = null,
 ): EventFilterClause {
     val clauses = mutableListOf("TRUE")
     val binders = mutableListOf<PreparedStatement.(Int) -> Unit>()
@@ -406,6 +412,14 @@ private fun buildEventFilterClause(
     joinedBy.onSome { jb ->
         clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT' AND status = 'REGISTERED')")
         binders.add { setString(it, jb) }
+    }
+    startsAtOrAfter?.let { start ->
+        clauses.add("start_time >= ?")
+        binders.add { setTimestamp(it, Timestamp.valueOf(start)) }
+    }
+    startsBefore?.let { end ->
+        clauses.add("start_time < ?")
+        binders.add { setTimestamp(it, Timestamp.valueOf(end)) }
     }
 
     return EventFilterClause(clauses.joinToString(" AND "), binders)
@@ -446,8 +460,20 @@ fun DatabaseInterface.getFullEvents(
     onlyPublic: Boolean = false,
     byHost: Option<String> = none(),
     joinedBy: Option<String> = none(),
+    startsAtOrAfter: LocalDateTime? = null,
+    startsBefore: LocalDateTime? = null,
 ): List<FullEvent> {
-    val filter = buildEventFilterClause(categories, onlyFuture, onlyPast, onlyPublic, byHost, joinedBy)
+    val filter =
+        buildEventFilterClause(
+            categories,
+            onlyFuture,
+            onlyPast,
+            onlyPublic,
+            byHost,
+            joinedBy,
+            startsAtOrAfter,
+            startsBefore,
+        )
     return connection.use { connection ->
         // Query 1: all matching events with their participants
         val eventsStmt = connection.prepareStatement("""
@@ -799,19 +825,28 @@ FROM   category;
 
 fun DatabaseInterface.getCategories(id: String): Either<EventNotFoundException, List<Category>> {
     return connection.use { connection ->
-        checkIfEventExists(connection, id).map {
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
+        getCategories(connection, id)
+    }
+}
+
+private fun getCategories(
+    connection: Connection,
+    id: String,
+): Either<EventNotFoundException, List<Category>> {
+    return checkIfEventExists(connection, id).map {
+        connection.prepareStatement(
+            """
 SELECT *
 FROM   category
        JOIN event_has_category
          ON category.id = event_has_category.category_id
 WHERE  event_id = Uuid(?); 
-""")
+"""
+        ).use { preparedStatement ->
             preparedStatement.setString(1, id)
-            val result = preparedStatement.executeQuery()
-            result.toList { toCategory() }
+            preparedStatement.executeQuery().use { result ->
+                result.toList { toCategory() }
+            }
         }
     }
 }
