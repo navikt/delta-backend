@@ -12,6 +12,7 @@ import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
+import java.sql.Connection
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -162,6 +163,41 @@ class DatabasesTest {
         Assertions.assertEquals("participant@example.com", fullEvent.participants[0].email)
         Assertions.assertEquals(1, fullEvent.categories.size)
         Assertions.assertEquals("testcategory", fullEvent.categories[0].name)
+    }
+
+    @Test
+    fun getFullEventUsesOneConnectionForEventAndCategories() {
+        val category = db.createCategory(CreateCategory("single-${UUID.randomUUID().toString().take(8)}"))
+            .getOrNull()!!
+        val event = db.addEvent(futureEventTest("single-connection"))
+        db.registerForEvent(event.id.toString(), "participant@example.com", "Participant User")
+        db.setCategories(event.id.toString(), listOf(category.id))
+        var checkouts = 0
+        val countingDatabase = object : DatabaseInterface {
+            override val connection: Connection
+                get() {
+                    checkouts++
+                    return db.connection
+                }
+        }
+
+        val fullEvent = countingDatabase.getFullEvent(event.id.toString(), onlyPublic = true).getOrNull()!!
+
+        Assertions.assertEquals(1, checkouts)
+        Assertions.assertEquals(event.id, fullEvent.event.id)
+        Assertions.assertEquals(listOf(category), fullEvent.categories)
+        Assertions.assertEquals(
+            listOf(Participant("participant@example.com", "Participant User")),
+            fullEvent.participants,
+        )
+
+        val privateEvent = db.addEvent(futureEventTest("private-single-connection").copy(public = false))
+        for (id in listOf(privateEvent.id.toString(), UUID.randomUUID().toString())) {
+            checkouts = 0
+            val result = countingDatabase.getFullEvent(id, onlyPublic = true)
+            Assertions.assertEquals(EventNotFoundException, result.leftOrNull())
+            Assertions.assertEquals(1, checkouts)
+        }
     }
 
     @Test

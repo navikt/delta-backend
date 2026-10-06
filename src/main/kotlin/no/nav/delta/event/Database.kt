@@ -118,7 +118,7 @@ WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
         val result = preparedStatement.executeQuery()
         if (!result.next()) return EventNotFoundException.left()
 
-        getCategories(id).map { categories ->
+        getCategories(connection, id).map { categories ->
             val event = result.toEvent()
             val participant =
                 result.let {
@@ -813,19 +813,28 @@ FROM   category;
 
 fun DatabaseInterface.getCategories(id: String): Either<EventNotFoundException, List<Category>> {
     return connection.use { connection ->
-        checkIfEventExists(connection, id).map {
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
+        getCategories(connection, id)
+    }
+}
+
+private fun getCategories(
+    connection: Connection,
+    id: String,
+): Either<EventNotFoundException, List<Category>> {
+    return checkIfEventExists(connection, id).map {
+        connection.prepareStatement(
+            """
 SELECT *
 FROM   category
        JOIN event_has_category
          ON category.id = event_has_category.category_id
 WHERE  event_id = Uuid(?); 
-""")
+"""
+        ).use { preparedStatement ->
             preparedStatement.setString(1, id)
-            val result = preparedStatement.executeQuery()
-            result.toList { toCategory() }
+            preparedStatement.executeQuery().use { result ->
+                result.toList { toCategory() }
+            }
         }
     }
 }
