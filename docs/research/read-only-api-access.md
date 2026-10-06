@@ -2,13 +2,13 @@
 
 ## First increment
 
-The API accepts M2M tokens carrying the custom `delta.read` application role on `GET /event` and
-`GET /category`. The event list can additionally filter public events by one category, a
+The API accepts M2M tokens carrying the custom `delta.read` application role on `GET /event`,
+`GET /event/{id}`, and `GET /category`. All M2M event reads are public-only. The event list can additionally filter public events by one category, a
 participant email, and an event-start period (`from` inclusive, `to` exclusive). An app-only token
 without the role is forbidden from these reads, and a token carrying the role is forbidden from
 every other JWT-authenticated API route, including mutation routes. M2M callers cannot use
-`onlyMine` or `onlyJoined`; `GET /event/{id}` remains unavailable to M2M callers until private-event
-visibility is decided. Existing user-token behavior is unchanged.
+`onlyMine` or `onlyJoined`. On `GET /event/{id}`, private and unknown UUIDs both return
+404 `Event not found`. Existing user-token behavior is unchanged.
 
 `nais.yaml` grants `delta.read` to `security-champion-stats-backend` in namespace `appsec` on
 `prod-gcp`. No other consumer role grants were added.
@@ -35,7 +35,7 @@ Sources: [`Routes.kt:29–48, 613–619`](../../src/main/kotlin/no/nav/delta/eve
 
 ### Authorization and response data
 
-The event API uses `authenticate("jwt")` for JWT signature and issuer validation. The `delta.read` check now applies to M2M tokens on `GET /event` and `GET /category`; tokens carrying this role are rejected from all other JWT-authenticated API routes, including mutations. The event-by-ID route still retrieves by ID without applying the list route's public-only filter, so it is not approved for M2M access.
+The event API uses `authenticate("jwt")` for JWT signature and issuer validation. The `delta.read` check applies to M2M tokens on `GET /event`, `GET /event/{id}`, and `GET /category`; tokens carrying this role are rejected from all other JWT-authenticated API routes, including mutations. The event-by-ID route applies a database-level public-only filter for M2M callers, while preserving existing user-token behavior.
 
 Sources: [`Authentication.kt:14–22`](../../src/main/kotlin/no/nav/delta/application/Authentication.kt), [`Routes.kt:25–27, 51–65, 504–505`](../../src/main/kotlin/no/nav/delta/event/Routes.kt), [`Database.kt:102–160`](../../src/main/kotlin/no/nav/delta/event/Database.kt).
 
@@ -53,21 +53,21 @@ For `client_credentials` against Entra ID through Nais, use a **custom applicati
 
 Nais' inbound `accessPolicy` specifies which applications can request tokens for Delta. Its per-application `permissions.roles` grants custom roles, which appear in the M2M token. Nais also grants authorized consumers the default `access_as_application` role; Delta should require the custom read role rather than treating that default role as sufficient. See the [Nais Entra reference](https://docs.nais.io/auth/entra-id/reference/) and [M2M guide](https://docs.nais.io/auth/entra-id/how-to/consume-m2m/).
 
-The role is a coarse ACL, not per-user authorization: every approved app holding it can query whatever read endpoints Delta makes available. Delta now requires `idtyp: app` and the `delta.read` role for M2M reads, and rejects role-bearing tokens everywhere else in its JWT-authenticated APIs. Nais' Entra reference describes audience validation; the existing JWT setup verifies the configured issuer and signing key but does not visibly check the production audience, which remains a separate decision.
+The role is a coarse ACL, not per-user authorization: every approved app holding it can query whatever read endpoints Delta makes available. Delta requires `idtyp: app` and the `delta.read` role for M2M reads on the approved list and event-by-ID routes, and rejects role-bearing tokens everywhere else in its JWT-authenticated APIs. Nais' Entra reference describes audience validation; the existing JWT setup verifies the configured issuer and signing key but does not visibly check the production audience, which remains a separate decision.
 
 ## Required work and risks
 
 1. **Consumer grants are explicit.** `security-champion-stats-backend` in `appsec` on `prod-gcp` is granted `delta.read`. Add grants for other consumers only after they are approved to access the endpoint data. Do not treat authentication alone or the default `access_as_application` role as permission to read.
-2. **Role enforcement and mutation denial are implemented.** Tokens with `delta.read` are accepted only on `GET /event` and `GET /category`; app-only tokens without it are denied on these reads.
+2. **Role enforcement and mutation denial are implemented.** M2M tokens with `delta.read` are accepted only on `GET /event`, `GET /event/{id}`, and `GET /category`; app-only tokens without it are denied on these reads.
 3. **Attendance-by-user lookup is implemented.** M2M callers can query `GET /event` by exactly one category, participant email, and start period (`from <= start_time < to`). Only public events are returned. `onlyMine` and `onlyJoined` remain unavailable to M2M callers.
-4. **Private-event visibility remains restricted.** M2M attendance lookup includes public events only. `GET /event/{id}` is deliberately unavailable to M2M callers because it bypasses the public-only list filter. The response for matching public events is the existing full event response, including attendee and host names/emails; expanding access to private events would require a separate decision.
-5. **OpenAPI and tests are updated.** Signed M2M test tokens verify role-bearing reads, missing-role denial, category/user/period filtering, public-only results, caller-specific filter denial, event-by-ID denial, and rejected writes.
+4. **Private-event visibility remains restricted.** All M2M event reads include public events only. `GET /event/{id}` returns the same 404 for private and unknown UUIDs. The response for matching public events is the existing full event response, including attendee and host names/emails; Teams join details remain hidden from M2M callers.
+5. **OpenAPI and tests are updated.** Signed M2M test tokens verify role-bearing reads, missing-role denial, category/user/period filtering, public-only results, caller-specific filter denial, public event-by-ID reads, indistinguishable private/unknown UUID responses, Teams redaction, and rejected writes. User-token access to private events by ID is unchanged.
 
 The M2M route tests use locally signed JWTs and an injected test verifier; production verification continues to use the configured JWK provider and issuer. Sources: [`Authentication.kt`](../../src/main/kotlin/no/nav/delta/application/Authentication.kt), [`TestSupport.kt`](../../src/test/kotlin/no/nav/delta/support/TestSupport.kt), [`EventRoutesTest.kt`](../../src/test/kotlin/no/nav/delta/event/EventRoutesTest.kt).
 
 ## Suggested first increment
 
-The initial enforcement increment and the category/user/period attendance query are implemented. Before broadening the contract, decide whether attendee fields and private-event reads are within scope.
+The initial enforcement increment, the category/user/period attendance query, and public event-by-ID M2M reads are implemented. Participant and host names/emails are included. Private events remain outside the M2M contract.
 
 ## Unknowns
 

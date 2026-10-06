@@ -284,7 +284,8 @@ paths:
       description: >-
         Get an event. teamsJoinUrl, teamsConferenceId and teamsDialIn are null unless the caller
         is a registered participant or host (isOnlineMeeting is always shown). M2M callers with
-        delta.read cannot use this endpoint until the private-event visibility boundary is decided.
+        delta.read can read public events only; private and unknown event IDs both return 404.
+        M2M callers receive participant and host names/emails, but not Teams join details.
       operationId: getEvent
       security:
         - bearerAuth: []
@@ -305,6 +306,8 @@ paths:
                 $ref: "#/components/schemas/FullEvent"
         "403":
           description: "M2M token is missing the delta.read application role"
+        "404":
+          description: "Event does not exist, or is private when requested by an M2M caller"
   /features:
     get:
       tags:
