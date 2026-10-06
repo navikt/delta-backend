@@ -200,7 +200,7 @@ class EventRoutesTest {
     }
 
     @Test
-    fun `M2M token with delta read role cannot read events by id`() = testApplication {
+    fun `M2M token with delta read role can read public events by id`() = testApplication {
         application {
             val env = localTestEnvironment()
             installTestApi(env, database, testJwtVerifier) {
@@ -208,12 +208,87 @@ class EventRoutesTest {
             }
         }
 
+        val event = database.addEvent(futureEvent("m2m-public-${UUID.randomUUID()}"))
+        database.registerForEvent(event.id.toString(), "person@example.com", "Participant")
+        database.registerForEvent(event.id.toString(), "host@example.com", "Host", ParticipantType.HOST)
+        database.updateEvent(
+            event.copy(
+                isOnlineMeeting = true,
+                teamsJoinUrl = "https://teams.microsoft.com/test",
+                teamsConferenceId = "conference",
+                teamsDialIn = "dial-in",
+            )
+        )
+
         val response =
-            client.get("/event/${UUID.randomUUID()}") {
+            client.get("/event/${event.id}") {
                 bearerAuth(m2mToken(listOf("delta.read")))
             }
 
-        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals(HttpStatusCode.OK, response.status)
+        val fullEvent = readJson<FullEvent>(response.bodyAsText())
+        assertEquals(event.id, fullEvent.event.id)
+        assertEquals(listOf(Participant("person@example.com", "Participant")), fullEvent.participants)
+        assertEquals(listOf(Participant("host@example.com", "Host")), fullEvent.hosts)
+        assertEquals(null, fullEvent.event.teamsJoinUrl)
+        assertEquals(null, fullEvent.event.teamsConferenceId)
+        assertEquals(null, fullEvent.event.teamsDialIn)
+    }
+
+    @Test
+    fun `M2M private and unknown event ids return the same not found response`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+        val privateEvent = database.addEvent(
+            futureEvent("m2m-private-${UUID.randomUUID()}").copy(public = false)
+        )
+        val token = m2mToken(listOf("delta.read"))
+        val privateResponse = client.get("/event/${privateEvent.id}") { bearerAuth(token) }
+        val unknownResponse = client.get("/event/${UUID.randomUUID()}") { bearerAuth(token) }
+
+        assertEquals(HttpStatusCode.NotFound, privateResponse.status)
+        assertEquals(HttpStatusCode.NotFound, unknownResponse.status)
+        assertEquals("Event not found", privateResponse.bodyAsText())
+        assertEquals(privateResponse.bodyAsText(), unknownResponse.bodyAsText())
+    }
+
+    @Test
+    fun `M2M event by id requires read role and valid uuid`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+        val event = database.addEvent(futureEvent("m2m-role-${UUID.randomUUID()}"))
+        val forbidden = client.get("/event/${event.id}") { bearerAuth(m2mToken(emptyList())) }
+        val invalid = client.get("/event/not-a-uuid") {
+            bearerAuth(m2mToken(listOf("delta.read")))
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, forbidden.status)
+        assertEquals(HttpStatusCode.BadRequest, invalid.status)
+    }
+
+    @Test
+    fun `user token can still read private events by id`() = testApplication {
+        application {
+            val env = localTestEnvironment()
+            installTestApi(env, database, testJwtVerifier) {
+                eventApi(database, cloudClient, env)
+            }
+        }
+        val event = database.addEvent(
+            futureEvent("user-private-${UUID.randomUUID()}").copy(public = false)
+        )
+        val response = client.get("/event/${event.id}") { bearerAuth(userToken()) }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(event.id, readJson<FullEvent>(response.bodyAsText()).event.id)
     }
 
     @Test

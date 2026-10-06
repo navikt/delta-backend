@@ -148,8 +148,11 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@get it.left().unwrapAndRespond(call)
                         }
 
-                    database.getFullEvent(id.toString())
-                        .map { it.hideTeamsDetailsUnlessParticipantOrHost(call.principalEmail()) }
+                    val isApplicationToken =
+                        call.principal<JWTPrincipal>()?.payload?.getClaim("idtyp")?.asString() == "app"
+                    val email = if (isApplicationToken) "" else call.principalEmail()
+                    database.getFullEvent(id.toString(), onlyPublic = isApplicationToken)
+                        .map { it.hideTeamsDetailsUnlessParticipantOrHost(email) }
                         .unwrapAndRespond(call)
                 }
             }

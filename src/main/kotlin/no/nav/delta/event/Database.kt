@@ -100,22 +100,25 @@ WHERE  id = Uuid(?);
     }
 }
 
-fun DatabaseInterface.getFullEvent(id: String): Either<EventNotFoundException, FullEvent> {
-    return getCategories(id).map { categories ->
-        connection.use { connection ->
-            val preparedStatement =
-                connection.prepareStatement(
-                    """
+fun DatabaseInterface.getFullEvent(
+    id: String,
+    onlyPublic: Boolean = false,
+): Either<EventNotFoundException, FullEvent> {
+    return connection.use { connection ->
+        val preparedStatement =
+            connection.prepareStatement(
+                """
 SELECT *
 FROM   event
        LEFT JOIN participant
               ON event.id = participant.event_id
-WHERE  id = Uuid(?);
+WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
 """)
-            preparedStatement.setString(1, id)
-            val result = preparedStatement.executeQuery()
-            if (!result.next()) return EventNotFoundException.left()
+        preparedStatement.setString(1, id)
+        val result = preparedStatement.executeQuery()
+        if (!result.next()) return EventNotFoundException.left()
 
+        getCategories(id).map { categories ->
             val event = result.toEvent()
             val participant =
                 result.let {

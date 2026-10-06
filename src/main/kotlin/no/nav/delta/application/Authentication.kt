@@ -51,7 +51,7 @@ fun Route.enforceM2mReadOnlyAccess() {
         val isReadApiPath =
             path == "/event" || path == "/category" || eventByIdPath.matches(path)
         val isApprovedRead =
-            call.request.httpMethod == HttpMethod.Get && (path == "/event" || path == "/category")
+            call.request.httpMethod == HttpMethod.Get && isReadApiPath
 
         if ((isApplicationToken && isReadApiPath && (!hasReadRole || !isApprovedRead)) ||
             (hasReadRole && (!isApplicationToken || !isApprovedRead))
