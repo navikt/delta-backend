@@ -62,7 +62,7 @@ spec:
     - name: FEATURE_TEAMS_MEETING
       value: "all"
     - name: FEATURE_SHARED_CALENDAR
-      value: "maintainers"
+      value: "all"
   envFrom:
     - secret: delta-backend-webhook-secret
   leaderElection: true
