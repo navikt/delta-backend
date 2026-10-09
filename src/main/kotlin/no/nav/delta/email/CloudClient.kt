@@ -798,9 +798,11 @@ class AzureCloudClient internal constructor(
         transactionId: String,
     ): Either<Throwable, MasterEventResult> = sharedRequest(SharedCalendarOperation.CREATE_EVENT) {
         if (transactionId.isBlank()) throw SharedGraphException(null, "MissingTransactionId", null)
+        val calendarAttendees = sharedAttendees(event, attendees)
+        requireAttendeeLimit(calendarAttendees.size)
         requireIndividualAttendees(attendees.map { it.email })
         val payload = prepareMasterCalendarEvent(event).apply {
-            this.attendees = sharedAttendees(event, attendees).map { it.toGraphAttendee() }
+            this.attendees = calendarAttendees.map { it.toGraphAttendee() }
             responseRequested = true
             this.transactionId = transactionId
             location = Location().apply { displayName = event.roomName ?: event.location }
@@ -833,6 +835,7 @@ class AzureCloudClient internal constructor(
         changeKey: String?,
         existingAttendeeEmails: Set<String>,
     ): Either<Throwable, Unit> = sharedRequest(SharedCalendarOperation.UPDATE_ATTENDEES) {
+        requireAttendeeLimit(attendees.size)
         requireIndividualAttendees(
             attendees.filterNot { it.isResource }.map { it.email },
             existingAttendeeEmails,
@@ -915,24 +918,34 @@ class AzureCloudClient internal constructor(
 
     /** GroupMember.Read.All authorizes the directory group lookup used to detect list aliases. */
     private fun isIndividuallyAddressed(email: String): Boolean = sharedRequest(SharedCalendarOperation.CLASSIFY_ATTENDEE) {
-        val groups = graphClient.groups().get {
-            it.queryParameters?.select = arrayOf("id")
-            it.queryParameters?.filter = "mail eq '${email.replace("'", "''")}' or " +
-                "proxyAddresses/any(p:p eq 'smtp:${email.lowercase().replace("'", "''")}' or " +
-                "p eq 'SMTP:${email.lowercase().replace("'", "''")}')"
-            it.queryParameters?.top = 1
-            it.queryParameters?.count = true
-            it.headers.add("ConsistencyLevel", "eventual")
-        } ?: throw SharedGraphException(null, "InvalidDirectoryResponse", null)
-        val values = groups.value ?: throw SharedGraphException(null, "InvalidDirectoryResponse", null)
-        if (values.isEmpty() && groups.odataNextLink != null) {
-            throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+        val escaped = email.lowercase().replace("'", "''")
+        // Graph rejects the compound mail/alias filter in production; use individual equality queries.
+        val filters = listOf(
+            "mail eq '$escaped'",
+            "proxyAddresses/any(p:p eq 'smtp:$escaped')",
+            "proxyAddresses/any(p:p eq 'SMTP:$escaped')",
+        )
+        filters.none { filter ->
+            val groups = graphClient.groups().get {
+                it.queryParameters?.select = arrayOf("id")
+                it.queryParameters?.filter = filter
+                it.queryParameters?.top = 1
+                it.queryParameters?.count = true
+                it.headers.add("ConsistencyLevel", "eventual")
+            } ?: throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+            val values = groups.value ?: throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+            if (values.isEmpty() && groups.odataNextLink != null) {
+                throw SharedGraphException(null, "InvalidDirectoryResponse", null)
+            }
+            values.isNotEmpty()
         }
-        values.isEmpty()
     }.fold({ throw it }, { it })
 
+    private fun requireAttendeeLimit(count: Int) {
+        if (count > SHARED_MAX_ATTENDEES) throw SharedGraphException(400, "TooManyAttendees", null)
+    }
+
     private fun requireIndividualAttendees(emails: List<String>, knownEmails: Set<String> = emptySet()) {
-        if (emails.size > SHARED_MAX_ATTENDEES) throw SharedGraphException(400, "TooManyAttendees", null)
         val known = knownEmails.mapTo(mutableSetOf()) { it.lowercase() }
         if (emails.distinctBy { it.lowercase() }.any {
                 it.lowercase() !in known && !isIndividuallyAddressed(it)

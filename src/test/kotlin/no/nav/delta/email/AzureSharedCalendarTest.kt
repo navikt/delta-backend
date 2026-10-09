@@ -34,7 +34,11 @@ class AzureSharedCalendarTest {
         assertTrue(requests.all { it.method == "GET" })
     }
 
-    private fun client(vararg responses: Pair<Int, String>, individualLookups: Boolean = false): AzureCloudClient {
+    private fun client(
+        vararg responses: Pair<Int, String>,
+        individualLookups: Boolean = false,
+        rejectCompoundGroupFilters: Boolean = false,
+    ): AzureCloudClient {
         val queue = ArrayDeque(responses.toList())
         val http = OkHttpClient.Builder().addInterceptor { chain ->
             val request = chain.request()
@@ -44,7 +48,12 @@ class AzureSharedCalendarTest {
                 body.writeTo(buffer)
                 payloads.add(mapper.readTree(buffer.readUtf8()))
             }
-            val (status, body) = if (individualLookups && request.url.encodedPath.endsWith("/groups")) {
+            val groupFilter = request.url.queryParameter("\$filter")
+            val (status, body) = if (rejectCompoundGroupFilters &&
+                request.url.encodedPath.endsWith("/groups") && groupFilter?.contains(" or ") == true
+            ) {
+                400 to """{"error":{"code":"Request_UnsupportedQuery","message":"Unsupported compound filter"}}"""
+            } else if (individualLookups && request.url.encodedPath.endsWith("/groups")) {
                 200 to """{"value":[]}"""
             } else queue.removeFirst()
             Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
@@ -53,6 +62,115 @@ class AzureSharedCalendarTest {
                 .apply { responseHeaders.forEach { (name, value) -> header(name, value) } }.build()
         }.build()
         return AzureCloudClient("delta@nav.no", GraphServiceClient(http))
+    }
+
+    @Test
+    fun `shared creation uses separate supported mail and proxy equality queries`() {
+        val client = client(
+            201 to """{"id":"shared","onlineMeeting":{"joinUrl":"https://teams.microsoft.com/native"}}""",
+            individualLookups = true,
+            rejectCompoundGroupFilters = true,
+        )
+        val result = client.createSharedEvent(
+            sharedTestEvent(), listOf(Participant("O'CONNOR@NAV.NO", "Host")), "persisted",
+        )
+        assertTrue(result.isRight(), result.leftOrNull()?.message)
+        assertEquals("shared", result.getOrNull()?.calendarEventId)
+        assertEquals(
+            listOf(
+                "mail eq 'o''connor@nav.no'",
+                "proxyAddresses/any(p:p eq 'smtp:o''connor@nav.no')",
+                "proxyAddresses/any(p:p eq 'SMTP:o''connor@nav.no')",
+            ),
+            requests.filter { it.url.encodedPath.endsWith("/groups") }.map {
+                assertEquals("id", it.url.queryParameter("\$select"))
+                assertEquals("1", it.url.queryParameter("\$top"))
+                assertEquals("true", it.url.queryParameter("\$count"))
+                assertEquals("eventual", it.header("ConsistencyLevel"))
+                it.url.queryParameter("\$filter")
+            },
+        )
+        assertEquals(listOf("GET", "GET", "GET", "POST"), requests.map { it.method })
+    }
+
+    @Test
+    fun `group primary mail and both proxy prefix forms stop creation before sending`() {
+        val expectedFilters = listOf(
+            "mail eq 'alias@nav.no'",
+            "proxyAddresses/any(p:p eq 'smtp:alias@nav.no')",
+            "proxyAddresses/any(p:p eq 'SMTP:alias@nav.no')",
+        )
+        expectedFilters.indices.forEach { match ->
+            requests.clear()
+            val responses = List(match) { 200 to """{"value":[]}""" } +
+                (200 to """{"value":[{"id":"group-id"}]}""")
+            val client = client(*responses.toTypedArray())
+            val error = client.createSharedEvent(
+                sharedTestEvent(), listOf(Participant("ALIAS@NAV.NO", "Group")), "persisted",
+            ).leftOrNull() as SharedGraphException
+            assertEquals("GroupInvitationsNotSupported", error.code)
+            assertEquals(expectedFilters.take(match + 1), requests.map { it.url.queryParameter("\$filter") })
+            assertTrue(requests.all { it.method == "GET" })
+        }
+    }
+
+    @Test
+    fun `alias lookup failure never falls back to treating the address as an individual`() {
+        listOf(400, 403, 429, 503).forEach { status ->
+            requests.clear()
+            val client = client(
+                200 to """{"value":[]}""",
+                status to """{"error":{"code":"DirectoryFailure","message":"private"}}""",
+            )
+            val error = client.createSharedEvent(
+                sharedTestEvent(), listOf(Participant("alias@nav.no", "Host")), "persisted",
+            ).leftOrNull() as SharedGraphException
+            assertEquals(status, error.httpStatus)
+            assertEquals("DirectoryFailure", error.code)
+            assertEquals(SharedCalendarOperation.CLASSIFY_ATTENDEE, error.operation)
+            assertEquals(listOf("GET", "GET"), requests.map { it.method })
+        }
+    }
+
+    @Test
+    fun `incomplete group query responses do not prove the attendee is an individual`() {
+        listOf("{}", """{"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/groups?skiptoken=next"}""")
+            .forEach { body ->
+                requests.clear()
+                val client = client(200 to body)
+                val error = client.createSharedEvent(
+                    sharedTestEvent(), listOf(Participant("alias@nav.no", "Host")), "persisted",
+                ).leftOrNull() as SharedGraphException
+                assertEquals("InvalidDirectoryResponse", error.code)
+                assertEquals(SharedCalendarOperation.CLASSIFY_ATTENDEE, error.operation)
+                assertEquals(listOf("GET"), requests.map { it.method })
+            }
+    }
+
+    @Test
+    fun `creation rejects more than 500 total attendees including the room before directory requests`() {
+        val client = client()
+        val humans = (1..500).map { Participant("person$it@nav.no", "Person $it") }
+        val error = client.createSharedEvent(sharedTestEvent(), humans, "persisted").leftOrNull() as SharedGraphException
+        assertEquals(400, error.httpStatus)
+        assertEquals("TooManyAttendees", error.code)
+        assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun `attendee patch counts resources towards the 500 attendee ceiling`() {
+        val client = client(200 to "{}")
+        val humans = (1..500).map { SharedCalendarAttendee("person$it@nav.no", "Person $it") }
+        val known = humans.mapTo(mutableSetOf()) { it.email }
+        assertTrue(client.updateSharedAttendees("shared", humans, null, known).isRight())
+        assertEquals(500, payloads.single()["attendees"].size())
+        requests.clear()
+        val error = client.updateSharedAttendees(
+            "shared", humans + SharedCalendarAttendee("room@nav.no", "Room", isResource = true), null, known,
+        ).leftOrNull() as SharedGraphException
+        assertEquals(400, error.httpStatus)
+        assertEquals("TooManyAttendees", error.code)
+        assertTrue(requests.isEmpty())
     }
 
     @Test
@@ -113,7 +231,7 @@ class AzureSharedCalendarTest {
                {"emailAddress":{"address":"room@nav.no","name":"Room"},"type":"resource","status":{"response":"declined"}}],
              "onlineMeeting":{"joinUrl":"https://teams.microsoft.com/native","conferenceId":"123",
                               "tollNumber":"+47","quickDial":"+47,,123#"}}
-        """.trimIndent(), 200 to """{"value":[]}""")
+        """.trimIndent(), individualLookups = true)
         val snapshot = client.getSharedEvent("shared").getOrNull()!!
         assertEquals("opaque", snapshot.changeKey)
         assertEquals("""W/"actual"""", snapshot.etag)
@@ -278,19 +396,21 @@ class AzureSharedCalendarTest {
                 {"emailAddress":{"address":"room@nav.no","name":"Room"},"type":"resource"}]}""",
             200 to """{"value":[{"id":"group-id"}]}""",
             200 to """{"value":[]}""",
+            200 to """{"value":[]}""",
+            200 to """{"value":[]}""",
         )
         val snapshot = client.getSharedEvent("shared").getOrNull()!!
         assertFalse(snapshot.attendees[0].isIndividual)
         assertTrue(snapshot.attendees[1].isIndividual)
         assertTrue(snapshot.attendees[2].isResource)
-        assertEquals(3, requests.size)
+        assertEquals(5, requests.size)
         requests.drop(1).forEach { request ->
             assertEquals("/v1.0/groups", request.url.encodedPath)
             assertEquals("id", request.url.queryParameter("\$select"))
             assertEquals("1", request.url.queryParameter("\$top"))
         }
         assertTrue(requests[1].url.queryParameter("\$filter")!!.contains("mail eq 'group@nav.no'"))
-        assertTrue(requests[1].url.queryParameter("\$filter")!!.contains("proxyAddresses/any"))
+        assertTrue(requests[3].url.queryParameter("\$filter")!!.contains("proxyAddresses/any"))
     }
 
     @Test
@@ -327,8 +447,8 @@ class AzureSharedCalendarTest {
     @Test
     fun `attendee patch validates only newly added addresses`() {
         val client = client(
-            200 to """{"value":[]}""",
             200 to "",
+            individualLookups = true,
         )
         assertTrue(client.updateSharedAttendees(
             "shared",
@@ -339,9 +459,9 @@ class AzureSharedCalendarTest {
             null,
             setOf("existing@nav.no"),
         ).isRight())
-        assertEquals(2, requests.size)
+        assertEquals(4, requests.size)
         assertTrue(requests[0].url.encodedPath.endsWith("/groups"))
-        assertTrue(requests[1].url.encodedPath.endsWith("/events/shared"))
+        assertTrue(requests[3].url.encodedPath.endsWith("/events/shared"))
     }
 
     @Test
@@ -384,7 +504,7 @@ class AzureSharedCalendarTest {
         assertEquals("ErrorInvalidRequest", error.code)
         assertTrue(error.message!!.contains("operation=CREATE_EVENT"))
         assertFalse(error.message!!.contains("person@nav.no"))
-        assertEquals(listOf("GET", "POST"), requests.map { it.method })
+        assertEquals(listOf("GET", "GET", "GET", "POST"), requests.map { it.method })
     }
 
     @Test
@@ -406,10 +526,10 @@ class AzureSharedCalendarTest {
             200 to """{"attendees":[
                 {"emailAddress":{"address":"o'connor@nav.no"},"type":"required"},
                 {"emailAddress":{"address":"O'CONNOR@NAV.NO"},"type":"required"}]}""",
-            200 to """{"value":[]}""",
+            individualLookups = true,
         )
         assertTrue(client.getSharedEvent("shared").getOrNull()!!.attendees.all { it.isIndividual })
-        assertEquals(2, requests.size)
+        assertEquals(4, requests.size)
         assertTrue(requests[1].url.queryParameter("\$filter")!!.contains("mail eq 'o''connor@nav.no'"))
     }
 
