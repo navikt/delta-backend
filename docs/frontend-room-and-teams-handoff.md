@@ -81,6 +81,13 @@ frontend change.
 - **502** on create/update: the booking or Teams meeting failed in Microsoft Graph, and **nothing
   was saved**. Keep the form open and let the user retry.
 - **502** on `/rooms*`: Graph is unavailable. Show an error and allow retrying.
+- **502** on `/rooms/availability` remains plain text, but now explains the failure category
+  (rejected request, calendar access denied, throttling, connection failure or unavailable
+  service). It includes `status`, `code` and `requestId` when available; show the message rather
+  than replacing it with a generic error. Raw Graph exception messages are not exposed.
+  Logs include room count, duration in seconds and slot interval, without room addresses or
+  free/busy data. These fields help investigate whether failures correlate with short events.
+  Per-room errors in a **200** response include Graph's response code when available.
 - Saving an event with room/Teams takes roughly 0.3–0.8 s longer. Show a loading state.
 
 ## Where to look in the OpenAPI spec

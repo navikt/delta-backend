@@ -24,6 +24,7 @@ import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
 import no.nav.delta.event.RoomBookingStatus
 import no.nav.delta.room.RoomAvailability
+import no.nav.delta.room.RoomAvailabilityRequest
 import no.nav.delta.room.RoomInfo
 import no.nav.delta.room.RoomList
 import no.nav.delta.room.MasterEventResult
@@ -582,8 +583,9 @@ class AzureCloudClient internal constructor(
         endTime: LocalDateTime,
         availabilityViewInterval: Int,
     ): Either<Throwable, List<RoomAvailability>> {
+        val request = RoomAvailabilityRequest(roomEmails, startTime, endTime, availabilityViewInterval)
         if (applicationEmailAddress.isBlank()) {
-            return RuntimeException("Missing application email address").left()
+            return RoomAvailabilityException(request, code = "MissingMailbox").left()
         }
         if (roomEmails.isEmpty()) return emptyList<RoomAvailability>().right()
 
@@ -601,20 +603,26 @@ class AzureCloudClient internal constructor(
                 .getSchedule()
                 .post(requestBody)
 
-            (response?.value ?: emptyList()).mapIndexed { index, scheduleInfo ->
+            val schedules = response?.value
+                ?: return RoomAvailabilityException(request, code = "InvalidGraphResponse").left()
+            schedules.mapIndexed { index, scheduleInfo ->
                 RoomAvailability(
                     emailAddress = roomEmails.getOrElse(index) { scheduleInfo.scheduleId ?: "" },
                     availabilityView = scheduleInfo.availabilityView,
-                    error = scheduleInfo.error?.message,
+                    error = scheduleInfo.error?.let {
+                        listOfNotNull(it.responseCode, it.message).joinToString(": ")
+                            .ifBlank { "Unknown room availability error" }
+                    },
                 )
             }.also { result ->
-                graphLogger.info(
-                    "Graph getSchedule: requested ${roomEmails.size}, returned ${result.size}, " +
-                        "per room: " + result.joinToString { "${it.emailAddress}=${it.availabilityView ?: "err:" + it.error}" }
-                )
+                val errorCount = result.count { it.error != null }
+                val summary = "Graph getSchedule: requested=${roomEmails.size} returned=${result.size} " +
+                    "roomErrors=$errorCount durationSeconds=${java.time.Duration.between(startTime, endTime).seconds} " +
+                    "intervalMinutes=$availabilityViewInterval"
+                if (errorCount > 0) graphLogger.warn(summary) else graphLogger.info(summary)
             }.right()
         } catch (e: Exception) {
-            graphFailure("Failed to get room availability", e).left()
+            RoomAvailabilityException(request, e).left()
         }
     }
 

@@ -13,6 +13,7 @@ import java.time.Duration
 import no.nav.delta.Environment
 import no.nav.delta.application.enforceM2mReadOnlyAccess
 import no.nav.delta.email.CloudClient
+import no.nav.delta.email.RoomAvailabilityException
 import no.nav.delta.event.principalGroups
 import org.slf4j.LoggerFactory
 
@@ -120,8 +121,10 @@ fun Route.roomApi(
                         )
                         .fold(
                             { error ->
-                                logger.warn("Failed to get room availability", error)
-                                call.respond(HttpStatusCode.BadGateway, "Failed to get room availability")
+                                val failure = error as? RoomAvailabilityException
+                                    ?: RoomAvailabilityException(request, error)
+                                logger.warn("{}", failure.message)
+                                call.respond(HttpStatusCode.BadGateway, failure.clientMessage)
                             },
                             { call.respond(it) },
                         )

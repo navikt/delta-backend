@@ -2,6 +2,10 @@ package no.nav.delta.room
 
 import arrow.core.left
 import arrow.core.right
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
+import com.microsoft.graph.serviceclient.GraphServiceClient
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -11,17 +15,28 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.email.AzureCloudClient
 import no.nav.delta.support.RecordingCloudClient
 import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installTestApi
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
+import java.time.LocalDateTime
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.slf4j.LoggerFactory
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RoomRoutesTest {
@@ -187,6 +202,58 @@ class RoomRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadGateway, response.status)
+        assertTrue(response.bodyAsText().contains("Please retry"))
+        assertFalse(response.bodyAsText().contains("graph failure"))
+    }
+
+    @Test
+    fun `post availability explains a Graph rejection without exposing its raw message`() = testApplication {
+        val env = enabledEnv()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(400).message("stub").header("Request-Id", "req-short")
+                .body(
+                    """{"error":{"code":"ErrorInvalidTimeInterval","message":"private upstream details"}}"""
+                        .toResponseBody("application/json".toMediaType())
+                ).build()
+        }.build()
+        cloudClient.roomAvailabilityResult = AzureCloudClient("delta@example.com", GraphServiceClient(http))
+            .getRoomAvailability(
+                listOf("room@example.com"),
+                LocalDateTime.of(2026, 1, 1, 9, 0),
+                LocalDateTime.of(2026, 1, 1, 9, 5),
+                30,
+            )
+        application { installTestApi(env, database) { roomApi(cloudClient, env) } }
+
+        val logger = LoggerFactory.getLogger("no.nav.delta.room.Routes") as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        val response = try {
+            client.post("/rooms/availability") {
+                contentType(ContentType.Application.Json)
+                setBody(availabilityRequestJson(endTime = "2026-01-01T09:05:00"))
+            }
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+
+        assertEquals(HttpStatusCode.BadGateway, response.status)
+        val message = response.bodyAsText()
+        assertTrue(message.contains("rejected the availability request"), message)
+        assertTrue(message.contains("status=400"), message)
+        assertTrue(message.contains("code=ErrorInvalidTimeInterval"), message)
+        assertTrue(message.contains("requestId=req-short"), message)
+        assertFalse(message.contains("private upstream details"), message)
+        val log = appender.list.single()
+        listOf("status=400", "code=ErrorInvalidTimeInterval", "requestId=req-short",
+            "roomCount=1", "durationSeconds=300", "intervalMinutes=30").forEach {
+            assertTrue(log.formattedMessage.contains(it), log.formattedMessage)
+        }
+        assertFalse(log.formattedMessage.contains("private upstream details"))
+        assertFalse(log.formattedMessage.contains("room@example.com"))
+        assertNull(log.throwableProxy, "Do not leak upstream error messages through a stack trace")
     }
 
     @Test

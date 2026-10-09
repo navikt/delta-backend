@@ -554,7 +554,15 @@ paths:
             entries, startTime is not before endTime, the range exceeds 62 days, or
             availabilityViewInterval is outside 5–1440
         "502":
-          description: "Microsoft Graph failed; retry later"
+          description: >-
+            Availability lookup failed. Plain text describes the failure category and includes
+            the upstream HTTP status, Graph error code and request ID when available.
+            Raw upstream error messages are not exposed.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: "Failed to get room availability. Microsoft Graph rejected the availability request. Check the time range and slot interval. (status=400 code=ErrorInvalidTimeInterval requestId=unknown)"
   /category:
     get:
       tags:
@@ -1091,7 +1099,7 @@ components:
         error:
           type: string
           nullable: true
-          description: "Set when Graph could not return availability for this room"
+          description: "Set when Graph could not return availability for this room; includes the Graph response code when available"
     FullEvent:
       type: object
       properties:
