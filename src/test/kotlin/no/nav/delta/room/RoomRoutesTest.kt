@@ -202,18 +202,25 @@ class RoomRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadGateway, response.status)
-        assertTrue(response.bodyAsText().contains("Please retry"))
+        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+        val error = readJson<Map<String, Any?>>(response.bodyAsText())
+        assertEquals(502, error["status"])
+        assertEquals("about:blank", error["type"])
+        assertNull(error["code"])
+        assertNull(error["upstreamStatus"])
+        assertNull(error["requestId"])
+        assertTrue(error["detail"].toString().contains("Please retry"))
         assertFalse(response.bodyAsText().contains("graph failure"))
     }
 
     @Test
-    fun `post availability explains a Graph rejection without exposing its raw message`() = testApplication {
+    fun `post availability returns Graph invalid interval as structured 400 without raw messages`() = testApplication {
         val env = enabledEnv()
         val http = OkHttpClient.Builder().addInterceptor { chain ->
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
                 .code(400).message("stub").header("Request-Id", "req-short")
                 .body(
-                    """{"error":{"code":"ErrorInvalidTimeInterval","message":"private upstream details"}}"""
+                    """{"error":{"code":"ErrorInvalidMergedFreeBusyInterval","message":"private upstream details"}}"""
                         .toResponseBody("application/json".toMediaType())
                 ).build()
         }.build()
@@ -221,8 +228,8 @@ class RoomRoutesTest {
             .getRoomAvailability(
                 listOf("room@example.com"),
                 LocalDateTime.of(2026, 1, 1, 9, 0),
-                LocalDateTime.of(2026, 1, 1, 9, 5),
-                30,
+                LocalDateTime.of(2026, 1, 1, 9, 11),
+                15,
             )
         application { installTestApi(env, database) { roomApi(cloudClient, env) } }
 
@@ -232,28 +239,79 @@ class RoomRoutesTest {
         val response = try {
             client.post("/rooms/availability") {
                 contentType(ContentType.Application.Json)
-                setBody(availabilityRequestJson(endTime = "2026-01-01T09:05:00"))
+                setBody(
+                    availabilityRequestJson(endTime = "2026-01-01T09:11:00")
+                        .replace("\"availabilityViewInterval\": 30", "\"availabilityViewInterval\": 15")
+                )
             }
         } finally {
             logger.detachAppender(appender)
             appender.stop()
         }
 
-        assertEquals(HttpStatusCode.BadGateway, response.status)
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
         val message = response.bodyAsText()
-        assertTrue(message.contains("rejected the availability request"), message)
-        assertTrue(message.contains("status=400"), message)
-        assertTrue(message.contains("code=ErrorInvalidTimeInterval"), message)
-        assertTrue(message.contains("requestId=req-short"), message)
+        val error = readJson<Map<String, Any?>>(message)
+        assertEquals("about:blank", error["type"])
+        assertEquals("Room availability request rejected", error["title"])
+        assertEquals(400, error["status"])
+        assertEquals(400, error["upstreamStatus"])
+        assertEquals("ErrorInvalidMergedFreeBusyInterval", error["code"])
+        assertEquals("req-short", error["requestId"])
+        assertTrue(error["detail"].toString().contains("Check the time range and slot interval"), message)
         assertFalse(message.contains("private upstream details"), message)
         val log = appender.list.single()
-        listOf("status=400", "code=ErrorInvalidTimeInterval", "requestId=req-short",
-            "roomCount=1", "durationSeconds=300", "intervalMinutes=30").forEach {
+        listOf("status=400", "code=ErrorInvalidMergedFreeBusyInterval", "requestId=req-short",
+            "roomCount=1", "durationSeconds=660", "intervalMinutes=15").forEach {
             assertTrue(log.formattedMessage.contains(it), log.formattedMessage)
         }
         assertFalse(log.formattedMessage.contains("private upstream details"))
         assertFalse(log.formattedMessage.contains("room@example.com"))
         assertNull(log.throwableProxy, "Do not leak upstream error messages through a stack trace")
+    }
+
+    @Test
+    fun `post availability keeps upstream service failures as structured 502`() = testApplication {
+        val env = enabledEnv()
+        application { installTestApi(env, database) { roomApi(cloudClient, env) } }
+
+        listOf(
+            403 to "denied calendar access",
+            404 to "configured calendar mailbox",
+            429 to "rate limiting",
+            503 to "temporarily unavailable",
+        ).forEach { (status, explanation) ->
+            val http = OkHttpClient.Builder().addInterceptor { chain ->
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                    .code(status).message("stub")
+                    .body(
+                        """{"error":{"code":"SyntheticFailure","message":"private upstream details"}}"""
+                            .toResponseBody("application/json".toMediaType())
+                    ).build()
+            }.build()
+            cloudClient.roomAvailabilityResult = AzureCloudClient("delta@example.com", GraphServiceClient(http))
+                .getRoomAvailability(
+                    listOf("room@example.com"),
+                    LocalDateTime.of(2026, 1, 1, 9, 0),
+                    LocalDateTime.of(2026, 1, 1, 10, 0),
+                    30,
+                )
+
+            val response = client.post("/rooms/availability") {
+                contentType(ContentType.Application.Json)
+                setBody(availabilityRequestJson())
+            }
+
+            assertEquals(HttpStatusCode.BadGateway, response.status)
+            assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+            val error = readJson<Map<String, Any?>>(response.bodyAsText())
+            assertEquals(502, error["status"])
+            assertEquals(status, error["upstreamStatus"])
+            assertEquals("SyntheticFailure", error["code"])
+            assertTrue(error["detail"].toString().contains(explanation))
+            assertFalse(response.bodyAsText().contains("private upstream details"))
+        }
     }
 
     @Test

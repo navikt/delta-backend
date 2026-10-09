@@ -74,17 +74,24 @@ frontend change.
 
 ## Errors
 
-- **400**, plain text (see `components.responses.RoomTeamsBadRequest` in the spec): show the
+- **400**, plain text for local validation (see `components.responses.RoomTeamsBadRequest` in the spec): show the
   message. Possible messages include "Room booking is not enabled", "roomEmail and roomName must
   be set together", "...not supported for recurring events" and "Teams meeting cannot be removed
   from an event; delete the event instead".
 - **502** on create/update: the booking or Teams meeting failed in Microsoft Graph, and **nothing
   was saved**. Keep the form open and let the user retry.
-- **502** on `/rooms*`: Graph is unavailable. Show an error and allow retrying.
-- **502** on `/rooms/availability` remains plain text, but now explains the failure category
-  (rejected request, calendar access denied, throttling, connection failure or unavailable
-  service). It includes `status`, `code` and `requestId` when available; show the message rather
-  than replacing it with a generic error. Raw Graph exception messages are not exposed.
+- **502** on room lists/search: the Graph lookup failed. Show an error and allow retrying.
+- Graph failures on **`POST /rooms/availability`** now return **JSON**, not plain text:
+  **400** for a rejected availability request; **502** for service, access, configuration or
+  connection failures. The `RoomAvailabilityError` body has `type`, `title`, `status`, `detail`,
+  `code`, `upstreamStatus` and `requestId`. `status` is the backend HTTP status; `upstreamStatus`
+  is Graph's HTTP status. `code`, `upstreamStatus` and `requestId` can be null.
+  Parse JSON based on the response content type; local validation still returns plain text.
+  Use `code` for localized messages, with `detail` as the fallback. In particular,
+  `ErrorInvalidMergedFreeBusyInterval` means Graph rejected the time range/slot interval,
+  **not** that Microsoft is unresponsive: prompt the user to adjust the range or interval
+  rather than blindly retrying. Do not turn every 502 into an outage message either.
+  Raw Graph exception messages are not exposed.
   Logs include room count, duration in seconds and slot interval, without room addresses or
   free/busy data. These fields help investigate whether failures correlate with short events.
   Per-room errors in a **200** response include Graph's response code when available.
@@ -99,7 +106,7 @@ frontend change.
 | Request fields | schema `CreateEvent`: `roomEmail`, `roomName`, `isOnlineMeeting` (descriptions have the rules) |
 | Response fields | schema `Event`: `roomEmail`, `roomName`, `roomStatus`, `isOnlineMeeting`, `teamsJoinUrl`, `teamsConferenceId`, `teamsDialIn` |
 | Update semantics | `POST /admin/event/{id}` description |
-| Errors | `components.responses.RoomTeamsBadRequest` / `RoomTeamsBadGateway` |
+| Errors | `components.responses.RoomTeamsBadRequest` / `RoomTeamsBadGateway`; schema `RoomAvailabilityError` for availability lookup failures |
 | Visibility of Teams details | `GET /event` and `GET /event/{id}` descriptions |
 
 Don't send `roomStatus` or `teams*` in requests. They're server-managed and ignored.

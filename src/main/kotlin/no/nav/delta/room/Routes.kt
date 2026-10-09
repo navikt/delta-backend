@@ -124,7 +124,26 @@ fun Route.roomApi(
                                 val failure = error as? RoomAvailabilityException
                                     ?: RoomAvailabilityException(request, error)
                                 logger.warn("{}", failure.message)
-                                call.respond(HttpStatusCode.BadGateway, failure.clientMessage)
+                                val status = if (failure.upstreamStatus == 400) {
+                                    HttpStatusCode.BadRequest
+                                } else {
+                                    HttpStatusCode.BadGateway
+                                }
+                                call.respond(
+                                    status,
+                                    RoomAvailabilityError(
+                                        title = if (status == HttpStatusCode.BadRequest) {
+                                            "Room availability request rejected"
+                                        } else {
+                                            "Room availability lookup failed"
+                                        },
+                                        status = status.value,
+                                        detail = failure.clientDetail,
+                                        code = failure.errorCode,
+                                        upstreamStatus = failure.upstreamStatus,
+                                        requestId = failure.requestId,
+                                    ),
+                                )
                             },
                             { call.respond(it) },
                         )

@@ -137,6 +137,22 @@ class AzureRoomAvailabilityTest {
     }
 
     @Test
+    fun `unsafe upstream codes and request ids are not exposed as structured fields`() {
+        val error = client(
+            400,
+            """{"error":{"code":"private@example.com","message":"private upstream details"}}""",
+            mapOf("request-id" to "private@example.com"),
+        ).getRoomAvailability(listOf("room@example.com"), start, start.plusMinutes(11), 15)
+            .leftOrNull() as RoomAvailabilityException
+
+        assertEquals(400, error.upstreamStatus)
+        assertNull(error.errorCode)
+        assertNull(error.requestId)
+        assertFalse(error.clientDetail.contains("private"))
+        assertFalse(error.message.contains("private"))
+    }
+
+    @Test
     fun `timeouts without a message still provide a useful diagnostic`() {
         val error = RoomAvailabilityException(
             RoomAvailabilityRequest(listOf("room@example.com"), start, start.plusMinutes(5)),

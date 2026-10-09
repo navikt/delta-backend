@@ -37,6 +37,16 @@ data class RoomAvailabilityRequest(
     val availabilityViewInterval: Int = 30,
 )
 
+data class RoomAvailabilityError(
+    val title: String,
+    val status: Int,
+    val detail: String,
+    val code: String?,
+    val upstreamStatus: Int?,
+    val requestId: String?,
+    val type: String = "about:blank",
+)
+
 /**
  * Result of creating/updating the "master" calendar event that carries the room booking and/or
  * Teams meeting for a Delta event (see docs/teams-meeting-room-booking-plan.md). [roomStatus] is
@@ -49,4 +59,3 @@ data class MasterEventResult(
     val teamsConferenceId: String?,
     val teamsDialIn: String?,
 )
-

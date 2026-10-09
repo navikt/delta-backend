@@ -552,17 +552,33 @@ paths:
           description: >-
             Room booking is not enabled for the caller, roomEmails is empty or has more than 20
             entries, startTime is not before endTime, the range exceeds 62 days, or
-            availabilityViewInterval is outside 5–1440
-        "502":
-          description: >-
-            Availability lookup failed. Plain text describes the failure category and includes
-            the upstream HTTP status, Graph error code and request ID when available.
-            Raw upstream error messages are not exposed.
+            availabilityViewInterval is outside 5–1440 (plain text). Graph rejection of the
+            availability request is returned as structured JSON, including its error code.
           content:
             text/plain:
               schema:
                 type: string
-              example: "Failed to get room availability. Microsoft Graph rejected the availability request. Check the time range and slot interval. (status=400 code=ErrorInvalidTimeInterval requestId=unknown)"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomAvailabilityError"
+              example:
+                type: about:blank
+                title: Room availability request rejected
+                status: 400
+                detail: "Failed to get room availability. Microsoft Graph rejected the availability request. Check the time range and slot interval."
+                code: ErrorInvalidMergedFreeBusyInterval
+                upstreamStatus: 400
+                requestId: req-short
+        "502":
+          description: >-
+            Availability lookup failed due to an upstream service, access, configuration or
+            connection failure. Structured JSON describes the failure category and includes
+            the upstream HTTP status, Graph error code and request ID when available.
+            Not every 502 is an outage. Raw upstream error messages are not exposed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomAvailabilityError"
   /category:
     get:
       tags:
@@ -1085,6 +1101,42 @@ components:
           minimum: 5
           maximum: 1440
           description: "Slot length in minutes"
+    RoomAvailabilityError:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - code
+        - upstreamStatus
+        - requestId
+      properties:
+        type:
+          type: string
+          enum: ["about:blank"]
+        title:
+          type: string
+        status:
+          type: integer
+          enum: [400, 502]
+          description: "The backend HTTP response status, not the upstream status"
+        detail:
+          type: string
+          description: "Safe explanation; never the raw Graph error message"
+        code:
+          type: string
+          nullable: true
+          description: "Sanitized Graph error code or backend availability failure code; null if unavailable or unsafe"
+          example: ErrorInvalidMergedFreeBusyInterval
+        upstreamStatus:
+          type: integer
+          nullable: true
+          description: "Graph HTTP status; null for failures without an upstream response"
+        requestId:
+          type: string
+          nullable: true
+          description: "Sanitized Graph request ID; null if unavailable or unsafe"
     RoomAvailability:
       type: object
       properties:
