@@ -82,7 +82,10 @@ class CalendarSyncWorker(
         } else {
             repository.fail(work)
             metrics.failed()
-            logger.warn("Shared calendar operation failed with status {}", error.httpStatus)
+            logger.warn(
+                "Shared calendar operation failed with status {} code {} operation {}",
+                error.httpStatus, error.code ?: "unknown", error.operation ?: "unknown",
+            )
         }
     }
 

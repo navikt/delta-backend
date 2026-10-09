@@ -357,6 +357,50 @@ class AzureSharedCalendarTest {
     }
 
     @Test
+    fun `creation identifies a failed group lookup separately from the calendar POST`() {
+        val client = client(
+            400 to """{"error":{"code":"Request_UnsupportedQuery","message":"private person@nav.no"}}""",
+        )
+        val error = client.createSharedEvent(
+            sharedTestEvent(), listOf(Participant("host@nav.no", "Host")), "persisted",
+        ).leftOrNull() as SharedGraphException
+        assertEquals(400, error.httpStatus)
+        assertEquals("Request_UnsupportedQuery", error.code)
+        assertTrue(error.message!!.contains("operation=CLASSIFY_ATTENDEE"))
+        assertFalse(error.message!!.contains("person@nav.no"))
+        assertEquals(listOf("GET"), requests.map { it.method })
+    }
+
+    @Test
+    fun `creation identifies a failed calendar POST without exposing Graph error text`() {
+        val client = client(
+            400 to """{"error":{"code":"ErrorInvalidRequest","message":"private person@nav.no"}}""",
+            individualLookups = true,
+        )
+        val error = client.createSharedEvent(
+            sharedTestEvent(), listOf(Participant("host@nav.no", "Host")), "persisted",
+        ).leftOrNull() as SharedGraphException
+        assertEquals(400, error.httpStatus)
+        assertEquals("ErrorInvalidRequest", error.code)
+        assertTrue(error.message!!.contains("operation=CREATE_EVENT"))
+        assertFalse(error.message!!.contains("person@nav.no"))
+        assertEquals(listOf("GET", "POST"), requests.map { it.method })
+    }
+
+    @Test
+    fun `diagnostic error codes reject free text addresses and unbounded values`() {
+        val codes = listOf("person@nav.no", "private payload", "x".repeat(81), "Error\r\nInjected")
+        val client = client(*codes.map { code ->
+            400 to mapper.writeValueAsString(mapOf("error" to mapOf("code" to code, "message" to "private")))
+        }.toTypedArray())
+        codes.forEach {
+            val error = client.getSharedEvent("shared").leftOrNull() as SharedGraphException
+            assertNull(error.code)
+            assertFalse(error.message!!.contains("private"))
+        }
+    }
+
+    @Test
     fun `classification memoizes duplicate addresses within snapshot and escapes mail filter`() {
         val client = client(
             200 to """{"attendees":[

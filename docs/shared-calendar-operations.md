@@ -13,6 +13,21 @@ Hosts can retry failed work through `POST /admin/event/{id}/calendar/retry`.
 Inspect the sanitized failure before retrying permission or mailbox-configuration
 problems. Do not include recipient addresses in incident logs.
 
+Permanent Graph failures log the HTTP status, a bounded machine-readable error
+code and the operation. `CLASSIFY_ATTENDEE` means the directory group/alias lookup
+failed; it can fail before the calendar creation POST is sent. `CREATE_EVENT`
+means creation or its immediate Teams metadata refresh failed. `READ_EVENT`,
+`UPDATE_ATTENDEES`, `UPDATE_DETAILS` and `CANCEL_EVENT` identify later sync steps.
+Nested directory failures retain `CLASSIFY_ATTENDEE` rather than the outer
+operation. The worker does not log Graph error messages, request URLs, payloads
+or exception causes, because these can contain recipient or event data.
+
+For a 400, first use the operation and code to distinguish an unsupported
+directory query from an invalid calendar request or a locally rejected group
+invitation (`GroupInvitationsNotSupported`). Do not retry unchanged permanent
+failures repeatedly. After the cause is corrected, retry the existing Delta
+event through the host retry endpoint instead of creating a duplicate event.
+
 Pending calendar sync does not confirm the room booking. Room acceptance and
 Teams provisioning must be inspected independently.
 

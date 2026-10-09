@@ -2,6 +2,9 @@ package no.nav.delta.calendar
 
 import arrow.core.left
 import arrow.core.right
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.microsoft.graph.models.ResponseType
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -9,6 +12,8 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.email.DummyCloudClient
 import no.nav.delta.email.SharedCalendarAttendee
 import no.nav.delta.email.SharedCalendarSnapshot
+import no.nav.delta.email.SharedCalendarOperation
+import no.nav.delta.email.SharedGraphException
 import no.nav.delta.event.CreateEvent
 import no.nav.delta.event.CalendarSyncStatus
 import no.nav.delta.event.InviteeRequest
@@ -20,8 +25,42 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 
 class CalendarSyncWorkerTest {
+    @Test
+    fun `permanent Graph failures log status code and operation without exception data`() {
+        TestDatabase.create().use { db ->
+            val repository = SharedCalendarRepository(db.database)
+            val cloud = object : CloudClient by DummyCloudClient() {
+                override fun createSharedEvent(
+                    event: no.nav.delta.event.Event, attendees: List<Participant>, transactionId: String,
+                ) = SharedGraphException(
+                    400, "Request_UnsupportedQuery", null,
+                    IllegalArgumentException("private person@nav.no"),
+                    SharedCalendarOperation.CLASSIFY_ATTENDEE,
+                ).left()
+            }
+            repository.create(futureEvent(), Participant("host@nav.no", "Host"))
+            val logger = LoggerFactory.getLogger("no.nav.delta.calendar.worker") as Logger
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            logger.addAppender(appender)
+            try {
+                assertTrue(CalendarSyncWorker(repository, cloud).runOnce())
+                val entry = appender.list.single()
+                assertEquals(
+                    "Shared calendar operation failed with status 400 code Request_UnsupportedQuery operation CLASSIFY_ATTENDEE",
+                    entry.formattedMessage,
+                )
+                assertEquals(null, entry.throwableProxy)
+                assertEquals(1, repository.statistics().failed)
+            } finally {
+                logger.detachAppender(appender)
+                appender.stop()
+            }
+        }
+    }
+
     @Test
     fun `cancellation retry treats an already cancelled Graph event as complete`() {
         TestDatabase.create().use { db ->

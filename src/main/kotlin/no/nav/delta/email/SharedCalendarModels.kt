@@ -27,10 +27,26 @@ data class SharedCalendarSnapshot(
     val etag: String? = null,
 )
 
+enum class SharedCalendarOperation {
+    CLASSIFY_ATTENDEE,
+    CREATE_EVENT,
+    READ_EVENT,
+    UPDATE_ATTENDEES,
+    UPDATE_DETAILS,
+    CANCEL_EVENT,
+    SEARCH_PEOPLE,
+}
+
 /** Deliberately excludes Graph's error message, IDs, addresses and payloads. */
 class SharedGraphException(
     val httpStatus: Int?,
-    val code: String?,
+    code: String?,
     val retryAfterSeconds: Long?,
     cause: Throwable? = null,
-) : RuntimeException("Shared calendar request failed (status=${httpStatus ?: "unknown"})", cause)
+    val operation: SharedCalendarOperation? = null,
+) : RuntimeException(
+    "Shared calendar request failed (status=${httpStatus ?: "unknown"}, operation=${operation ?: "unknown"})",
+    cause,
+) {
+    val code: String? = code?.takeIf { it.matches(Regex("[A-Za-z][A-Za-z0-9_.]{0,79}")) }
+}

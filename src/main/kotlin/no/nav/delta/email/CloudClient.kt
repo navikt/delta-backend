@@ -755,14 +755,18 @@ class AzureCloudClient internal constructor(
     override fun deleteMasterEvent(calendarEventId: String): Either<Throwable, Unit> =
         deleteEvent(calendarEventId)
 
-    private fun <T> sharedRequest(block: () -> T): Either<Throwable, T> {
+    private fun <T> sharedRequest(
+        operation: SharedCalendarOperation,
+        block: () -> T,
+    ): Either<Throwable, T> {
         if (applicationEmailAddress.isBlank()) {
-            return SharedGraphException(null, "MissingMailbox", null).left()
+            return SharedGraphException(null, "MissingMailbox", null, operation = operation).left()
         }
         return try {
             block().right()
         } catch (e: SharedGraphException) {
-            e.left()
+            if (e.operation != null) e.left()
+            else SharedGraphException(e.httpStatus, e.code, e.retryAfterSeconds, e, operation).left()
         } catch (e: Exception) {
             val api = e as? ApiException
             val retryAfter = api?.responseHeaders?.entries
@@ -773,6 +777,7 @@ class AzureCloudClient internal constructor(
                 (e as? ODataError)?.error?.code,
                 retryAfter,
                 e,
+                operation,
             ).left()
         }
     }
@@ -791,7 +796,7 @@ class AzureCloudClient internal constructor(
         event: Event,
         attendees: List<Participant>,
         transactionId: String,
-    ): Either<Throwable, MasterEventResult> = sharedRequest {
+    ): Either<Throwable, MasterEventResult> = sharedRequest(SharedCalendarOperation.CREATE_EVENT) {
         if (transactionId.isBlank()) throw SharedGraphException(null, "MissingTransactionId", null)
         requireIndividualAttendees(attendees.map { it.email })
         val payload = prepareMasterCalendarEvent(event).apply {
@@ -827,7 +832,7 @@ class AzureCloudClient internal constructor(
         attendees: List<SharedCalendarAttendee>,
         changeKey: String?,
         existingAttendeeEmails: Set<String>,
-    ): Either<Throwable, Unit> = sharedRequest {
+    ): Either<Throwable, Unit> = sharedRequest(SharedCalendarOperation.UPDATE_ATTENDEES) {
         requireIndividualAttendees(
             attendees.filterNot { it.isResource }.map { it.email },
             existingAttendeeEmails,
@@ -854,20 +859,22 @@ class AzureCloudClient internal constructor(
         } ?: throw SharedGraphException(null, "InvalidGraphResponse", null)
 
     override fun getSharedEvent(calendarEventId: String): Either<Throwable, SharedCalendarSnapshot> =
-        sharedRequest { readSharedSnapshot(calendarEventId) { true } }
+        sharedRequest(SharedCalendarOperation.READ_EVENT) { readSharedSnapshot(calendarEventId) { true } }
 
     override fun getSharedEventForSync(
         calendarEventId: String,
         knownAttendeeEmails: Set<String>,
     ): Either<Throwable, SharedCalendarSnapshot> {
         val known = knownAttendeeEmails.mapTo(mutableSetOf()) { it.lowercase() }
-        return sharedRequest { readSharedSnapshot(calendarEventId) { email -> email.lowercase() !in known } }
+        return sharedRequest(SharedCalendarOperation.READ_EVENT) {
+            readSharedSnapshot(calendarEventId) { email -> email.lowercase() !in known }
+        }
     }
 
     override fun getSharedEventForCancellation(
         calendarEventId: String,
     ): Either<Throwable, SharedCalendarSnapshot> =
-        sharedRequest { readSharedSnapshot(calendarEventId) { false } }
+        sharedRequest(SharedCalendarOperation.READ_EVENT) { readSharedSnapshot(calendarEventId) { false } }
 
     private fun readSharedSnapshot(
         calendarEventId: String,
@@ -907,7 +914,7 @@ class AzureCloudClient internal constructor(
     }
 
     /** GroupMember.Read.All authorizes the directory group lookup used to detect list aliases. */
-    private fun isIndividuallyAddressed(email: String): Boolean {
+    private fun isIndividuallyAddressed(email: String): Boolean = sharedRequest(SharedCalendarOperation.CLASSIFY_ATTENDEE) {
         val groups = graphClient.groups().get {
             it.queryParameters?.select = arrayOf("id")
             it.queryParameters?.filter = "mail eq '${email.replace("'", "''")}' or " +
@@ -921,8 +928,8 @@ class AzureCloudClient internal constructor(
         if (values.isEmpty() && groups.odataNextLink != null) {
             throw SharedGraphException(null, "InvalidDirectoryResponse", null)
         }
-        return values.isEmpty()
-    }
+        values.isEmpty()
+    }.fold({ throw it }, { it })
 
     private fun requireIndividualAttendees(emails: List<String>, knownEmails: Set<String> = emptySet()) {
         if (emails.size > SHARED_MAX_ATTENDEES) throw SharedGraphException(400, "TooManyAttendees", null)
@@ -938,7 +945,7 @@ class AzureCloudClient internal constructor(
     override fun updateSharedDetails(
         calendarEventId: String,
         event: Event,
-    ): Either<Throwable, MasterEventResult> = sharedRequest {
+    ): Either<Throwable, MasterEventResult> = sharedRequest(SharedCalendarOperation.UPDATE_DETAILS) {
         val existing = readSharedGraphEvent(calendarEventId)
         if (existing.isOnlineMeeting == true &&
             (existing.body?.content == null || existing.body?.contentType != BodyType.Html)) {
@@ -965,13 +972,13 @@ class AzureCloudClient internal constructor(
         toSharedEventResult(calendarEventId, readSharedGraphEvent(calendarEventId))
     }
 
-    override fun cancelSharedEvent(calendarEventId: String): Either<Throwable, Unit> = sharedRequest {
+    override fun cancelSharedEvent(calendarEventId: String): Either<Throwable, Unit> = sharedRequest(SharedCalendarOperation.CANCEL_EVENT) {
         graphClient.users().byUserId(applicationEmailAddress).events().byEventId(calendarEventId)
             .cancel().post(CancelPostRequestBody())
         Unit
     }
 
-    override fun searchPeople(query: String): Either<Throwable, List<DirectoryPerson>> = sharedRequest {
+    override fun searchPeople(query: String): Either<Throwable, List<DirectoryPerson>> = sharedRequest(SharedCalendarOperation.SEARCH_PEOPLE) {
         // /users is intentional: /people needs broader permissions and can include external contacts.
         // The caller validates query length before this adapter is invoked.
         val escaped = query.replace("'", "''")
