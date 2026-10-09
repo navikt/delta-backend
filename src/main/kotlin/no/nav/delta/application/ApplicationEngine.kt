@@ -28,6 +28,7 @@ import io.ktor.server.routing.routing
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import no.nav.delta.Environment
+import no.nav.delta.admin.adminApi
 import no.nav.delta.FeatureAccess
 import no.nav.delta.email.CloudClient
 import no.nav.delta.directory.directoryApi
@@ -116,6 +117,7 @@ fun Application.mySetup(
         faggruppeApi(database, cloudClient, env)
         webhookApi(database, cloudClient, env)
         featureApi(env)
+        adminApi(database, env)
         directoryApi(cloudClient, env)
         roomApi(cloudClient, env, roomCatalog)
         get("/internal/is_alive") {

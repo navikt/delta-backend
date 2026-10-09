@@ -7,6 +7,28 @@ servers:
   - url: "http://0.0.0.0:8080"
   - url: "http://delta-backend"
 paths:
+  /admin/statistics:
+    get:
+      tags: [admin]
+      operationId: getAdminStatistics
+      security:
+        - bearerAuth: []
+      description: >-
+        Requires a user token belonging to DELTA_MAINTAINERS_GROUP_ID.
+        Counts all stored events, including private events and each recurring occurrence.
+        Upcoming or ongoing events have end_time strictly after generatedAt in Europe/Oslo.
+        Both calendar modes are returned even when their counts are zero. Never cached.
+      responses:
+        "200":
+          description: Current calendar migration counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStatistics'
+        "401":
+          description: Missing or invalid user token
+        "403":
+          description: Not a Delta maintainer, unconfigured group, or application token
   /admin/event:
     put:
       tags:
@@ -870,6 +892,30 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    AdminStatistics:
+      type: object
+      required: [generatedAt, eventTypes]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+        eventTypes:
+          type: array
+          items:
+            type: object
+            required: [inviteMode, total, upcomingOrOngoing]
+            properties:
+              inviteMode:
+                type: string
+                enum: [PER_PARTICIPANT, SHARED]
+              total:
+                type: integer
+                format: int64
+                minimum: 0
+              upcomingOrOngoing:
+                type: integer
+                format: int64
+                minimum: 0
     CreateEvent:
       type: object
       properties:

@@ -62,3 +62,19 @@ Frontend-kontrakten er beskrevet i
 [`docs/frontend-shared-calendar-handoff.md`](docs/frontend-shared-calendar-handoff.md).
 Drift og kontroll mot en ekte postboks er beskrevet i
 [`docs/shared-calendar-operations.md`](docs/shared-calendar-operations.md).
+
+## Administrasjon
+
+`GET /admin/statistics` krever et brukertoken med gruppen
+`DELTA_MAINTAINERS_GROUP_ID`. Brukere uten denne gruppen og applikasjonstokener
+får `403`. En manglende gruppekonfigurasjon gir ingen tilgang.
+
+Responsen inneholder `generatedAt` og `eventTypes`, med `inviteMode`, `total`
+og `upcomingOrOngoing` for både `PER_PARTICIPANT` og `SHARED`, også når antallet
+er null. Alle lagrede arrangementer telles, inkludert private arrangementer
+og hver forekomst i gjentakende serier. Kommende og pågående betyr at
+`end_time` er senere enn `generatedAt`, tolket i `Europe/Oslo`.
+Tallene hentes direkte fra databasen og skal ikke caches.
+
+Lokalt kan du gi testbrukeren tilgang med
+`DELTA_MAINTAINERS_GROUP_ID=local-principal-group ./gradlew run`.
