@@ -388,7 +388,7 @@ class SharedCalendarRepositoryTest {
     fun `stale Outlook declines cannot overwrite newer acceptance or Delta signup`() {
         val event = repository.create(draft(), "host@nav.no", "Host").getOrNull()!!
         repository.complete(repository.claimNext()!!)
-        val now = Instant.now()
+        val now = Instant.parse("2026-10-01T08:00:00.123456100Z")
         repository.reconcile(event.id, listOf(
             SharedCalendarAttendeeSnapshot("person@nav.no", "Person", SharedCalendarResponse.ACCEPTED, respondedAt = now),
         ))
@@ -397,12 +397,12 @@ class SharedCalendarRepositoryTest {
         ))
         assertEquals(1, db.getFullEvent(event.id.toString()).getOrNull()!!.participants.size)
         repository.reconcile(event.id, listOf(
-            SharedCalendarAttendeeSnapshot("person@nav.no", "Person", SharedCalendarResponse.DECLINED, respondedAt = now.plusSeconds(1)),
+            SharedCalendarAttendeeSnapshot("person@nav.no", "Person", SharedCalendarResponse.DECLINED, respondedAt = now.plusNanos(1000)),
         ))
         assertEquals(ParticipantStatus.DECLINED, db.getFullEvent(event.id.toString()).getOrNull()!!.invited.single().status)
         repository.signup(event.id, "person@nav.no", "Person")
         repository.reconcile(event.id, listOf(
-            SharedCalendarAttendeeSnapshot("person@nav.no", "Person", SharedCalendarResponse.DECLINED, respondedAt = now.plusSeconds(1)),
+            SharedCalendarAttendeeSnapshot("person@nav.no", "Person", SharedCalendarResponse.DECLINED, respondedAt = now.plusNanos(1000)),
         ))
         assertEquals(1, db.getFullEvent(event.id.toString()).getOrNull()!!.participants.size)
     }

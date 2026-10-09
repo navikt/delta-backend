@@ -123,6 +123,12 @@ Rejected Outlook acceptances produce a separate explanatory email to that person
 not a meeting update to other attendees. Delivery is at least once: a crash after
 sending but before recording acknowledgement can repeat that explanatory email.
 
+RSVP timestamps are compared and persisted at PostgreSQL's microsecond precision.
+Replaying the same higher-precision Graph response must not create another refusal
+after the first one has been acknowledged. Responses separated by at least one
+microsecond remain ordered; sub-microsecond differences cannot be distinguished
+by the stored timestamp.
+
 ## Monitoring
 
 Nais scrapes `/internal/metrics` in Prometheus text format. Business metrics

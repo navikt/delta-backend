@@ -16,6 +16,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 class SharedCalendarValidationException(val statusCode: Int, override val message: String) : RuntimeException(message)
@@ -338,9 +339,11 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                         s.setObject(1, id); s.setString(2, email)
                         s.executeQuery().use { if (it.next()) it.getTimestamp(1)?.toInstant() to it.getString(2) else null }
                     }
-                if (snapshot.respondedAt != null && previous?.first != null &&
-                    !snapshot.respondedAt.isAfter(previous.first)) return@forEach
-                if (snapshot.respondedAt == null && previous?.second == snapshot.response.name) return@forEach
+                // PostgreSQL timestamps retain microseconds, not Instant's nanoseconds.
+                val respondedAt = snapshot.respondedAt?.truncatedTo(ChronoUnit.MICROS)
+                if (respondedAt != null && previous?.first != null &&
+                    !respondedAt.isAfter(previous.first)) return@forEach
+                if (respondedAt == null && previous?.second == snapshot.response.name) return@forEach
                 if (existing == null) {
                     val supported = snapshot.isIndividual && runCatching { normalize(email) }.isSuccess &&
                         attendeeRoomAvailable(c, event)
@@ -373,9 +376,9 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 }
                 c.exec("UPDATE participant SET status=? WHERE event_id=? AND email=?", status.name, id, email)
                 c.exec("UPDATE participant SET last_response_value=? WHERE event_id=? AND email=?", snapshot.response.name, id, email)
-                if (snapshot.respondedAt != null)
+                if (respondedAt != null)
                     c.exec("UPDATE participant SET last_response_time=? WHERE event_id=? AND email=?",
-                        Timestamp.from(snapshot.respondedAt), id, email)
+                        Timestamp.from(respondedAt), id, email)
             }
         }
 

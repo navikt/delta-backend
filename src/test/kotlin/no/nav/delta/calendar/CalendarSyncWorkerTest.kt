@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.slf4j.LoggerFactory
 
 class CalendarSyncWorkerTest {
@@ -184,8 +186,9 @@ class CalendarSyncWorkerTest {
         }
     }
 
-    @Test
-    fun `full event refuses forwarded acceptance and emails reason without updating other attendees`() {
+    @ParameterizedTest
+    @ValueSource(ints = [123456100, 123456900])
+    fun `full event refuses forwarded acceptance and emails reason without updating other attendees`(responseNanos: Int) {
         TestDatabase.create().use { db ->
             val repository = SharedCalendarRepository(db.database)
             val dummy = DummyCloudClient()
@@ -216,7 +219,10 @@ class CalendarSyncWorkerTest {
             val id = db.database.getMasterCalendarEventId(event.id.toString()).getOrNull()!!
             snapshot = dummy.getSharedEvent(id).getOrNull()!!.copy(attendees =
                 dummy.getSharedEvent(id).getOrNull()!!.attendees +
-                    SharedCalendarAttendee("forwarded@nav.no", "Forwarded", ResponseType.Accepted, OffsetDateTime.now()))
+                    SharedCalendarAttendee(
+                        "forwarded@nav.no", "Forwarded", ResponseType.Accepted,
+                        OffsetDateTime.parse("2026-10-01T08:00:00Z").withNano(responseNanos),
+                    ))
             repository.enqueueReconciliation(id)
             worker.runOnce()
             assertEquals(1, repository.refusals(event.id).size)
