@@ -120,11 +120,12 @@ WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
 
         getCategories(connection, id).map { categories ->
             val event = result.toEvent()
+            val calendarSyncError = result.getString("calendar_sync_error")
             val participant =
                 result.let {
                     if (result.getString("email") != null) {
                         Pair(
-                            ParticipantType.valueOf(result.getString("type")),
+                            Pair(ParticipantType.valueOf(result.getString("type")), ParticipantStatus.valueOf(result.getString("status"))),
                             Participant(
                                 email = result.getString("email"),
                                 name = result.getString("name"),
@@ -140,7 +141,7 @@ WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
                 while (next()) {
                     participants.add(
                         Pair(
-                            ParticipantType.valueOf(getString("type")),
+                            Pair(ParticipantType.valueOf(getString("type")), ParticipantStatus.valueOf(getString("status"))),
                             Participant(
                                 email = getString("email"),
                                 name = getString("name"),
@@ -153,9 +154,12 @@ WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
                 event = event,
                 participants =
                     participants
-                        .filter { it.first == ParticipantType.PARTICIPANT }
+                        .filter { it.first.first == ParticipantType.PARTICIPANT && it.first.second == ParticipantStatus.REGISTERED }
                         .map { it.second },
-                hosts = participants.filter { it.first == ParticipantType.HOST }.map { it.second },
+                hosts = participants.filter { it.first.first == ParticipantType.HOST }.map { it.second },
+                invited = participants.filter { it.first.first != ParticipantType.HOST && it.first.second != ParticipantStatus.REGISTERED }
+                    .map { Invitation(it.second.name, it.second.email, it.first.second) },
+                calendarSyncError = calendarSyncError,
                 categories = categories,
                 recurringSeries = recurringSeries,
             )
@@ -175,7 +179,7 @@ SELECT email,
        name
 FROM   participant
 WHERE  event_id = Uuid(?)
-       AND type = 'PARTICIPANT';
+       AND type = 'PARTICIPANT' AND status = 'REGISTERED';
 """)
             preparedStatement.setString(1, id)
             val result = preparedStatement.executeQuery()
@@ -406,7 +410,7 @@ private fun buildEventFilterClause(
         binders.add { setString(it, host) }
     }
     joinedBy.onSome { jb ->
-        clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT')")
+        clauses.add("id IN (SELECT event_id FROM participant WHERE email = ? AND type = 'PARTICIPANT' AND status = 'REGISTERED')")
         binders.add { setString(it, jb) }
     }
     startsAtOrAfter?.let { start ->
@@ -425,6 +429,8 @@ private data class EventAccumulator(
     val event: Event,
     val hosts: MutableList<Participant> = mutableListOf(),
     val participants: MutableList<Participant> = mutableListOf(),
+    val invited: MutableList<Invitation> = mutableListOf(),
+    val calendarSyncError: String? = null,
 )
 
 fun DatabaseInterface.getEvents(
@@ -471,7 +477,7 @@ fun DatabaseInterface.getFullEvents(
     return connection.use { connection ->
         // Query 1: all matching events with their participants
         val eventsStmt = connection.prepareStatement("""
-            SELECT e.*, p.email AS p_email, p.name AS p_name, p.type AS p_type
+            SELECT e.*, p.email AS p_email, p.name AS p_name, p.type AS p_type, p.status AS p_status
             FROM (SELECT * FROM event WHERE ${filter.whereClause} ORDER BY start_time) e
             LEFT JOIN participant p ON e.id = p.event_id
             ORDER BY e.start_time, e.id
@@ -483,13 +489,17 @@ fun DatabaseInterface.getFullEvents(
         val eventsMap = LinkedHashMap<UUID, EventAccumulator>()
         while (eventsResult.next()) {
             val event = eventsResult.toEvent()
-            val acc = eventsMap.getOrPut(event.id) { EventAccumulator(event) }
+            val acc = eventsMap.getOrPut(event.id) { EventAccumulator(event, calendarSyncError = eventsResult.getString("calendar_sync_error")) }
             val pEmail = eventsResult.getString("p_email")
             if (pEmail != null) {
                 val participant = Participant(email = pEmail, name = eventsResult.getString("p_name"))
                 when (ParticipantType.valueOf(eventsResult.getString("p_type"))) {
                     ParticipantType.HOST -> acc.hosts.add(participant)
-                    ParticipantType.PARTICIPANT -> acc.participants.add(participant)
+                    ParticipantType.PARTICIPANT -> {
+                        val status = ParticipantStatus.valueOf(eventsResult.getString("p_status"))
+                        if (status == ParticipantStatus.REGISTERED) acc.participants.add(participant)
+                        else acc.invited.add(Invitation(participant.name, participant.email, status))
+                    }
                 }
             }
         }
@@ -524,6 +534,8 @@ fun DatabaseInterface.getFullEvents(
                 hosts = acc.hosts,
                 categories = categoriesMap[acc.event.id] ?: emptyList(),
                 recurringSeries = recurringSeriesMap[acc.event.id],
+                invited = acc.invited,
+                calendarSyncError = acc.calendarSyncError,
             )
         }
     }
@@ -887,6 +899,8 @@ fun ResultSet.toEvent(): Event {
         teamsJoinUrl = getString("teams_join_url"),
         teamsConferenceId = getString("teams_conference_id"),
         teamsDialIn = getString("teams_dial_in"),
+        inviteMode = InviteMode.valueOf(getString("invite_mode")),
+        calendarSyncStatus = getString("calendar_sync_status")?.let { CalendarSyncStatus.valueOf(it) },
     )
 }
 

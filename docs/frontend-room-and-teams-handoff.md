@@ -5,6 +5,12 @@ backend design: `docs/teams-meeting-room-booking-plan.md`. **The API contract is
 `src/main/resources/openapi/documentation.yaml` in this repo.** Where this document and the
 spec disagree, the spec wins.
 
+For `event.inviteMode = SHARED`, use
+[`frontend-shared-calendar-handoff.md`](frontend-shared-calendar-handoff.md).
+Shared-mode saves are asynchronous: pending calendar sync and Teams provisioning
+are distinct from room acceptance and access restrictions. The synchronous
+502/no-save behavior below applies to legacy `PER_PARTICIPANT` events only.
+
 ## Feature toggle (implement first)
 
 Both features are in prod testing and are enabled only for the Delta maintainers group

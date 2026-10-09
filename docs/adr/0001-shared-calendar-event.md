@@ -32,7 +32,7 @@ up as an ordinary Outlook meeting.
 - Graph access is app-only, through the Delta mailbox. Granted application permissions:
   `Calendars.ReadWrite`, `Mail.Send`, `Place.Read.All`, `GroupMember.Read.All`. For users, only
   `User.Read` is granted, which reads the signed-in user's profile and gives nothing to an app
-  running without a signed-in user. `User.Read.All` and `User.ReadBasic.All` are **not** granted.
+  running without a signed-in user. `User.Read.All` is **not** granted.
 - Dev and local use `DummyCloudClient`, so we can't check how Exchange behaves in dev.
 - `participantLimit = 0` means unlimited. Hosts count towards the limit (`checkIfEventIsFull`).
 
@@ -64,6 +64,16 @@ sync the same event at once:
 - On 429 or 5xx errors, the worker waits (using the `Retry-After` header when Graph sends it) and
   tries again later. Permanent errors are saved in `last_error`.
 
+**Shared-mode changes are saved before Graph responds.** The API exposes calendar sync as
+`PENDING`, `SYNCED` or `FAILED`; hosts can see a sanitized failure and retry it. Calendar sync is
+separate from the room's acceptance and Teams provisioning. A pending save must not be presented
+as a confirmed booking, and missing Teams details can mean provisioning is still pending.
+Legacy events keep their existing synchronous room/Teams behavior.
+
+Cancellation intent survives deleting the Delta event. Pending removals are remembered so a
+revoked attendee still visible in Graph is not adopted as a forwarded invite. Remove/re-add
+reinvitation has durable phases; coalescing jobs must not discard the removal.
+
 #### Notification rules
 
 Adding participants, processing their RSVP and adopting a forwarded invite must not send a
@@ -77,9 +87,10 @@ the `attendees` property. We must not reuse a details-update payload containing 
 `start`, `end`, location or other event properties for this operation.
 
 The documented exception is removing an attendee specified as a member of a distribution list:
-that sends an update to all attendees. Delta therefore expands groups into individual attendees
-before sending invitations; no distribution list is added to the Graph event. Recording a person's
-source group in Delta does not make them a distribution-list attendee in Graph.
+that sends an update to all attendees. V1 adds only individual attendees; no distribution list
+is added to the Graph event. If group invitations are introduced later, groups must be expanded
+before sending invitations. Recording a person's source group in Delta would not make them a
+distribution-list attendee in Graph.
 
 - **RSVP:** the webhook updates Delta's database only. It does not PATCH the Graph event or
   enqueue an attendee sync merely because an existing attendee accepted, declined or answered
@@ -96,10 +107,19 @@ and forwarding behaviour before rollout.
 
 ### 3. Invitations
 
-Hosts can invite **individual people** (by email) and **distribution lists or M365 groups**, both
+Hosts can invite **individual people** (by email), both
 when they create an event and later. An invitation is **pending**: the person appears as an
 attendee in Outlook and as *invited* in Delta. They become a participant when they accept in
 Outlook or sign up in Delta. **An invitation reserves a spot** under `participantLimit`.
+
+V1 includes a **searchable people picker** backed by Graph and the `User.Read.All` application
+permission required by `GET /users`. The endpoint selects and returns only basic person fields,
+but the application permission itself allows broad user-profile reads.
+**Group invitations are deferred**, and there is no per-host batch rate limit. The attendee
+ceiling, capacity checks, audit trail and mailbox recipient monitoring still apply. Groups are
+not accepted in invitation requests or returned in directory search.
+
+#### Deferred: group invitations
 
 **Groups are expanded into their members when the invite is sent.** If we added a distribution
 list as an attendee, Exchange would keep it as one attendee and wouldn't tell us how each member
@@ -109,11 +129,12 @@ fetches the group's members at that moment
 which group each person came from, so the UI can show "invited via *Team X*". People who join the
 group later are not invited.
 
-**This needs `User.ReadBasic.All`.** With only `GroupMember.Read.All`, Graph returns each member's
-`id` and type, and every other property, including `mail`, is `null`
+**This needs a user-directory permission that exposes email addresses.** With only
+`GroupMember.Read.All`, Graph can return limited member objects containing the member's
+`id` and type while other properties, including `mail`, can be `null`
 ([limited information for member objects](https://learn.microsoft.com/en-us/graph/permissions-overview#limited-information-returned-for-inaccessible-member-objects)).
-Attendees need an email address, so we can't expand a group without it. `GroupMember.Read.All` is
-enough to search groups and read group names.
+Attendees need an email address, so group expansion must first confirm the app-only permission
+needed for member email access. `GroupMember.Read.All` remains the permission used to query groups.
 
 #### Participant status
 
@@ -126,14 +147,14 @@ enough to search groups and read group names.
 | `DECLINED` | Declined in Outlook | no | yes (kept so they don't get a cancellation) |
 | `FORWARDED` | Added by someone forwarding the invite in Outlook, no answer yet | no | yes |
 
-The table also gets `invited_by`, `invited_at` and `invited_via_group` (group id and name), for
-audit and display. Existing rows become `REGISTERED`.
+The table also gets `invited_by` and `invited_at` for audit and display. Group provenance is
+deferred with group invitations. Existing rows become `REGISTERED`.
 
 #### Transitions
 
 | What happens | Result |
 |---|---|
-| Host invites a person or group | Add `INVITED` rows. If there aren't enough spots, the whole invite is rejected and the response says how many spots are left. People already registered are skipped. Attendees are synced. |
+| Host invites people | Add `INVITED` rows. If there aren't enough spots, the whole batch is rejected. People already registered are skipped. Attendees are synced. |
 | Accepts in Outlook (webhook) | `INVITED` or `DECLINED` becomes `REGISTERED`. The spot is already reserved, or is taken again if one is free. |
 | Declines in Outlook (webhook) | Becomes `DECLINED` and frees the spot, but the person stays an attendee. Replaces today's behaviour, which unregisters the person and deletes their invite. |
 | Signs up in Delta | `INVITED` becomes `REGISTERED`, with no new invite. `DECLINED` becomes `REGISTERED`, and the sync removes and re-adds them so they get a new invite. Anyone else becomes `REGISTERED` through the normal signup checks. |
@@ -141,6 +162,10 @@ audit and display. Existing rows become `REGISTERED`.
 | Host revokes an invitation | Row is deleted and attendees are synced, so the person gets a cancellation. |
 | Someone Delta doesn't know about turns up on the event (forwarded invite) | See *Forwarding* below. |
 | `signupDeadline` passes | `INVITED` stops holding a spot. The person stays `INVITED` and stays an attendee. Nothing is sent to Graph. |
+
+**Hosts keep their role and counted spot regardless of RSVP.** A host declining in Outlook never
+loses management authority or frees a spot. A `REGISTERED` non-host answering tentative stays
+registered; only an explicit decline releases their registration.
 
 **Unanswered invitations release their spot at the signup deadline.** This is computed when the
 spot count is checked (`INVITED` counts only while `signupDeadline` is null or in the future), so
@@ -184,20 +209,19 @@ the database. Each attendee Delta doesn't know about is handled like this:
 
 #### API (overview; details go in OpenAPI)
 
-- `CreateEvent.invitees: List<InviteeRequest>?`, where `InviteeRequest` is either `{ email }` or
-  `{ groupId }`.
+- `CreateEvent.invitees: List<InviteeRequest>?`, where `InviteeRequest` is `{ email }`.
 - `POST /admin/event/{id}/invitations` (same body) and `DELETE /admin/event/{id}/invitations`
   (`{ email }`). Hosts only.
-- `FullEvent.invited: List<Invitation>` (email, name, status, viaGroup), shown to the same people
+- `FullEvent.invited: List<Invitation>` (email, name, status), shown to the same people
   who can see `participants`. Only hosts see `DECLINED` invitees.
-- `GET /directory/search?q=` finds people and groups for the frontend's invite picker. Group
-  search works with today's permissions. People search needs `User.ReadBasic.All`.
+- `GET /directory/search?q=` finds people for the frontend's invite picker. People search needs
+  `User.Read.All` application permission; groups are deferred.
 
 #### Limits (against misuse, and Exchange limits)
 
 - Only Nav addresses (`@nav.no`). Anything else gets a 400.
-- At most **490 attendees** per event, since Exchange caps a message at 500 recipients. A group
-  with more members than that is rejected.
+- At most **490 attendees** per event, including hosts and the room, since Exchange caps a
+  message at 500 recipients.
 - Exchange also caps a mailbox at 10,000 recipients a day, and every edit to a large event counts
   each attendee again. Track recipients per day and alert at 70%.
 - Keep an audit log of who invited whom, without email addresses in ordinary log lines.
@@ -211,12 +235,11 @@ the database. Each attendee Delta doesn't know about is handled like this:
 
 ## Alternatives considered
 
-### A: Shared event, group expansion and a stored sync job (chosen)
+### A: Shared event, individual invitations and a stored sync job (chosen for v1)
 - **Pros:** invitations are ordinary Outlook meetings, and Exchange handles delivery, updates,
   cancellations and replies. Replies map to a Delta status per person. Edits always reach everyone,
   with 1 Graph write instead of N. Room and Teams work natively. Removes a lot of code.
-- **Cons:** needs one new Graph permission (`User.ReadBasic.All`). Group
-  invites use the membership at the time of the invite. Two invite models run in parallel for a
+- **Cons:** app-only people search needs the broad Graph permission (`User.Read.All`). Two invite models run in parallel for a
   while. Every details edit notifies everyone.
 
 ### B: Invite distribution lists as a single attendee
@@ -238,21 +261,19 @@ the database. Each attendee Delta doesn't know about is handled like this:
 ## Nav-specific considerations
 
 ### Security
-- **Data:** names and email addresses of Nav employees, plus group names and members (internal).
-  "Invited via" shows a group's members to the event's participants, which is acceptable for
-  distribution lists. *Ask the security champion whether we should reject security groups that
-  can't receive email.* Recommendation: only allow mail-enabled groups (`mailEnabled = true`).
+- **Data:** names and email addresses of Nav employees. Group names, members and invitation
+  provenance are deferred with group invitations.
 - **Auth:** nothing changes for users (Entra ID). `GroupMember.Read.All` (application) is already
-  granted and covers group search and group names. **One new application permission:**
-  `User.ReadBasic.All`, to read members' email addresses when expanding groups and to search
-  people. It is the narrowest user-read permission (name, email, photo; no profile data) and needs
-  admin consent and a security review.
-- **If `User.ReadBasic.All` is refused:** individual invites by email still work, since the host
-  types the address and Delta needs no lookup. The name shows as the email until the person signs
-  in to Delta. Group invites are then not possible with reserved spots (see alternative B).
-- **Misuse:** every Nav employee can create events (`allowAllUsers`), so the limits above (domain,
-  490 attendees, rate limit per host) are required in v1. Consider requiring a role to invite
-  groups.
+  granted and is used to identify forwarded group addresses. App-only people search via
+  `GET /users` requires the additional `User.Read.All` application permission. The endpoint
+  returns only selected basic fields, but the permission is broad and needs admin consent and a
+  security review.
+- **If `User.Read.All` is refused:** the planned searchable picker cannot work. Individual
+  invitation endpoints need no directory lookup, but silently replacing the agreed picker with
+  an email-only UI is not part of this decision.
+- **Misuse:** every Nav employee can create events (`allowAllUsers`). Domain validation,
+  490 attendees and mailbox monitoring are required in v1. No per-host batch rate limit is
+  planned; group invitations are deferred.
 - **PII in logs:** don't log email addresses or group members. `calendar_sync.last_error` must not
   contain recipient lists.
 
@@ -260,14 +281,14 @@ the database. Each attendee Delta doesn't know about is handled like this:
 - **Nais:** no manifest changes. Flyway migrations: `calendar_sync`, `event.invite_mode` and the
   new `participant` columns.
 - **Monitoring:** gauges for pending and failed `calendar_sync` rows and the age of the oldest due
-  row. Counters for invitations (people, groups, and rejections for capacity or group size),
+  row. Counters for invitation recipients and rejections for capacity or attendee limit,
   recipients per day, and status changes from the webhook. Alert when a row has been failing for
   over 1 hour, and when recipients pass the threshold.
 - **Testing:** dev never calls Graph. We need a **way to test against real Graph**, such as a test
   mailbox in the dev tenant behind a toggle, to check how Exchange behaves before prod.
 
 ### Team impact
-- **Delta frontend:** a person and group picker when creating and editing an event, an "Invited"
+- **Delta frontend:** a person picker when creating and editing an event, an "Invited"
   list with status, a way to revoke invitations, capacity that counts reserved spots, and a note
   that recurring series can't have invitations.
 - **Users:** invitations come from `ikkesvar.delta@nav.no`. Answering in Outlook updates Delta, but
@@ -291,14 +312,13 @@ the database. Each attendee Delta doesn't know about is handled like this:
 ## Consequences
 
 ### Positive
-- Hosts can invite people and teams from Delta, and the invitation is an ordinary Outlook meeting.
-- Everyone shares one calendar entry that is always up to date, which also fixes the lost updates.
+- Hosts can invite people from Delta, and the invitation is an ordinary Outlook meeting.
+- Everyone shares one calendar entry. Durable retries replace the unchecked background updates.
 - Room, Teams, replies and cancellations work natively. Less code and fewer Graph calls.
 
 ### Negative
 - One new Graph permission, and we depend on the identity admins to grant it.
-- Group invites use the membership at the time of the invite, so people who join later aren't
-  added.
+- Group invitations are deferred.
 - Every details edit notifies all attendees.
 - Two invite models run side by side for about 2 releases.
 
@@ -318,13 +338,16 @@ the database. Each attendee Delta doesn't know about is handled like this:
 2. **Forwarded invites:** Nav users added by forwarding are adopted as `FORWARDED` (no spot held).
    External addresses and groups are removed. See *Forwarding*.
 3. **`sendNotificationEmail`** is dropped for `SHARED` events. The calendar always matches Delta.
-4. **Every host can invite groups**, within the 490 limit.
-5. **Only mail-enabled groups** (`mailEnabled = true`) can be invited.
+4. **Group invitations are deferred.** V1 supports individual invitations and people search.
+5. **No per-host batch rate limit.** Keep the attendee ceiling and mailbox monitoring.
+6. **Asynchronous shared-mode saves** expose pending/failed calendar sync to the frontend.
+7. **Host RSVP** changes neither authority nor counted capacity. A registered participant's
+   tentative response does not downgrade their registration.
 
 ## Action items
 
-- [ ] Request `User.ReadBasic.All` (Application) with admin consent. `GroupMember.Read.All` is
-      already granted. Note: `getUserDisplayName` (faggruppe owners) needs it too, and returns
+- [ ] Request `User.Read.All` (Application) with admin consent. `GroupMember.Read.All` is
+      already granted. Note: `getUserDisplayName` (faggruppe owners) needs user-directory access too, and returns
       `null` today.
 - [ ] Security review of the permission and misuse limits (security champion).
 - [ ] Spike against a test mailbox: a PATCH of only attendees notifies only the changed people,
@@ -333,10 +356,10 @@ the database. Each attendee Delta doesn't know about is handled like this:
       forwardee appears on Delta's copy, that a webhook notification fires, and what their reply
       looks like.
 - [ ] Flyway: `calendar_sync`, `event.invite_mode`, and `participant.status`/`invited_by`/
-      `invited_at`/`invited_via_group`.
+      `invited_at`.
 - [ ] Sync worker (retry with backoff, `SKIP LOCKED`, metrics and alerts).
 - [ ] `SHARED` handling in create, edit, sign-up, sign-off, delete and the webhook (status changes).
-- [ ] Invitation API, group expansion, person and group search, limits and audit log.
+- [ ] Individual invitation API, people search, limits and audit log. Group expansion is deferred.
 - [ ] OpenAPI and frontend handoff (picker, status, capacity, no invitations on recurring series).
 - [ ] Integration tests: one sync per event at a time, retries, every status change, capacity when
       inviting, the 490 limit, and forwarding (adopt, accept when full, external removed, and a
@@ -348,8 +371,8 @@ the database. Each attendee Delta doesn't know about is handled like this:
 
 | Axis | Finding |
 |------|---------|
-| Architecture | One shared event lets Exchange do the work it's built for, and replaces N copies of the same data. Expanding groups is the only way to combine group invites with reserved spots and an answer per person. The cost is new permissions and using group membership at the time of the invite, which we accept. |
-| Security | **Concern:** the new `User.ReadBasic.All` permission gives read access to basic profile data for every user in the directory, and needs a security review. **Concern:** mass invites from the shared mailbox. The limits must ship in v1, not later. **Accepted:** forwarding spreads the Teams link beyond Delta's participant list, which the Teams lobby mitigates. What participants can see is otherwise unchanged. |
+| Architecture | One shared event replaces N copies of the same data. V1 supports individual invitations and reserved spots; group expansion is deferred. People search still requires a new permission. |
+| Security | **Concern:** the required app-only `User.Read.All` permission grants broad directory profile access although this endpoint returns only selected basic fields; it needs security review and admin consent. **Concern:** mass invites from the shared mailbox. The limits must ship in v1, not later. **Accepted:** forwarding spreads the Teams link beyond Delta's participant list, which the Teams lobby mitigates. What participants can see is otherwise unchanged. |
 | Platform | No new infrastructure. Row locks handle the 2 replicas. Exchange's limit of 10,000 recipients per mailbox per day is a real ceiling for large events and must be monitored. Dev can't test Graph, so we need a test mailbox. |
 | Migration | Running both models side by side through `invite_mode` only adds code and can be rolled back. When the migration is done and what to clean up are both defined. |
 
@@ -360,7 +383,7 @@ Inspected:     email/CloudClient.kt, email/Email.kt, event/Routes.kt, event/Mode
                Graph docs (event-update, event-forward, event resource, Outlook throttling)
 Not inspected: frontend repo, production data (largest event, recipient volume), Entra app
                registration (actual granted permissions), live Exchange behaviour, RecurringDatabase.kt
-Findings:      0 blocking, 3 concerns (new User.ReadBasic.All permission, misuse limits,
+Findings:      0 blocking, 3 concerns (new User.Read.All permission, misuse limits,
                Exchange behaviour not yet checked)
 Verdict:       CONCERNS
 ```

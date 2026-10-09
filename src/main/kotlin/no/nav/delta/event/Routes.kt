@@ -13,6 +13,8 @@ import java.time.LocalDateTime
 import java.util.UUID
 import kotlin.reflect.jvm.jvmName
 import no.nav.delta.Environment
+import no.nav.delta.calendar.SharedCalendarRepository
+import no.nav.delta.calendar.sharedMutation
 import no.nav.delta.application.enforceM2mReadOnlyAccess
 import no.nav.delta.email.CloudClient
 import no.nav.delta.email.batchSendUpdateOrCreationNotification
@@ -25,6 +27,7 @@ import org.slf4j.LoggerFactory
 private val logger = LoggerFactory.getLogger("no.nav.delta.event.Routes")
 
 fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: Environment) {
+    val sharedCalendar = SharedCalendarRepository(database)
     authenticate("jwt") {
         enforceM2mReadOnlyAccess()
         route("/event") {
@@ -175,20 +178,30 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 validateRoomFields(createEvent)?.let {
                     return@put call.respond(HttpStatusCode.BadRequest, it)
                 }
+                val usesSharedCalendar = env.isSharedCalendarEnabledFor(call.principalGroups())
+                if (!createEvent.invitees.isNullOrEmpty() && !usesSharedCalendar) {
+                    return@put call.respond(HttpStatusCode.BadRequest, "Invitations require a shared calendar")
+                }
 
                 if (createEvent.recurrence != null) {
+                    if (!createEvent.invitees.isNullOrEmpty()) {
+                        return@put call.respond(HttpStatusCode.BadRequest, "Invitations are not supported for recurring events")
+                    }
                     if (createEvent.requestsRoomOrTeams()) {
                         return@put call.respond(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
                     }
 
                     val createdSeries =
                         database
-                            .createRecurringEventSeries(createEvent, email, call.principalName())
+                            .createRecurringEventSeries(
+                                createEvent, email, call.principalName(),
+                                if (usesSharedCalendar) InviteMode.SHARED else InviteMode.PER_PARTICIPANT,
+                            )
                             .getOrElse {
                                 return@put it.left().unwrapAndRespond(call)
                             }
 
-                    if (createEvent.sendNotificationEmail == true) {
+                    if (!usesSharedCalendar && createEvent.sendNotificationEmail == true) {
                         Thread(
                             createCreationNotificationFuture(
                                 events = createdSeries.affectedEvents,
@@ -200,6 +213,13 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     }
 
                     return@put database.getFullEvent(createdSeries.referenceEventId.toString()).unwrapAndRespond(call)
+                }
+
+                if (usesSharedCalendar) {
+                    return@put sharedMutation(call) {
+                        val created = sharedCalendar.create(createEvent, principal)
+                        database.getFullEvent(created.id.toString()).unwrapAndRespond(call)
+                    }
                 }
 
                 // The master event (room booking / Teams meeting) is created before the row exists
@@ -300,10 +320,16 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                         }
                     }
 
+                    if (event.inviteMode == InviteMode.SHARED && editScope != EventEditScope.UPCOMING) {
+                        return@delete sharedMutation(call) {
+                            sharedCalendar.delete(event.id).getOrElse {
+                                return@sharedMutation it.left().unwrapAndRespond(call)
+                            }
+                            call.respond("Success")
+                        }
+                    }
+
                     if (editScope == EventEditScope.UPCOMING) {
-                        // No master-event cleanup here: room/Teams is rejected for every event in a
-                        // recurring series (create, UPCOMING and single-occurrence edits), so series
-                        // occurrences never have a master calendar event.
                         val notificationData =
                             database
                                 .deleteRecurringSeriesFromOccurrence(event.id.toString(), call.principalEmail())
@@ -311,6 +337,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
 
                         Thread {
                             notificationData.forEach { (deletedEvent, pairs) ->
+                                if (deletedEvent.inviteMode == InviteMode.SHARED) return@forEach
                                 pairs.forEach { (participant, calendarEventId) ->
                                     cloudClient.sendCancellationNotification(
                                         calendarEventId.getOrNull(), deletedEvent, participant
@@ -357,6 +384,12 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                         }
 
                     val changedEvent = call.receive<CreateEvent>()
+                    if (!changedEvent.invitees.isNullOrEmpty() &&
+                        (originalEvent.inviteMode != InviteMode.SHARED ||
+                            database.isRecurringOccurrence(originalEvent.id))
+                    ) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "Invitations require a non-recurring shared event")
+                    }
                     if (changedEvent.startTime.isAfter(changedEvent.endTime)) {
                         return@post call.respond(
                             HttpStatusCode.BadRequest, "Start time must be before end time"
@@ -412,6 +445,13 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             HttpStatusCode.BadRequest,
                             "Teams meeting cannot be removed from an event; delete the event instead",
                         )
+                    }
+
+                    if (originalEvent.inviteMode == InviteMode.SHARED) {
+                        return@post sharedMutation(call) {
+                            sharedCalendar.update(originalEvent.id, changedEvent, call.principalEmail())
+                            database.getFullEvent(originalEvent.id.toString()).unwrapAndRespond(call)
+                        }
                     }
 
                     // Merge rules: null room/Teams fields mean "keep what's there", so clients
@@ -552,6 +592,12 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@delete it.left().unwrapAndRespond(call)
                         }
                     val participantEmail = call.receive<EmailToken>().email
+                    if (event.inviteMode == InviteMode.SHARED) {
+                        return@delete sharedMutation(call) {
+                            sharedCalendar.remove(event.id, participantEmail)
+                            call.respond("Success")
+                        }
+                    }
                     val deleteCalendarEventFuture =
                         database
                             .getCalendarEventId(event.id.toString(), participantEmail)
@@ -578,6 +624,12 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@post it.left().unwrapAndRespond(call)
                         }
                     val changeParticipant = call.receive<ChangeParticipant>()
+                    if (event.inviteMode == InviteMode.SHARED) {
+                        return@post sharedMutation(call) {
+                            sharedCalendar.changeRole(event.id, changeParticipant)
+                            call.respond("Success")
+                        }
+                    }
 
                     database
                         .changeParticipant(event.id.toString(), changeParticipant)
@@ -605,6 +657,15 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@post it.left().unwrapAndRespond(call)
                         }
                     val user = Participant(call.principalEmail(), call.principalName())
+                    val event = database.getEvent(id.toString()).getOrElse {
+                        return@post it.left().unwrapAndRespond(call)
+                    }
+                    if (event.inviteMode == InviteMode.SHARED) {
+                        return@post sharedMutation(call) {
+                            sharedCalendar.signup(id, user)
+                            call.respond("Success")
+                        }
+                    }
 
                     val updateCalendarEventFuture =
                         database
@@ -632,6 +693,15 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@delete it.left().unwrapAndRespond(call)
                         }
                     val email = call.principalEmail()
+                    val event = database.getEvent(id.toString()).getOrElse {
+                        return@delete it.left().unwrapAndRespond(call)
+                    }
+                    if (event.inviteMode == InviteMode.SHARED) {
+                        return@delete sharedMutation(call) {
+                            sharedCalendar.remove(id, email)
+                            call.respond("Success")
+                        }
+                    }
                     val deleteCalendarEventFuture =
                         database
                             .getCalendarEventId(id.toString(), email)
@@ -815,11 +885,16 @@ private fun Event.withMasterResult(masterResult: MasterEventResult): Event =
  * docs/teams-meeting-room-booking-plan.md).
  */
 private fun FullEvent.hideTeamsDetailsUnlessParticipantOrHost(email: String): FullEvent {
+    val isHost = hosts.any { it.email == email }
+    val visible = if (isHost) this else copy(
+        invited = invited.filter { it.status != ParticipantStatus.DECLINED },
+        calendarSyncError = null,
+    )
     val isParticipantOrHost =
         hosts.any { it.email == email } || participants.any { it.email == email }
-    if (isParticipantOrHost) return this
+    if (isParticipantOrHost) return visible
 
-    return copy(
+    return visible.copy(
         event = event.copy(
             teamsJoinUrl = null,
             teamsConferenceId = null,
@@ -835,6 +910,7 @@ private fun createCreationNotificationFuture(
     participant: Participant,
 ): () -> Unit = {
     events.forEach { event ->
+        if (event.inviteMode == InviteMode.SHARED) return@forEach
         cloudClient.sendUpdateOrCreationNotification(
             event = event,
             database = database,
@@ -850,6 +926,7 @@ private fun createUpdateNotificationFuture(
     cloudClient: CloudClient,
 ): () -> Unit = {
     events.forEach { event ->
+        if (event.inviteMode == InviteMode.SHARED) return@forEach
         database
             .getAllParticipantsAndCalendarEventIds(event.id.toString())
             .map { pairs ->

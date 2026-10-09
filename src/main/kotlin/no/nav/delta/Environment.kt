@@ -23,10 +23,13 @@ data class Environment(
     ),
     val featureRoomBooking: FeatureAccess = FeatureAccess.parse(getEnvVar("FEATURE_ROOM_BOOKING", "off")),
     val featureTeamsMeeting: FeatureAccess = FeatureAccess.parse(getEnvVar("FEATURE_TEAMS_MEETING", "off")),
+    val featureSharedCalendar: FeatureAccess = FeatureAccess.parse(getEnvVar("FEATURE_SHARED_CALENDAR", "off")),
 ) {
     fun isRoomBookingEnabledFor(groups: Collection<String>): Boolean = featureRoomBooking.allows(groups, maintainersGroupId)
 
     fun isTeamsMeetingEnabledFor(groups: Collection<String>): Boolean = featureTeamsMeeting.allows(groups, maintainersGroupId)
+
+    fun isSharedCalendarEnabledFor(groups: Collection<String>): Boolean = featureSharedCalendar.allows(groups, maintainersGroupId)
 
     companion object {
         fun getEnvVar(varName: String, defaultValue: String? = null) =
