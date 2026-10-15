@@ -20,10 +20,10 @@ spec:
   image: {{image}}
   resources:
     limits:
-      memory: 512Mi
+      memory: 768Mi
     requests:
       cpu: 100m
-      memory: 416Mi
+      memory: 512Mi
   replicas:
     max: 2
     min: 2
@@ -53,6 +53,7 @@ spec:
     # Delta maintainers: faggruppe admins, and access to features toggled to "maintainers".
     - name: DELTA_MAINTAINERS_GROUP_ID
       value: "74eafa90-c494-4913-9b96-76da786c8419"
+    # Webhook is used to receive updates from the ms graph about meeting & room changes + RSVPs.
     - name: WEBHOOK_BASE_URL
       value: "https://delta-webhook.nav.no"
     # Room booking / Teams meeting feature toggles (see docs/teams-meeting-room-booking-plan.md):
