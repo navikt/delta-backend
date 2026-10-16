@@ -23,6 +23,7 @@ ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging", versio
 ktor-server-auth-core = { module = "io.ktor:ktor-server-auth-jvm", version.ref = "ktor" }
 ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt-jvm", version.ref = "ktor" }
 ktor-server-swagger = { module = "io.ktor:ktor-server-swagger-jvm", version.ref = "ktor" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages-jvm", version.ref = "ktor" }
 ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation-jvm", version.ref = "ktor" }
 ktor-serialization-jackson = { module = "io.ktor:ktor-serialization-jackson-jvm", version.ref = "ktor" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json-jvm", version.ref = "ktor" }
@@ -61,6 +62,7 @@ ktor = [
     "ktor-server-auth-core",
     "ktor-server-auth-jwt",
     "ktor-server-swagger",
+    "ktor-server-status-pages",
     "ktor-server-content-negotiation",
     "ktor-serialization-jackson",
     "ktor-serialization-kotlinx-json",

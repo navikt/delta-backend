@@ -1,6 +1,7 @@
 package no.nav.delta.room
 
 import io.ktor.http.HttpStatusCode
+import no.nav.delta.application.respondProblem
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receive
@@ -39,13 +40,13 @@ fun Route.roomApi(
         route("/rooms") {
             get {
                 if (!env.isRoomBookingEnabledFor(call.principalGroups())) {
-                    return@get call.respond(HttpStatusCode.BadRequest, "Room booking is not enabled")
+                    return@get call.respondProblem(HttpStatusCode.BadRequest, "Romreservasjon er ikke slått på.")
                 }
 
                 roomCatalog.roomLists().fold(
                     { error ->
-                        logger.warn("Failed to get room lists", error)
-                        call.respond(HttpStatusCode.BadGateway, "Failed to get room lists")
+                        logger.warn("Kunne ikke hente romlister.", error)
+                        call.respondProblem(HttpStatusCode.BadGateway, "Kunne ikke hente romlister.")
                     },
                     { call.respond(it) },
                 )
@@ -53,18 +54,18 @@ fun Route.roomApi(
             route("/search") {
                 get {
                     if (!env.isRoomBookingEnabledFor(call.principalGroups())) {
-                        return@get call.respond(HttpStatusCode.BadRequest, "Room booking is not enabled")
+                        return@get call.respondProblem(HttpStatusCode.BadRequest, "Romreservasjon er ikke slått på.")
                     }
                     val query = call.parameters["q"]?.trim().orEmpty()
                     if (query.length < 2) {
-                        return@get call.respond(HttpStatusCode.BadRequest, "q must be at least 2 characters")
+                        return@get call.respondProblem(HttpStatusCode.BadRequest, "Søket må inneholde minst 2 tegn.")
                     }
                     val limit = call.parameters["limit"]?.toIntOrNull()?.coerceIn(1, 100) ?: 25
 
                     roomCatalog.allRooms().fold(
                         { error ->
                             logger.warn("Failed to get all rooms", error)
-                            call.respond(HttpStatusCode.BadGateway, "Failed to get rooms")
+                            call.respondProblem(HttpStatusCode.BadGateway, "Kunne ikke hente rom.")
                         },
                         { call.respond(searchRooms(it, query, limit)) },
                     )
@@ -73,17 +74,17 @@ fun Route.roomApi(
             route("/{roomListEmail}") {
                 get {
                         if (!env.isRoomBookingEnabledFor(call.principalGroups())) {
-                        return@get call.respond(HttpStatusCode.BadRequest, "Room booking is not enabled")
+                        return@get call.respondProblem(HttpStatusCode.BadRequest, "Romreservasjon er ikke slått på.")
                     }
 
                     val roomListEmail =
                         call.parameters["roomListEmail"]
-                            ?: return@get call.respond(HttpStatusCode.BadRequest, "Missing roomListEmail")
+                            ?: return@get call.respondProblem(HttpStatusCode.BadRequest, "roomListEmail mangler.")
 
                     roomCatalog.rooms(roomListEmail).fold(
                         { error ->
                             logger.warn("Failed to get rooms for $roomListEmail", error)
-                            call.respond(HttpStatusCode.BadGateway, "Failed to get rooms")
+                            call.respondProblem(HttpStatusCode.BadGateway, "Kunne ikke hente rom.")
                         },
                         { call.respond(it) },
                     )
@@ -92,24 +93,24 @@ fun Route.roomApi(
             route("/availability") {
                 post {
                         if (!env.isRoomBookingEnabledFor(call.principalGroups())) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "Room booking is not enabled")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Romreservasjon er ikke slått på.")
                     }
 
                     val request = call.receive(RoomAvailabilityRequest::class)
                     if (request.roomEmails.isEmpty()) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "roomEmails must not be empty")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "roomEmails kan ikke være tom.")
                     }
                     if (request.roomEmails.size > MAX_AVAILABILITY_ROOMS) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "At most $MAX_AVAILABILITY_ROOMS roomEmails per request")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Maks $MAX_AVAILABILITY_ROOMS rom per forespørsel.")
                     }
                     if (!request.startTime.isBefore(request.endTime)) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "startTime must be before endTime")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Starttidspunktet må være før sluttidspunktet.")
                     }
                     if (Duration.between(request.startTime, request.endTime) > MAX_AVAILABILITY_RANGE) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "Time range must be at most 62 days")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Tidsrommet kan være maks 62 dager.")
                     }
                     if (request.availabilityViewInterval !in 5..1440) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "availabilityViewInterval must be between 5 and 1440")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "availabilityViewInterval må være mellom 5 og 1440.")
                     }
 
                     cloudClient
@@ -129,7 +130,7 @@ fun Route.roomApi(
                                 } else {
                                     HttpStatusCode.BadGateway
                                 }
-                                call.respond(
+                                call.respondProblem(
                                     status,
                                     RoomAvailabilityError(
                                         title = if (status == HttpStatusCode.BadRequest) {

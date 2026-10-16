@@ -1,6 +1,7 @@
 package no.nav.delta.directory
 
 import io.ktor.http.HttpStatusCode
+import no.nav.delta.application.respondProblem
 import io.ktor.server.auth.authenticate
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -17,11 +18,11 @@ fun Route.directoryApi(cloudClient: CloudClient, env: Environment) {
     authenticate("jwt") {
         get("/directory/search") {
             if (!env.isSharedCalendarEnabledFor(call.principalGroups())) {
-                return@get call.respond(HttpStatusCode.BadRequest, "People search is not enabled")
+                return@get call.respondProblem(HttpStatusCode.BadRequest, "Personsøk er ikke slått på.")
             }
             val query = call.request.queryParameters["q"]?.trim().orEmpty()
             if (query.length !in 2..100 || query.any { it.isISOControl() }) {
-                return@get call.respond(HttpStatusCode.BadRequest, "Search query must contain 2 to 100 characters")
+                return@get call.respondProblem(HttpStatusCode.BadRequest, "Søket må inneholde 2 til 100 tegn.")
             }
             cloudClient.searchPeople(query).fold(
                 ifLeft = {
@@ -30,7 +31,7 @@ fun Route.directoryApi(cloudClient: CloudClient, env: Environment) {
                     } else {
                         logger.warn("Directory search failed ({})", it::class.simpleName)
                     }
-                    call.respond(HttpStatusCode.BadGateway, "People search is unavailable")
+                    call.respondProblem(HttpStatusCode.BadGateway, "Personsøk er utilgjengelig akkurat nå.")
                 },
                 ifRight = { call.respond(it) },
             )

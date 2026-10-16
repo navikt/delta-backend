@@ -1,5 +1,6 @@
 package no.nav.delta.room
 
+import no.nav.delta.application.ProblemJson
 import arrow.core.left
 import arrow.core.right
 import ch.qos.logback.classic.Logger
@@ -202,14 +203,14 @@ class RoomRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadGateway, response.status)
-        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+        assertEquals(ProblemJson, response.contentType()?.withoutParameters())
         val error = readJson<Map<String, Any?>>(response.bodyAsText())
         assertEquals(502, error["status"])
         assertEquals("about:blank", error["type"])
         assertNull(error["code"])
         assertNull(error["upstreamStatus"])
         assertNull(error["requestId"])
-        assertTrue(error["detail"].toString().contains("Please retry"))
+        assertTrue(error["detail"].toString().contains("Prøv igjen"))
         assertFalse(response.bodyAsText().contains("graph failure"))
     }
 
@@ -250,7 +251,7 @@ class RoomRoutesTest {
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+        assertEquals(ProblemJson, response.contentType()?.withoutParameters())
         val message = response.bodyAsText()
         val error = readJson<Map<String, Any?>>(message)
         assertEquals("about:blank", error["type"])
@@ -259,7 +260,7 @@ class RoomRoutesTest {
         assertEquals(400, error["upstreamStatus"])
         assertEquals("ErrorInvalidMergedFreeBusyInterval", error["code"])
         assertEquals("req-short", error["requestId"])
-        assertTrue(error["detail"].toString().contains("Check the time range and slot interval"), message)
+        assertTrue(error["detail"].toString().contains("Sjekk tidsrommet og intervallet"), message)
         assertFalse(message.contains("private upstream details"), message)
         val log = appender.list.single()
         listOf("status=400", "code=ErrorInvalidMergedFreeBusyInterval", "requestId=req-short",
@@ -277,10 +278,10 @@ class RoomRoutesTest {
         application { installTestApi(env, database) { roomApi(cloudClient, env) } }
 
         listOf(
-            403 to "denied calendar access",
-            404 to "configured calendar mailbox",
-            429 to "rate limiting",
-            503 to "temporarily unavailable",
+            403 to "nektet tilgang til kalenderen",
+            404 to "konfigurerte kalenderpostkassen",
+            429 to "begrenser antall forespørsler",
+            503 to "midlertidig utilgjengelig",
         ).forEach { (status, explanation) ->
             val http = OkHttpClient.Builder().addInterceptor { chain ->
                 Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
@@ -304,7 +305,7 @@ class RoomRoutesTest {
             }
 
             assertEquals(HttpStatusCode.BadGateway, response.status)
-            assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+            assertEquals(ProblemJson, response.contentType()?.withoutParameters())
             val error = readJson<Map<String, Any?>>(response.bodyAsText())
             assertEquals(502, error["status"])
             assertEquals(status, error["upstreamStatus"])

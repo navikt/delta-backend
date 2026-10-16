@@ -20,10 +20,10 @@ spec:
   image: {{image}}
   resources:
     limits:
-      memory: 768Mi
+      memory: 1024Mi
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 768Mi
   replicas:
     max: 2
     min: 2

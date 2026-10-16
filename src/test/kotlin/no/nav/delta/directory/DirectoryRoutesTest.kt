@@ -12,6 +12,7 @@ import no.nav.delta.email.CloudClient
 import no.nav.delta.email.DirectoryPerson
 import no.nav.delta.email.DummyCloudClient
 import no.nav.delta.support.NoopJwkProvider
+import no.nav.delta.support.assertProblem
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -25,7 +26,9 @@ class DirectoryRoutesTest {
             installDeltaApiPlugins(env, NoopJwkProvider)
             routing { directoryApi(DummyCloudClient(), env) }
         }
-        assertEquals(HttpStatusCode.BadRequest, client.get("/directory/search?q=alice").status)
+        val disabled = client.get("/directory/search?q=alice")
+        assertEquals(HttpStatusCode.BadRequest, disabled.status)
+        assertProblem(disabled, "Personsøk er ikke slått på.")
     }
 
     @Test
@@ -39,7 +42,9 @@ class DirectoryRoutesTest {
             installDeltaApiPlugins(env, NoopJwkProvider)
             routing { directoryApi(cloud, env) }
         }
-        assertEquals(HttpStatusCode.BadRequest, client.get("/directory/search?q=a").status)
+        val tooShort = client.get("/directory/search?q=a")
+        assertEquals(HttpStatusCode.BadRequest, tooShort.status)
+        assertProblem(tooShort, "Søket må inneholde 2 til 100 tegn.")
         val response = client.get("/directory/search?q=alice")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("alice@nav.no", readJson<List<DirectoryPerson>>(response.bodyAsText()).single().email)

@@ -1,6 +1,7 @@
 package no.nav.delta.event
 
 import arrow.core.*
+import no.nav.delta.application.respondProblem
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
@@ -40,10 +41,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 val isApplicationToken =
                     call.principal<JWTPrincipal>()?.payload?.getClaim("idtyp")?.asString() == "app"
                 if (isApplicationToken && (onlyMine || onlyJoined)) {
-                    return@get call.respond(
-                        HttpStatusCode.BadRequest,
-                        "onlyMine and onlyJoined are not available to M2M callers",
-                    )
+                    return@get call.respondProblem(HttpStatusCode.BadRequest, "onlyMine og onlyJoined er ikke tilgjengelige for maskin-til-maskin-kall.")
                 }
                 val participantEmailParameter = call.parameters["participantEmail"]
                 val fromParameter = call.parameters["from"]
@@ -56,10 +54,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 var startsBefore: LocalDateTime? = null
                 if (attendanceLookupRequested) {
                     if (!isApplicationToken) {
-                        return@get call.respond(
-                            HttpStatusCode.BadRequest,
-                            "participantEmail, from, and to are only available to M2M callers",
-                        )
+                        return@get call.respondProblem(HttpStatusCode.BadRequest, "participantEmail, from og to er kun tilgjengelige for maskin-til-maskin-kall.")
                     }
                     val categoryValues =
                         call.request.queryParameters.getAll("categories")?.flatMap { it.split(",") }
@@ -69,37 +64,22 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             ?.toIntOrNull()
                             ?.takeIf { it > 0 }
                     if (attendanceCategoryId == null) {
-                        return@get call.respond(
-                            HttpStatusCode.BadRequest,
-                            "Attendance lookup requires exactly one positive integer category",
-                        )
+                        return@get call.respondProblem(HttpStatusCode.BadRequest, "Oppmøteoppslag krever nøyaktig én kategori som positivt heltall.")
                     }
                     attendanceEmail =
                         participantEmailParameter
                             ?.trim()
                             ?.lowercase()
                             ?.takeIf { it.isNotBlank() && it.matches(Regex("[^\\s@]+@[^\\s@]+")) }
-                            ?: return@get call.respond(
-                                HttpStatusCode.BadRequest,
-                                "participantEmail must be a valid email address",
-                            )
+                            ?: return@get call.respondProblem(HttpStatusCode.BadRequest, "participantEmail må være en gyldig e-postadresse.")
                     val parsedFrom =
                         fromParameter?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
-                            ?: return@get call.respond(
-                                HttpStatusCode.BadRequest,
-                                "from must be an ISO local date-time",
-                            )
+                            ?: return@get call.respondProblem(HttpStatusCode.BadRequest, "from må være et ISO-tidspunkt uten tidssone.")
                     val parsedTo =
                         toParameter?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
-                            ?: return@get call.respond(
-                                HttpStatusCode.BadRequest,
-                                "to must be an ISO local date-time",
-                            )
+                            ?: return@get call.respondProblem(HttpStatusCode.BadRequest, "to må være et ISO-tidspunkt uten tidssone.")
                     if (!parsedFrom.isBefore(parsedTo)) {
-                        return@get call.respond(
-                            HttpStatusCode.BadRequest,
-                            "from must be before to",
-                        )
+                        return@get call.respondProblem(HttpStatusCode.BadRequest, "from må være før to.")
                     }
                     startsAtOrAfter = parsedFrom
                     startsBefore = parsedTo
@@ -120,10 +100,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     if (attendanceLookupRequested) {
                         listOf(
                             attendanceCategoryId
-                                ?: return@get call.respond(
-                                    HttpStatusCode.BadRequest,
-                                    "Attendance lookup requires exactly one positive integer category",
-                                )
+                                ?: return@get call.respondProblem(HttpStatusCode.BadRequest, "Oppmøteoppslag krever nøyaktig én kategori som positivt heltall.")
                         )
                     } else {
                         call.parameters["categories"]?.split(",")?.map { it.toInt() } ?: emptyList()
@@ -167,28 +144,26 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 val principal = Participant(email, call.principalName())
 
                 if (createEvent.startTime.isAfter(createEvent.endTime)) {
-                    return@put call.respond(
-                        HttpStatusCode.BadRequest, "Start time must be before end time"
-                    )
+                    return@put call.respondProblem(HttpStatusCode.BadRequest, "Starttidspunktet må være før sluttidspunktet.")
                 }
 
                 validateRoomAndTeamsToggles(createEvent, call.principalGroups(), env)?.let {
-                    return@put call.respond(HttpStatusCode.BadRequest, it)
+                    return@put call.respondProblem(HttpStatusCode.BadRequest, it)
                 }
                 validateRoomFields(createEvent)?.let {
-                    return@put call.respond(HttpStatusCode.BadRequest, it)
+                    return@put call.respondProblem(HttpStatusCode.BadRequest, it)
                 }
                 val usesSharedCalendar = env.isSharedCalendarEnabledFor(call.principalGroups())
                 if (!createEvent.invitees.isNullOrEmpty() && !usesSharedCalendar) {
-                    return@put call.respond(HttpStatusCode.BadRequest, "Invitations require a shared calendar")
+                    return@put call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner krever en delt kalender.")
                 }
 
                 if (createEvent.recurrence != null) {
                     if (!createEvent.invitees.isNullOrEmpty()) {
-                        return@put call.respond(HttpStatusCode.BadRequest, "Invitations are not supported for recurring events")
+                        return@put call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner støttes ikke for gjentakende arrangementer.")
                     }
                     if (createEvent.requestsRoomOrTeams()) {
-                        return@put call.respond(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
+                        return@put call.respondProblem(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
                     }
 
                     val createdSeries =
@@ -228,10 +203,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     if (createEvent.requestsRoomOrTeams()) {
                         cloudClient.createMasterEvent(createEvent.toDraftEvent(UUID.randomUUID())).getOrElse {
                             logger.warn("Failed to create master event for room/Teams booking", it)
-                            return@put call.respond(
-                                HttpStatusCode.BadGateway,
-                                "Failed to create room booking or Teams meeting",
-                            )
+                            return@put call.respondProblem(HttpStatusCode.BadGateway, "Kunne ikke opprette romreservasjon eller Teams-møte.")
                         }
                     } else {
                         null
@@ -243,7 +215,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 if (createEvent.isOnlineMeeting == true && masterResult?.teamsJoinUrl == null) {
                     masterResult?.let { deleteMasterBestEffort(cloudClient, it.calendarEventId, null) }
                     logger.warn("Teams meeting requested but Graph returned no join URL; nothing saved")
-                    return@put call.respond(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
+                    return@put call.respondProblem(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
                 }
 
                 // If anything below fails after the master was created, undo both the master and
@@ -316,7 +288,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
 
                     val editScope = call.parameters["editScope"]?.let {
                         runCatching { EventEditScope.valueOf(it) }.getOrElse {
-                            return@delete call.respond(HttpStatusCode.BadRequest, "Invalid editScope value")
+                            return@delete call.respondProblem(HttpStatusCode.BadRequest, "Ugyldig verdi for editScope.")
                         }
                     }
 
@@ -388,24 +360,22 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                         (originalEvent.inviteMode != InviteMode.SHARED ||
                             database.isRecurringOccurrence(originalEvent.id))
                     ) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "Invitations require a non-recurring shared event")
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner krever et enkeltstående arrangement i delt kalender.")
                     }
                     if (changedEvent.startTime.isAfter(changedEvent.endTime)) {
-                        return@post call.respond(
-                            HttpStatusCode.BadRequest, "Start time must be before end time"
-                        )
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Starttidspunktet må være før sluttidspunktet.")
                     }
 
                     validateRoomAndTeamsToggles(changedEvent, call.principalGroups(), env)?.let {
-                        return@post call.respond(HttpStatusCode.BadRequest, it)
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, it)
                     }
                     validateRoomFields(changedEvent)?.let {
-                        return@post call.respond(HttpStatusCode.BadRequest, it)
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, it)
                     }
 
                     if ((changedEvent.editScope ?: EventEditScope.SINGLE) == EventEditScope.UPCOMING) {
                         if (changedEvent.requestsRoomOrTeams()) {
-                            return@post call.respond(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
+                            return@post call.respondProblem(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
                         }
 
                         val recurringUpdate =
@@ -434,17 +404,14 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     // Single-occurrence edits of a recurring series are rejected too, so series
                     // occurrences never get a master event (see the UPCOMING delete above).
                     if (changedEvent.requestsRoomOrTeams() && database.isRecurringOccurrence(originalEvent.id)) {
-                        return@post call.respond(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, RECURRING_NOT_SUPPORTED)
                     }
 
                     // Once enabled, Teams stays until the event is deleted: turning it off would
                     // need a PATCH Graph may not honour, and would kill the join link participants
                     // already have.
                     if (changedEvent.isOnlineMeeting == false && originalEvent.isOnlineMeeting) {
-                        return@post call.respond(
-                            HttpStatusCode.BadRequest,
-                            "Teams meeting cannot be removed from an event; delete the event instead",
-                        )
+                        return@post call.respondProblem(HttpStatusCode.BadRequest, "Teams-møtet kan ikke fjernes fra et arrangement. Slett arrangementet i stedet.")
                     }
 
                     if (originalEvent.inviteMode == InviteMode.SHARED) {
@@ -497,10 +464,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                                 }
                             result.getOrElse {
                                 logger.warn("Failed to sync master event for event ${originalEvent.id}", it)
-                                return@post call.respond(
-                                    HttpStatusCode.BadGateway,
-                                    "Failed to create room booking or Teams meeting",
-                                )
+                                return@post call.respondProblem(HttpStatusCode.BadGateway, "Kunne ikke opprette romreservasjon eller Teams-møte.")
                             }
                         } else {
                             null
@@ -542,7 +506,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     if (newEvent.isOnlineMeeting && newEvent.teamsJoinUrl == null) {
                         rollbackNewMaster()
                         logger.warn("Teams meeting requested for event ${originalEvent.id} but Graph returned no join URL")
-                        return@post call.respond(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
+                        return@post call.respondProblem(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
                     }
 
                     if (createsNewMaster && masterResult != null) {
@@ -796,26 +760,26 @@ private fun validateRoomAndTeamsToggles(
 ): String? {
     val requestsRoom = createEvent.roomEmail != null || createEvent.roomName != null
     if (requestsRoom && !env.isRoomBookingEnabledFor(groups)) {
-        return "Room booking is not enabled"
+        return "Romreservasjon er ikke slått på."
     }
 
     if (createEvent.isOnlineMeeting == true && !env.isTeamsMeetingEnabledFor(groups)) {
-        return "Teams meeting is not enabled"
+        return "Teams-møter er ikke slått på."
     }
 
     return null
 }
 
 private const val TEAMS_MEETING_NOT_CREATED =
-    "Teams meeting could not be created; nothing was saved"
+    "Teams-møtet kunne ikke opprettes. Ingenting ble lagret."
 
 private const val RECURRING_NOT_SUPPORTED =
-    "Room booking and Teams meetings are not supported for recurring events"
+    "Romreservasjon og Teams-møter støttes ikke for gjentakende arrangementer."
 
 /** roomEmail and roomName must be sent together: a name without an address can't be booked. */
 private fun validateRoomFields(createEvent: CreateEvent): String? =
     if ((createEvent.roomEmail == null) != (createEvent.roomName == null)) {
-        "roomEmail and roomName must be set together"
+        "roomEmail og roomName må settes sammen."
     } else {
         null
     }

@@ -67,7 +67,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
     }
 
     fun recordRecipients(count: Int) {
-        if (count < 0) throw SharedCalendarValidationException(400, "Recipient estimate cannot be negative")
+        if (count < 0) throw SharedCalendarValidationException(400, "Estimert antall mottakere kan ikke være negativt.")
         transaction { c -> recordRecipients(c, count, Instant.now()) }
     }
 
@@ -94,7 +94,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
 
     /** Conservative attempt accounting, including requests whose Graph response is uncertain. */
     fun recordEstimatedRecipients(work: SharedCalendarWork, recipients: Int, now: Instant = Instant.now()): Boolean {
-        if (recipients < 0) throw SharedCalendarValidationException(400, "Recipient estimate cannot be negative")
+        if (recipients < 0) throw SharedCalendarValidationException(400, "Estimert antall mottakere kan ikke være negativt.")
         return transaction { c ->
             if (!ownsClaim(c, work)) return@transaction false
             recordRecipients(c, recipients, now)
@@ -129,7 +129,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             validateDraft(draft)
             requireNonRecurringInvites(c, id, draft.invitees ?: emptyList())
             if (original.isOnlineMeeting && draft.isOnlineMeeting == false)
-                throw SharedCalendarValidationException(400, "An existing Teams meeting cannot be disabled")
+                throw SharedCalendarValidationException(400, "Et eksisterende Teams-møte kan ikke slås av.")
             val event = c.prepareStatement("""
                 UPDATE event SET title=?,description=?,start_time=?,end_time=?,location=?,public=?,
                     participant_limit=?,signup_deadline=?,room_email=COALESCE(?,room_email),
@@ -167,7 +167,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         resultTransaction { c ->
             validateDraft(draft)
             if (draft.recurrence != null)
-                throw SharedCalendarValidationException(400, "Use recurring series creation for recurring events")
+                throw SharedCalendarValidationException(400, "Bruk opprettelse av serie for gjentakende arrangementer.")
             val host = identityEmail(hostEmail)
             val event = c.prepareStatement("""
                 INSERT INTO event(title,description,start_time,end_time,location,public,participant_limit,
@@ -399,12 +399,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
 
     private fun <T> routeResult(result: Either<ExceptionWithDefaultResponse, T>): T = when (result) {
         is Either.Right -> result.value
-        is Either.Left -> throw SharedCalendarValidationException(when (result.value) {
-            EventNotFoundException, EmailNotFoundException -> 404
-            ForbiddenException -> 403
-            EventFullException, DeadlinePassedException, ParticipantAlreadyRegisteredException, EventWillHaveNoHostsException -> 409
-            else -> 400
-        }, result.value.message)
+        is Either.Left -> throw result.value
     }
 
     fun addInvitations(id: UUID, requests: List<InviteeRequest>, invitedBy: String? = null): Either<ExceptionWithDefaultResponse, Unit> =
@@ -416,7 +411,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
 
     private fun requireNonRecurringInvites(c: Connection, id: UUID, requests: List<InviteeRequest>) {
         if (requests.isNotEmpty() && loadRecurringSeriesSummaries(c, listOf(id)).isNotEmpty())
-            throw SharedCalendarValidationException(400, "Invitations are not supported for recurring series")
+            throw SharedCalendarValidationException(400, "Invitasjoner støttes ikke for gjentakende serier.")
     }
 
     fun signup(id: UUID, email: String, name: String): Either<ExceptionWithDefaultResponse, Unit> =
@@ -612,7 +607,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 s.setObject(1, id); s.executeQuery().use { if (it.next()) it.toEvent() else throw EventNotFoundException }
             }
             if (event.inviteMode != InviteMode.SHARED)
-                throw SharedCalendarValidationException(400, "Event does not use shared invitations")
+                throw SharedCalendarValidationException(400, "Arrangementet bruker ikke delte invitasjoner.")
             // A row lock alone does not refresh a REPEATABLE_READ snapshot. A write forces stale
             // contenders to retry with a fresh snapshot before counting seats.
             c.exec("UPDATE event SET title=title WHERE id=?", id)
@@ -672,14 +667,14 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
 
     private fun validateDraft(draft: CreateEvent) {
         if (draft.startTime >= draft.endTime || draft.participantLimit < 0)
-            throw SharedCalendarValidationException(400, "Invalid event time or capacity")
+            throw SharedCalendarValidationException(400, "Ugyldig tidspunkt eller kapasitet.")
         draft.invitees?.forEach { normalize(it.email) }
     }
 
     private fun normalize(email: String): String {
         val normalized = email.trim().lowercase()
         if (!Regex("[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@nav\\.no").matches(normalized))
-            throw SharedCalendarValidationException(400, "Invitees must have an individual Nav email address")
+            throw SharedCalendarValidationException(400, "Inviterte må ha en personlig Nav-e-postadresse.")
         return normalized
     }
 
@@ -712,7 +707,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             s.setObject(1, event.id); s.executeQuery().use { it.next(); it.getInt(1) }
         }
         if (count + extra + (if (event.roomEmail == null) 0 else 1) > 490)
-            throw SharedCalendarValidationException(409, "Calendar attendee limit reached")
+            throw SharedCalendarValidationException(409, "Grensen for antall deltakere i kalenderen er nådd.")
     }
 
     private fun attendeeRoomAvailable(c: Connection, event: Event): Boolean =

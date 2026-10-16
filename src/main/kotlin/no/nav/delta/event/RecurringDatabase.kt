@@ -47,7 +47,7 @@ fun DatabaseInterface.createRecurringEventSeries(
     inviteMode: InviteMode = InviteMode.PER_PARTICIPANT,
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
     if (!createEvent.invitees.isNullOrEmpty())
-        return UnsupportedRecurringOperationException("Invitations are not supported for recurring series").left()
+        return UnsupportedRecurringOperationException("Invitasjoner støttes ikke for gjentakende serier.").left()
     val draft =
         when (val seriesDraft = createEvent.toRecurringSeriesDraft(hostEmail)) {
             is Either.Left -> return seriesDraft
@@ -94,34 +94,34 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
     updatedByEmail: String,
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
     if (!createEvent.invitees.isNullOrEmpty())
-        return UnsupportedRecurringOperationException("Invitations are not supported for recurring series").left()
+        return UnsupportedRecurringOperationException("Invitasjoner støttes ikke for gjentakende serier.").left()
     return sharedResultTransaction { connection ->
         val selectedOccurrence =
             loadRecurringOccurrence(connection, UUID.fromString(eventId))
                 ?: return UnsupportedRecurringOperationException(
-                    "Only recurring events can be updated with UPCOMING scope"
+                    "Bare gjentakende arrangementer kan endres med omfanget UPCOMING."
                 ).left()
 
         val existingSeries =
             loadRecurringSeries(connection, selectedOccurrence.seriesId)
-                ?: return UnsupportedRecurringOperationException("Recurring series not found").left()
+                ?: return UnsupportedRecurringOperationException("Fant ikke den gjentakende serien.").left()
 
         createEvent.recurrence?.let { recurrence ->
             if (recurrence.frequency != existingSeries.frequency) {
                 return UnsupportedRecurringOperationException(
-                    "Updating the recurrence frequency is not supported"
+                    "Det er ikke støttet å endre hyppigheten på gjentakelsen."
                 ).left()
             }
         }
 
         val newDurationMinutes =
             Duration.between(createEvent.startTime, createEvent.endTime).toMinutes().takeIf { it > 0 }
-                ?: return RecurringEventValidationException("Start time must be before end time").left()
+                ?: return RecurringEventValidationException("Starttidspunktet må være før sluttidspunktet.").left()
 
         val upcomingOccurrences =
             loadRecurringOccurrencesFromIndex(connection, selectedOccurrence.seriesId, selectedOccurrence.occurrenceIndex)
         if (upcomingOccurrences.isEmpty()) {
-            return UnsupportedRecurringOperationException("No upcoming recurring occurrences found").left()
+            return UnsupportedRecurringOperationException("Fant ingen kommende forekomster i serien.").left()
         }
 
         if (upcomingOccurrences.any { !isHostOf(connection, it.event.id, updatedByEmail) }) {
@@ -297,13 +297,13 @@ fun DatabaseInterface.deleteRecurringSeriesFromOccurrence(
         val selectedOccurrence =
             loadRecurringOccurrence(connection, UUID.fromString(eventId))
                 ?: return UnsupportedRecurringOperationException(
-                    "Only recurring events can be deleted with UPCOMING scope"
+                    "Bare gjentakende arrangementer kan slettes med omfanget UPCOMING."
                 ).left()
 
         val upcomingOccurrences =
             loadRecurringOccurrencesFromIndex(connection, selectedOccurrence.seriesId, selectedOccurrence.occurrenceIndex)
         if (upcomingOccurrences.isEmpty()) {
-            return UnsupportedRecurringOperationException("No upcoming recurring occurrences found").left()
+            return UnsupportedRecurringOperationException("Fant ingen kommende forekomster i serien.").left()
         }
 
         if (upcomingOccurrences.any { !isHostOf(connection, it.event.id, deletedByEmail) }) {

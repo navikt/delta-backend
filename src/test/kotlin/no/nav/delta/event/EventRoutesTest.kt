@@ -1,5 +1,6 @@
 package no.nav.delta.event
 
+import no.nav.delta.support.assertProblem
 import arrow.core.left
 import arrow.core.right
 import com.auth0.jwt.JWT
@@ -252,8 +253,9 @@ class EventRoutesTest {
 
         assertEquals(HttpStatusCode.NotFound, privateResponse.status)
         assertEquals(HttpStatusCode.NotFound, unknownResponse.status)
-        assertEquals("Event not found", privateResponse.bodyAsText())
-        assertEquals(privateResponse.bodyAsText(), unknownResponse.bodyAsText())
+        val privateProblem = assertProblem(privateResponse, "Fant ikke arrangementet.") - "requestId"
+        val unknownProblem = assertProblem(unknownResponse, "Fant ikke arrangementet.") - "requestId"
+        assertEquals(privateProblem, unknownProblem)
     }
 
     @Test
@@ -350,7 +352,7 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("Start time must be before end time", response.bodyAsText())
+        assertProblem(response, "Starttidspunktet må være før sluttidspunktet.")
     }
 
     @Test
@@ -372,7 +374,7 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("Room booking is not enabled", response.bodyAsText())
+        assertProblem(response, "Romreservasjon er ikke slått på.")
     }
 
     @Test
@@ -394,7 +396,7 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("Teams meeting is not enabled", response.bodyAsText())
+        assertProblem(response, "Teams-møter er ikke slått på.")
     }
 
     @Test
@@ -696,7 +698,7 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("Room booking is not enabled", response.bodyAsText())
+        assertProblem(response, "Romreservasjon er ikke slått på.")
         assertTrue(cloudClient.createdMasterEvents.isEmpty())
     }
 
@@ -721,7 +723,7 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("Teams meeting is not enabled", response.bodyAsText())
+        assertProblem(response, "Teams-møter er ikke slått på.")
         assertTrue(cloudClient.createdMasterEvents.isEmpty())
     }
 
@@ -744,7 +746,7 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("roomEmail and roomName must be set together", response.bodyAsText())
+        assertProblem(response, "roomEmail og roomName må settes sammen.")
     }
 
     @Test
@@ -1134,7 +1136,7 @@ class EventRoutesTest {
         val response = client.get("/event/not-a-uuid")
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("Invalid id", response.bodyAsText())
+        assertProblem(response, "Ugyldig id.")
     }
 
     @Test

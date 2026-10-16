@@ -66,6 +66,7 @@ fun Application.installDeltaApiPlugins(
     testVerifier: JWTVerifier? = null,
 ) {
     setupAuth(jwkProvider, env, testVerifier)
+    installProblemDetails()
     install(CallLogging) {
         level = Level.INFO
         disableDefaultColors()

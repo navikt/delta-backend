@@ -58,11 +58,11 @@ fun Route.enforceM2mReadOnlyAccess() {
         ) {
             val message =
                 if (hasReadRole) {
-                    "M2M access is restricted to approved read endpoints"
+                    "Maskin-til-maskin-tilgang er begrenset til godkjente lesetjenester."
                 } else {
-                    "M2M access requires the delta.read role on approved read endpoints"
+                    "Maskin-til-maskin-tilgang krever rollen delta.read på godkjente lesetjenester."
                 }
-            call.respond(HttpStatusCode.Forbidden, message)
+            call.respondProblem(HttpStatusCode.Forbidden, message)
             finish()
         }
     }

@@ -108,10 +108,10 @@ class AzureRoomAvailabilityTest {
     @Test
     fun `availability failures distinguish access throttling and upstream outages`() {
         listOf(
-            403 to "denied calendar access",
-            404 to "configured calendar mailbox",
-            429 to "rate limiting",
-            503 to "temporarily unavailable",
+            403 to "nektet tilgang til kalenderen",
+            404 to "konfigurerte kalenderpostkassen",
+            429 to "begrenser antall forespørsler",
+            503 to "midlertidig utilgjengelig",
         ).forEach { (status, explanation) ->
             val error = client(
                 status, """{"error":{"code":"SyntheticFailure","message":"private upstream details"}}""",
@@ -159,7 +159,7 @@ class AzureRoomAvailabilityTest {
             SocketTimeoutException(),
         )
 
-        assertTrue(error.clientMessage.contains("Could not connect"))
+        assertTrue(error.clientMessage.contains("Kunne ikke koble til"))
         assertTrue(error.message.contains("failureType=SocketTimeoutException"))
         assertFalse(error.message.contains("null"))
     }
