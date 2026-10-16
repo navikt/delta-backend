@@ -579,12 +579,14 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/RoomAvailabilityError"
+                oneOf:
+                  - $ref: "#/components/schemas/RoomAvailabilityError"
+                  - $ref: "#/components/schemas/ProblemDetail"
               example:
                 type: about:blank
                 title: Room availability request rejected
                 status: 400
-                detail: "Failed to get room availability. Microsoft Graph rejected the availability request. Check the time range and slot interval."
+                detail: "Kunne ikke hente romtilgjengelighet. Microsoft Graph avviste forespørselen. Sjekk tidsrommet og intervallet."
                 code: ErrorInvalidMergedFreeBusyInterval
                 upstreamStatus: 400
                 requestId: req-short
@@ -597,7 +599,9 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/RoomAvailabilityError"
+                oneOf:
+                  - $ref: "#/components/schemas/RoomAvailabilityError"
+                  - $ref: "#/components/schemas/ProblemDetail"
   /category:
     get:
       tags:

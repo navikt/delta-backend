@@ -399,12 +399,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
 
     private fun <T> routeResult(result: Either<ExceptionWithDefaultResponse, T>): T = when (result) {
         is Either.Right -> result.value
-        is Either.Left -> throw SharedCalendarValidationException(when (result.value) {
-            EventNotFoundException, EmailNotFoundException -> 404
-            ForbiddenException -> 403
-            EventFullException, DeadlinePassedException, ParticipantAlreadyRegisteredException, EventWillHaveNoHostsException -> 409
-            else -> 400
-        }, result.value.message)
+        is Either.Left -> throw result.value
     }
 
     fun addInvitations(id: UUID, requests: List<InviteeRequest>, invitedBy: String? = null): Either<ExceptionWithDefaultResponse, Unit> =

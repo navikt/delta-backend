@@ -11,6 +11,7 @@ import io.ktor.serialization.ContentConvertException
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.NotFoundException
+import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.header
 import io.ktor.server.response.respondText
@@ -19,6 +20,7 @@ import io.ktor.server.application.log
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.util.AttributeKey
 import java.util.UUID
+import no.nav.delta.calendar.SharedCalendarValidationException
 import no.nav.delta.event.ExceptionWithDefaultResponse
 
 /** RFC 7807 problem details. `detail` is safe, user-facing text and never contains internals. */
@@ -40,7 +42,7 @@ private val RequestIdKey = AttributeKey<String>("delta.requestId")
 
 fun ApplicationCall.requestId(): String =
     attributes.computeIfAbsent(RequestIdKey) {
-        request.header("X-Request-Id")?.takeIf { it.length <= 100 && it.all { c -> c.isLetterOrDigit() || c in "-_." } }
+        request.header("X-Request-Id")?.takeIf { it.isNotEmpty() && it.length <= 100 && it.all { c -> c.isLetterOrDigit() || c in "-_." } }
             ?: UUID.randomUUID().toString()
     }
 
@@ -64,8 +66,14 @@ fun Application.installProblemDetails() {
         exception<ExceptionWithDefaultResponse> { call, cause ->
             cause.defaultResponse(call)
         }
+        exception<SharedCalendarValidationException> { call, cause ->
+            call.respondProblem(HttpStatusCode.fromValue(cause.statusCode), cause.message)
+        }
         exception<NotFoundException> { call, _ ->
             call.respondProblem(HttpStatusCode.NotFound, "Fant ikke ressursen.", "NOT_FOUND")
+        }
+        exception<UnsupportedMediaTypeException> { call, _ ->
+            call.respondProblem(HttpStatusCode.UnsupportedMediaType, "Innholdstypen støttes ikke.", "UNSUPPORTED_MEDIA_TYPE")
         }
         exception<ContentTransformationException> { call, _ ->
             call.respondProblem(HttpStatusCode.BadRequest, "Forespørselen har ugyldig innhold.", "INVALID_BODY")

@@ -8,6 +8,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.routing.get
 import io.ktor.server.testing.testApplication
 import java.util.UUID
@@ -21,6 +22,7 @@ import no.nav.delta.support.localTestEnvironment
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -90,6 +92,32 @@ class ProblemDetailsTest {
 
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertProblem(response)
+    }
+
+    @Test
+    fun `unsupported media type keeps status 415`() = testApplication {
+        val env = localTestEnvironment()
+        application {
+            installTestApi(env, database) {
+                get("/api/media") { throw UnsupportedMediaTypeException(ContentType.Text.Plain) }
+            }
+        }
+
+        val response = client.get("/api/media")
+
+        assertEquals(HttpStatusCode.UnsupportedMediaType, response.status)
+        assertProblem(response, code = "UNSUPPORTED_MEDIA_TYPE")
+    }
+
+    @Test
+    fun `empty request id header is replaced with a generated one`() = testApplication {
+        val env = localTestEnvironment()
+        application { installTestApi(env, database) { get("/api/boom") { error("x") } } }
+
+        val response = client.get("/api/boom") { header("X-Request-Id", "") }
+
+        val requestId = assertProblem(response)["requestId"] as String
+        assertTrue(requestId.isNotEmpty())
     }
 
     @Test

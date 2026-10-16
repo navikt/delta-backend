@@ -23,16 +23,16 @@ internal class RoomAvailabilityException(
                 ?.value?.firstOrNull()
         )?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,100}")) }
 
-    val clientDetail: String = "Failed to get room availability. " + when {
-        errorCode == "MissingMailbox" -> "The availability service is not configured. Contact support."
-        errorCode == "InvalidGraphResponse" -> "Microsoft Graph returned incomplete availability data. Please retry."
-        upstreamStatus == 400 -> "Microsoft Graph rejected the availability request. Check the time range and slot interval."
-        upstreamStatus == 401 || upstreamStatus == 403 -> "Microsoft Graph denied calendar access. Contact support."
-        upstreamStatus == 404 -> "Microsoft Graph could not find the configured calendar mailbox. Contact support."
-        upstreamStatus == 429 -> "Microsoft Graph is rate limiting availability requests. Please retry later."
-        upstreamStatus != null && upstreamStatus >= 500 -> "Microsoft Graph is temporarily unavailable. Please retry later."
-        cause is IOException -> "Could not connect to Microsoft Graph. Please retry."
-        else -> "The availability service failed. Please retry or contact support."
+    val clientDetail: String = "Kunne ikke hente romtilgjengelighet. " + when {
+        errorCode == "MissingMailbox" -> "Tilgjengelighetstjenesten er ikke konfigurert. Kontakt support."
+        errorCode == "InvalidGraphResponse" -> "Microsoft Graph returnerte ufullstendige data. Prøv igjen."
+        upstreamStatus == 400 -> "Microsoft Graph avviste forespørselen. Sjekk tidsrommet og intervallet."
+        upstreamStatus == 401 || upstreamStatus == 403 -> "Microsoft Graph nektet tilgang til kalenderen. Kontakt support."
+        upstreamStatus == 404 -> "Microsoft Graph fant ikke den konfigurerte kalenderpostkassen. Kontakt support."
+        upstreamStatus == 429 -> "Microsoft Graph begrenser antall forespørsler. Prøv igjen senere."
+        upstreamStatus != null && upstreamStatus >= 500 -> "Microsoft Graph er midlertidig utilgjengelig. Prøv igjen senere."
+        cause is IOException -> "Kunne ikke koble til Microsoft Graph. Prøv igjen."
+        else -> "Tilgjengelighetstjenesten feilet. Prøv igjen eller kontakt support."
     }
 
     val clientMessage: String =
