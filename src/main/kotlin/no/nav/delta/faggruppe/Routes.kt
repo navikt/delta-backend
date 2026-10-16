@@ -1,6 +1,7 @@
 package no.nav.delta.faggruppe
 
 import io.ktor.http.HttpStatusCode
+import no.nav.delta.application.respondProblem
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
@@ -30,10 +31,10 @@ fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, en
             post {
                 val dto = call.receive<FaggruppeCreateDTO>()
                 if (dto.starttid != null && !dto.starttid.isValidHHmm()) {
-                    return@post call.respond(HttpStatusCode.BadRequest, "starttid must be in HH:mm format")
+                    return@post call.respondProblem(HttpStatusCode.BadRequest, "starttid må være på formatet HH:mm.")
                 }
                 if (dto.sluttid != null && !dto.sluttid.isValidHHmm()) {
-                    return@post call.respond(HttpStatusCode.BadRequest, "sluttid must be in HH:mm format")
+                    return@post call.respondProblem(HttpStatusCode.BadRequest, "sluttid må være på formatet HH:mm.")
                 }
                 val email = call.principalEmail()
                 val navn = call.principalName()
@@ -46,31 +47,31 @@ fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, en
                 get {
                     val id = call.faggruppeId() ?: return@get
                     val faggruppe = database.getFaggruppe(id)
-                        ?: return@get call.respond(HttpStatusCode.NotFound)
+                        ?: return@get call.respondProblem(HttpStatusCode.NotFound)
                     call.respond(faggruppe)
                 }
 
                 put {
                     val id = call.faggruppeId() ?: return@put
-                    if (!database.fagruppeExists(id)) return@put call.respond(HttpStatusCode.NotFound)
-                    if (!call.isOwnerOrAdmin(database, id, env)) return@put call.respond(HttpStatusCode.Forbidden)
+                    if (!database.fagruppeExists(id)) return@put call.respondProblem(HttpStatusCode.NotFound)
+                    if (!call.isOwnerOrAdmin(database, id, env)) return@put call.respondProblem(HttpStatusCode.Forbidden)
 
                     val dto = call.receive<FaggruppeUpdateDTO>()
                     if (dto.starttid != null && !dto.starttid.isValidHHmm()) {
-                        return@put call.respond(HttpStatusCode.BadRequest, "starttid must be in HH:mm format")
+                        return@put call.respondProblem(HttpStatusCode.BadRequest, "starttid må være på formatet HH:mm.")
                     }
                     if (dto.sluttid != null && !dto.sluttid.isValidHHmm()) {
-                        return@put call.respond(HttpStatusCode.BadRequest, "sluttid must be in HH:mm format")
+                        return@put call.respondProblem(HttpStatusCode.BadRequest, "sluttid må være på formatet HH:mm.")
                     }
                     val updated = database.updateFaggruppe(id, dto)
-                        ?: return@put call.respond(HttpStatusCode.NotFound)
+                        ?: return@put call.respondProblem(HttpStatusCode.NotFound)
                     call.respond(updated)
                 }
 
                 delete {
                     val id = call.faggruppeId() ?: return@delete
-                    if (!database.fagruppeExists(id)) return@delete call.respond(HttpStatusCode.NotFound)
-                    if (!call.isOwnerOrAdmin(database, id, env)) return@delete call.respond(HttpStatusCode.Forbidden)
+                    if (!database.fagruppeExists(id)) return@delete call.respondProblem(HttpStatusCode.NotFound)
+                    if (!call.isOwnerOrAdmin(database, id, env)) return@delete call.respondProblem(HttpStatusCode.Forbidden)
 
                     database.deleteFaggruppe(id)
                     call.respond(HttpStatusCode.NoContent)
@@ -85,19 +86,19 @@ fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, en
                 route("/eiere") {
                     get {
                         val id = call.faggruppeId() ?: return@get
-                        if (!database.fagruppeExists(id)) return@get call.respond(HttpStatusCode.NotFound)
+                        if (!database.fagruppeExists(id)) return@get call.respondProblem(HttpStatusCode.NotFound)
                         call.respond(database.getEiere(id))
                     }
 
                     post {
                         val id = call.faggruppeId() ?: return@post
-                        if (!database.fagruppeExists(id)) return@post call.respond(HttpStatusCode.NotFound)
-                        if (!call.isOwnerOrAdmin(database, id, env)) return@post call.respond(HttpStatusCode.Forbidden)
+                        if (!database.fagruppeExists(id)) return@post call.respondProblem(HttpStatusCode.NotFound)
+                        if (!call.isOwnerOrAdmin(database, id, env)) return@post call.respondProblem(HttpStatusCode.Forbidden)
 
                         val dto = call.receive<AddEierDTO>()
                         val normalizedEpost = dto.epost.trim().lowercase()
                         if (database.eierExists(id, normalizedEpost)) {
-                            return@post call.respond(HttpStatusCode.Conflict)
+                            return@post call.respondProblem(HttpStatusCode.Conflict)
                         }
 
                         val navn = cloudClient.getUserDisplayName(normalizedEpost)
@@ -107,13 +108,13 @@ fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, en
 
                     delete("/{epost}") {
                         val id = call.faggruppeId() ?: return@delete
-                        if (!database.fagruppeExists(id)) return@delete call.respond(HttpStatusCode.NotFound)
-                        if (!call.isOwnerOrAdmin(database, id, env)) return@delete call.respond(HttpStatusCode.Forbidden)
+                        if (!database.fagruppeExists(id)) return@delete call.respondProblem(HttpStatusCode.NotFound)
+                        if (!call.isOwnerOrAdmin(database, id, env)) return@delete call.respondProblem(HttpStatusCode.Forbidden)
 
                         val epost = call.parameters["epost"]
                             ?.trim()?.lowercase()
-                            ?: return@delete call.respond(HttpStatusCode.BadRequest)
-                        if (!database.eierExists(id, epost)) return@delete call.respond(HttpStatusCode.NotFound)
+                            ?: return@delete call.respondProblem(HttpStatusCode.BadRequest)
+                        if (!database.eierExists(id, epost)) return@delete call.respondProblem(HttpStatusCode.NotFound)
 
                         database.removeEier(id, epost)
                         call.respond(HttpStatusCode.NoContent)
@@ -125,11 +126,11 @@ fun Route.faggruppeApi(database: DatabaseInterface, cloudClient: CloudClient, en
 }
 
 private suspend fun ApplicationCall.faggruppeId(): UUID? {
-    val raw = parameters["id"] ?: run { respond(HttpStatusCode.BadRequest); return null }
+    val raw = parameters["id"] ?: run { respondProblem(HttpStatusCode.BadRequest); return null }
     return try {
         UUID.fromString(raw)
     } catch (e: IllegalArgumentException) {
-        respond(HttpStatusCode.BadRequest, "Invalid UUID")
+        respondProblem(HttpStatusCode.BadRequest, "Ugyldig id.")
         null
     }
 }

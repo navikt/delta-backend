@@ -1,6 +1,7 @@
 package no.nav.delta.admin
 
 import io.ktor.http.HttpStatusCode
+import no.nav.delta.application.respondProblem
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.principal
 import io.ktor.server.auth.jwt.JWTPrincipal
@@ -23,7 +24,7 @@ fun Route.adminApi(database: DatabaseInterface, env: Environment) {
             if (principal?.payload?.getClaim("idtyp")?.asString() == "app" ||
                 env.maintainersGroupId.isBlank() || env.maintainersGroupId !in groups
             ) {
-                call.respond(HttpStatusCode.Forbidden, "Delta maintainer access required")
+                call.respondProblem(HttpStatusCode.Forbidden, "Du må være Delta-administrator.")
                 return@get
             }
             call.respond(database.getAdminStatistics())

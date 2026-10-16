@@ -1,5 +1,6 @@
 package no.nav.delta.room
 
+import no.nav.delta.application.ProblemJson
 import arrow.core.left
 import arrow.core.right
 import ch.qos.logback.classic.Logger
@@ -202,7 +203,7 @@ class RoomRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadGateway, response.status)
-        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+        assertEquals(ProblemJson, response.contentType()?.withoutParameters())
         val error = readJson<Map<String, Any?>>(response.bodyAsText())
         assertEquals(502, error["status"])
         assertEquals("about:blank", error["type"])
@@ -250,7 +251,7 @@ class RoomRoutesTest {
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+        assertEquals(ProblemJson, response.contentType()?.withoutParameters())
         val message = response.bodyAsText()
         val error = readJson<Map<String, Any?>>(message)
         assertEquals("about:blank", error["type"])
@@ -304,7 +305,7 @@ class RoomRoutesTest {
             }
 
             assertEquals(HttpStatusCode.BadGateway, response.status)
-            assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+            assertEquals(ProblemJson, response.contentType()?.withoutParameters())
             val error = readJson<Map<String, Any?>>(response.bodyAsText())
             assertEquals(502, error["status"])
             assertEquals(status, error["upstreamStatus"])

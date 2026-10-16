@@ -1,5 +1,6 @@
 package no.nav.delta.faggruppe
 
+import no.nav.delta.support.assertProblem
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -91,7 +92,7 @@ class FaggruppeRoutesTest {
             }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals("starttid must be in HH:mm format", response.bodyAsText())
+        assertProblem(response, "starttid må være på formatet HH:mm.")
     }
 
     @Test

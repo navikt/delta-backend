@@ -39,15 +39,15 @@ fun CreateEvent.toRecurringSeriesDraft(
     createdByEmail: String,
 ): Either<RecurringEventValidationException, RecurringSeriesDraft> {
     val recurrence = recurrence
-        ?: return RecurringEventValidationException("Recurring events require a recurrence definition").left()
+        ?: return RecurringEventValidationException("Gjentakende arrangementer krever en gjentakelsesregel.").left()
 
     val occurrenceDurationMinutes =
         Duration.between(startTime, endTime).toMinutes().takeIf { it > 0 }
-            ?: return RecurringEventValidationException("Start time must be before end time").left()
+            ?: return RecurringEventValidationException("Starttidspunktet må være før sluttidspunktet.").left()
 
     if (recurrence.untilDate.isBefore(startTime.toLocalDate())) {
         return RecurringEventValidationException(
-            "Recurrence end date must be on or after the first occurrence"
+            "Sluttdatoen for gjentakelsen må være samme dag som eller etter første forekomst."
         ).left()
     }
 
@@ -117,7 +117,7 @@ fun generateOccurrences(
 
         if (generatedOccurrences.size > MAX_RECURRING_OCCURRENCES) {
             return RecurringEventValidationException(
-                "Recurring events are limited to $MAX_RECURRING_OCCURRENCES occurrences"
+                "Gjentakende arrangementer er begrenset til $MAX_RECURRING_OCCURRENCES forekomster."
             ).left()
         }
 
@@ -138,7 +138,7 @@ fun generateOccurrences(
     }
 
     return if (generatedOccurrences.isEmpty()) {
-        RecurringEventValidationException("Recurring event must generate at least one occurrence").left()
+        RecurringEventValidationException("Gjentakelsen må gi minst én forekomst.").left()
     } else {
         generatedOccurrences.right()
     }

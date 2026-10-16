@@ -574,13 +574,10 @@ paths:
           description: >-
             Room booking is not enabled for the caller, roomEmails is empty or has more than 20
             entries, startTime is not before endTime, the range exceeds 62 days, or
-            availabilityViewInterval is outside 5–1440 (plain text). Graph rejection of the
-            availability request is returned as structured JSON, including its error code.
+            availabilityViewInterval is outside 5–1440. Graph rejection of the
+            availability request includes its error code. Always application/problem+json.
           content:
-            text/plain:
-              schema:
-                type: string
-            application/json:
+            application/problem+json:
               schema:
                 $ref: "#/components/schemas/RoomAvailabilityError"
               example:
@@ -598,7 +595,7 @@ paths:
             the upstream HTTP status, Graph error code and request ID when available.
             Not every 502 is an outage. Raw upstream error messages are not exposed.
           content:
-            application/json:
+            application/problem+json:
               schema:
                 $ref: "#/components/schemas/RoomAvailabilityError"
   /category:
@@ -867,31 +864,63 @@ paths:
           description: "Faggruppe or owner not found"
 components:
   responses:
+    Problem:
+      description: >-
+        Any 4xx/5xx from /api/** is an RFC 7807 problem with content type
+        application/problem+json. `detail` is safe, user-facing Norwegian text; stack traces and
+        internals are never included.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetail"
     RoomTeamsBadRequest:
       description: >-
-        Plain-text reason. Room/Teams-related messages: "Room booking is not enabled",
-        "Teams meeting is not enabled", "roomEmail and roomName must be set together",
-        "Room booking and Teams meetings are not supported for recurring events",
-        "Teams meeting cannot be removed from an event; delete the event instead".
+        Problem details (RFC 7807) with a Norwegian `detail`. Room/Teams-related causes: room
+        booking or Teams meetings not enabled, roomEmail and roomName not set together, room
+        booking/Teams not supported for recurring events, Teams meeting cannot be removed from
+        an event.
       content:
-        text/plain:
+        application/problem+json:
           schema:
-            type: string
+            $ref: "#/components/schemas/ProblemDetail"
     RoomTeamsBadGateway:
       description: >-
         Creating/updating the room booking or Teams meeting in Microsoft Graph failed, or Graph
-        created no Teams join link ("Teams meeting could not be created; nothing was saved").
-        Nothing was saved; the event is unchanged. Safe to retry.
+        created no Teams join link. Nothing was saved; the event is unchanged. Safe to retry.
       content:
-        text/plain:
+        application/problem+json:
           schema:
-            type: string
+            $ref: "#/components/schemas/ProblemDetail"
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    ProblemDetail:
+      type: object
+      required: [title, status, detail]
+      properties:
+        type:
+          type: string
+          default: "about:blank"
+        title:
+          type: string
+          example: Bad Request
+        status:
+          type: integer
+          example: 400
+        detail:
+          type: string
+          description: "Safe, user-facing Norwegian text"
+          example: "Ugyldig id."
+        code:
+          type: string
+          description: "Optional stable machine-readable code"
+          example: INVALID_ID
+        requestId:
+          type: string
+          description: "Correlation id (echoes a valid X-Request-Id header, otherwise generated)"
     AdminStatistics:
       type: object
       required: [generatedAt, eventTypes]

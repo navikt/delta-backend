@@ -1,5 +1,6 @@
 package no.nav.delta.calendar
 
+import no.nav.delta.support.assertProblem
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -53,10 +54,12 @@ class SharedCalendarRoutesTest {
             val visible = readJson<FullEvent>(response.bodyAsText())
             assertTrue(visible.invited.none { it.status == ParticipantStatus.DECLINED })
             assertEquals(null, visible.calendarSyncError)
-            assertEquals(HttpStatusCode.Forbidden, client.post("/admin/event/${event.id}/invitations") {
+            val forbidden = client.post("/admin/event/${event.id}/invitations") {
                 contentType(ContentType.Application.Json)
                 setBody("""[{"email":"second@nav.no"}]""")
-            }.status)
+            }
+            assertEquals(HttpStatusCode.Forbidden, forbidden.status)
+            assertProblem(forbidden)
         }
     }
 

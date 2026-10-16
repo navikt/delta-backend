@@ -12,6 +12,9 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.microsoft.graph.models.ResponseType
 import com.microsoft.graph.models.Subscription
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.contentType
 import io.ktor.server.application.Application
 import io.ktor.server.routing.Routing
 import io.ktor.server.routing.routing
@@ -24,6 +27,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import no.nav.delta.Environment
+import no.nav.delta.application.ProblemJson
 import no.nav.delta.application.mySetup
 import no.nav.delta.application.installDeltaApiPlugins
 import no.nav.delta.email.CloudClient
@@ -314,4 +318,20 @@ private object SharedPostgresContainer {
             }
         }
     }
+}
+
+/** Asserts an RFC 7807 response and returns its parsed body. */
+suspend fun assertProblem(
+    response: HttpResponse,
+    detail: String? = null,
+    code: String? = null,
+): Map<String, Any?> {
+    org.junit.jupiter.api.Assertions.assertEquals(ProblemJson, response.contentType()?.withoutParameters())
+    val body = jacksonObjectMapper().readValue<Map<String, Any?>>(response.bodyAsText())
+    org.junit.jupiter.api.Assertions.assertEquals(response.status.value, body["status"])
+    org.junit.jupiter.api.Assertions.assertNotNull(body["title"])
+    org.junit.jupiter.api.Assertions.assertNotNull(body["detail"])
+    if (detail != null) org.junit.jupiter.api.Assertions.assertEquals(detail, body["detail"])
+    if (code != null) org.junit.jupiter.api.Assertions.assertEquals(code, body["code"])
+    return body
 }

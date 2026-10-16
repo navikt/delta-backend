@@ -1,5 +1,6 @@
 package no.nav.delta.admin
 
+import no.nav.delta.support.assertProblem
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import io.ktor.client.request.bearerAuth
@@ -125,6 +126,14 @@ class AdminStatisticsTest {
         database.addEvent(draft(localNow.plusHours(1), localNow.plusHours(2)))
         val updated = client.get("/admin/statistics") { bearerAuth(token(listOf(env.maintainersGroupId))) }
         assertEquals(1L, readJson<AdminStatistics>(updated.bodyAsText()).eventTypes.first().total)
+    }
+
+    @Test
+    fun `non maintainer gets a problem response`() = testApplication {
+        application { installTestApi(env, database, verifier) { adminApi(database, env) } }
+        val response = client.get("/admin/statistics") { bearerAuth(token(listOf("someone-else"))) }
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertProblem(response, "Du må være Delta-administrator.")
     }
 
     @Test

@@ -1,6 +1,7 @@
 package no.nav.delta.calendar
 
 import arrow.core.getOrElse
+import no.nav.delta.application.respondProblem
 import arrow.core.left
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -29,7 +30,7 @@ fun Route.sharedCalendarApi(database: DatabaseInterface) {
                     return@post it.left().unwrapAndRespond(call)
                 }
                 if (event.inviteMode != InviteMode.SHARED) {
-                    return@post call.respond(HttpStatusCode.BadRequest, "Invitations require a shared calendar")
+                    return@post call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner krever en delt kalender.")
                 }
                 val invitees = call.receive<List<InviteeRequest>>()
                 sharedMutation(call) {
@@ -42,7 +43,7 @@ fun Route.sharedCalendarApi(database: DatabaseInterface) {
                     return@delete it.left().unwrapAndRespond(call)
                 }
                 if (event.inviteMode != InviteMode.SHARED) {
-                    return@delete call.respond(HttpStatusCode.BadRequest, "Invitations require a shared calendar")
+                    return@delete call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner krever en delt kalender.")
                 }
                 val email = call.receive<EmailToken>().email
                 sharedMutation(call) {
@@ -55,7 +56,7 @@ fun Route.sharedCalendarApi(database: DatabaseInterface) {
                     return@post it.left().unwrapAndRespond(call)
                 }
                 if (event.inviteMode != InviteMode.SHARED) {
-                    return@post call.respond(HttpStatusCode.BadRequest, "Retry requires a shared calendar")
+                    return@post call.respondProblem(HttpStatusCode.BadRequest, "Nytt forsøk krever en delt kalender.")
                 }
                 sharedMutation(call) {
                     repository.retry(event.id)
@@ -70,6 +71,6 @@ internal suspend fun sharedMutation(call: ApplicationCall, action: suspend () ->
     try {
         action()
     } catch (error: SharedCalendarValidationException) {
-        call.respond(HttpStatusCode.fromValue(error.statusCode), error.message ?: "Invalid calendar change")
+        call.respondProblem(HttpStatusCode.fromValue(error.statusCode), error.message ?: "Ugyldig endring i kalenderen.")
     }
 }
