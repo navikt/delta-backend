@@ -3,6 +3,8 @@ package no.nav.delta.directory
 import io.ktor.http.HttpStatusCode
 import no.nav.delta.application.respondProblem
 import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.jwt.JWTPrincipal
+import io.ktor.server.auth.principal
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -17,6 +19,9 @@ private val logger = LoggerFactory.getLogger("no.nav.delta.directory")
 fun Route.directoryApi(cloudClient: CloudClient, env: Environment) {
     authenticate("jwt") {
         get("/directory/search") {
+            if (call.principal<JWTPrincipal>()?.payload?.getClaim("idtyp")?.asString() == "app") {
+                return@get call.respondProblem(HttpStatusCode.Forbidden, "Personsøk er kun tilgjengelig for brukere.")
+            }
             if (!env.isSharedCalendarEnabledFor(call.principalGroups())) {
                 return@get call.respondProblem(HttpStatusCode.BadRequest, "Personsøk er ikke slått på.")
             }
