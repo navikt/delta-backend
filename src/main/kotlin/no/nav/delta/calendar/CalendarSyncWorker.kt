@@ -221,7 +221,8 @@ class CalendarSyncWorker(
             original.title != event.title || original.description != event.description ||
                 original.startTime != event.startTime || original.endTime != event.endTime ||
                 original.location != event.location || original.roomEmail != event.roomEmail ||
-                original.isOnlineMeeting != event.isOnlineMeeting
+                original.isOnlineMeeting != event.isOnlineMeeting ||
+                (original.participantLimit > 0) != (event.participantLimit > 0)
         } == true
         if (work.details && (!createsCalendar || creationDetailsChanged)) {
             repository.recordEstimatedRecipients(work, target.size)

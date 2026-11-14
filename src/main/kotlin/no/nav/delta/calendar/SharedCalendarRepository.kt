@@ -155,7 +155,8 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val detailsChanged = original.title != event.title || original.description != event.description ||
                 original.startTime != event.startTime || original.endTime != event.endTime ||
                 original.location != event.location || original.roomEmail != event.roomEmail ||
-                original.roomName != event.roomName || original.isOnlineMeeting != event.isOnlineMeeting
+                original.roomName != event.roomName || original.isOnlineMeeting != event.isOnlineMeeting ||
+                (original.participantLimit > 0) != (event.participantLimit > 0)
             if (detailsChanged) enqueue(c, id, details = true)
             if (detailsChanged) allocatedEvent.copy(calendarSyncStatus = CalendarSyncStatus.PENDING) else allocatedEvent
         }
