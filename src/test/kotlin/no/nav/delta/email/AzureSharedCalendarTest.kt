@@ -64,6 +64,13 @@ class AzureSharedCalendarTest {
         return AzureCloudClient("delta@nav.no", GraphServiceClient(http))
     }
 
+    private fun assertForwardingPolicy(payload: JsonNode, limited: Boolean) {
+        assertEquals(
+            mapper.readTree("""[{"id":"Boolean {00020329-0000-0000-C000-000000000046} Name DoNotForward","value":"$limited"}]"""),
+            payload["singleValueExtendedProperties"],
+        )
+    }
+
     @Test
     fun `shared creation uses separate supported mail and proxy equality queries`() {
         val client = client(
@@ -171,6 +178,62 @@ class AzureSharedCalendarTest {
         assertEquals(400, error.httpStatus)
         assertEquals("TooManyAttendees", error.code)
         assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun `shared creation disables forwarding only for seat-limited events`() {
+        val client = client(
+            201 to """{"id":"shared","onlineMeeting":{"joinUrl":"https://teams.microsoft.com/native"}}""",
+            201 to """{"id":"shared","onlineMeeting":{"joinUrl":"https://teams.microsoft.com/native"}}""",
+            201 to """{"id":"shared","onlineMeeting":{"joinUrl":"https://teams.microsoft.com/native"}}""",
+            individualLookups = true,
+        )
+        val limited = sharedTestEvent()
+        listOf(limited, limited.copy(waitlistEnabled = true), limited.copy(participantLimit = 0)).forEach { event ->
+            assertTrue(client.createSharedEvent(event, listOf(Participant("host@nav.no", "Host")), "tx").isRight())
+            assertForwardingPolicy(payloads.last(), event.participantLimit > 0)
+        }
+    }
+
+    @Test
+    fun `legacy participant and master calendars apply forwarding policy on creation and updates`() {
+        listOf(10, 0).forEach { limit ->
+            payloads.clear()
+            val master = """{"id":"master","onlineMeeting":{"joinUrl":"https://teams.microsoft.com/native"}}"""
+            val client = client(
+                201 to """{"id":"legacy"}""",
+                200 to """{"id":"legacy"}""",
+                201 to """{"id":"promoted"}""",
+                201 to master,
+                200 to master,
+                200 to master,
+            )
+            val event = sharedTestEvent().copy(participantLimit = limit)
+            val participant = Participant("person@nav.no", "Person")
+            assertTrue(client.createEvent(event, participant).isRight())
+            assertTrue(client.updateEvent("legacy", event, participant).isRight())
+            assertTrue(client.createWaitlistEvent(event, participant, "promotion-tx").isRight())
+            assertEquals("promotion-tx", payloads.last()["transactionId"].asText())
+            assertTrue(client.createMasterEvent(event).isRight())
+            assertTrue(client.updateMasterEvent("master", event).isRight())
+            payloads.forEach { payload -> assertForwardingPolicy(payload, limit > 0) }
+        }
+    }
+
+    @Test
+    fun `shared detail updates switch forwarding policy without changing attendees`() {
+        listOf(10, 0).forEach { limit ->
+            payloads.clear()
+            val client = client(
+                200 to """{"id":"shared"}""",
+                200 to """{"id":"shared"}""",
+                200 to """{"id":"shared"}""",
+            )
+            assertTrue(client.updateSharedDetails("shared", sharedTestEvent().copy(participantLimit = limit)).isRight())
+            val payload = payloads.single()
+            assertFalse(payload.has("attendees"))
+            assertForwardingPolicy(payload, limit > 0)
+        }
     }
 
     @Test

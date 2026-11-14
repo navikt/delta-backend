@@ -325,6 +325,7 @@ class AzureCloudClient internal constructor(
                 end = event.endTime.toDateTimeTimeZone()
                 location = Location().apply { displayName = event.location }
                 attendees = listOf(emailAsAttendee(participant.email))
+                singleValueExtendedProperties = forwardingPolicy(event)
             }
 
         return calendarEvent.right()
@@ -994,6 +995,7 @@ class AzureCloudClient internal constructor(
             start = event.startTime.toDateTimeTimeZone()
             end = event.endTime.toDateTimeTimeZone()
             location = Location().apply { displayName = event.roomName ?: event.location }
+            singleValueExtendedProperties = forwardingPolicy(event)
             body = ItemBody().apply {
                 contentType = BodyType.Html
                 content = updateSharedBody(
@@ -1344,6 +1346,7 @@ internal fun prepareMasterCalendarEvent(event: Event): com.microsoft.graph.model
         subject = event.title
         start = event.startTime.toDateTimeTimeZone()
         end = event.endTime.toDateTimeTimeZone()
+        singleValueExtendedProperties = forwardingPolicy(event)
 
         if (event.roomEmail != null) {
             location = Location().apply { displayName = event.roomName ?: event.roomEmail }
@@ -1361,6 +1364,20 @@ internal fun prepareMasterCalendarEvent(event: Event): com.microsoft.graph.model
         }
     }
 }
+
+/**
+ * Graph's Event model has no dedicated forwarding flag; use SingleValueLegacyExtendedProperty.
+ * MS-OXOCAL 2.2.1.51 defines the forwarding behavior of PidNameMeetingDoNotForward:
+ * https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxocal/6c39ed14-d5b0-4d0d-add2-e71f22e39745
+ * MS-OXPROPS defines its property set, name and Boolean type:
+ * https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxprops/2f619231-a63b-4f11-8af6-062c212fea55
+ */
+private fun forwardingPolicy(event: Event) = listOf(
+    SingleValueLegacyExtendedProperty().apply {
+        id = "Boolean {00020329-0000-0000-C000-000000000046} Name DoNotForward"
+        value = (event.participantLimit > 0).toString()
+    }
+)
 
 private fun String.escapeHtml(): String =
     replace("&", "&amp;")

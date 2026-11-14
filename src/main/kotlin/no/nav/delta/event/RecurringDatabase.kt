@@ -991,4 +991,5 @@ private fun sharedCalendarDetailsChanged(before: Event, after: Event): Boolean =
         before.location != after.location ||
         before.roomEmail != after.roomEmail ||
         before.roomName != after.roomName ||
-        before.isOnlineMeeting != after.isOnlineMeeting
+        before.isOnlineMeeting != after.isOnlineMeeting ||
+        (before.participantLimit > 0) != (after.participantLimit > 0)

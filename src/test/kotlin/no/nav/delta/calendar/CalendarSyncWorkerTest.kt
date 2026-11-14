@@ -18,8 +18,12 @@ import no.nav.delta.event.CreateEvent
 import no.nav.delta.event.CalendarSyncStatus
 import no.nav.delta.event.InviteeRequest
 import no.nav.delta.event.Participant
+import no.nav.delta.event.RecurrenceFrequency
+import no.nav.delta.event.RecurrenceRequest
+import no.nav.delta.event.createRecurringEventSeries
 import no.nav.delta.event.getFullEvent
 import no.nav.delta.event.getMasterCalendarEventId
+import no.nav.delta.event.updateRecurringSeriesFromOccurrence
 import no.nav.delta.support.TestDatabase
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -254,6 +258,43 @@ class CalendarSyncWorkerTest {
             repository.update(event.id, draft.copy(participantLimit = 10, public = false, invitees = null), "host@nav.no")
             assertEquals(false, worker.runOnce())
             assertEquals(0, writes)
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [false, true])
+    fun `changing seat-limited status synchronizes existing calendars`(recurring: Boolean) {
+        TestDatabase.create().use { db ->
+            val repository = SharedCalendarRepository(db.database)
+            val dummy = DummyCloudClient()
+            val deliveredLimits = mutableListOf<Int>()
+            val cloud = object : CloudClient by dummy {
+                override fun updateSharedDetails(calendarEventId: String, event: no.nav.delta.event.Event) =
+                    dummy.updateSharedDetails(calendarEventId, event).also { deliveredLimits.add(event.participantLimit) }
+            }
+            val base = futureEvent().copy(invitees = null)
+            val draft = if (recurring) base.copy(recurrence = RecurrenceRequest(
+                RecurrenceFrequency.WEEKLY, base.startTime.toLocalDate().plusWeeks(2),
+            )) else base
+            val events = if (recurring) {
+                db.database.createRecurringEventSeries(
+                    draft, "host@nav.no", "Host", no.nav.delta.event.InviteMode.SHARED,
+                ).getOrNull()!!.affectedEvents
+            } else listOf(repository.create(draft, Participant("host@nav.no", "Host")))
+            val worker = CalendarSyncWorker(repository, cloud)
+            events.forEach { assertTrue(worker.runOnce()) }
+
+            listOf(0, base.participantLimit).forEach { limit ->
+                val edited = draft.copy(participantLimit = limit)
+                if (recurring) {
+                    assertTrue(db.database.updateRecurringSeriesFromOccurrence(
+                        events.first().id.toString(), edited, "host@nav.no",
+                    ).isRight())
+                } else repository.update(events.single().id, edited, "host@nav.no")
+                events.forEach { assertTrue(worker.runOnce()) }
+                assertEquals(List(events.size) { limit }, deliveredLimits)
+                deliveredLimits.clear()
+            }
         }
     }
 
