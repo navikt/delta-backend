@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.slf4j.LoggerFactory
 
@@ -298,14 +299,17 @@ class CalendarSyncWorkerTest {
         }
     }
 
-    @Test
-    fun `lost creation response retains original payload then applies newer edits`() {
+    @ParameterizedTest(name = "capacity {0} -> {1}, title edit={2}")
+    @CsvSource("5, 5, true", "0, 5, false", "5, 0, false")
+    fun `lost creation response retains original payload then applies newer edits`(
+        initialLimit: Int, updatedLimit: Int, rename: Boolean,
+    ) {
         TestDatabase.create().use { db ->
             val repository = SharedCalendarRepository(db.database)
             val dummy = DummyCloudClient()
             val transactionIds = mutableListOf<String>()
-            val createdTitles = mutableListOf<String>()
-            val updatedTitles = mutableListOf<String>()
+            val createdDetails = mutableListOf<Pair<String, Int>>()
+            val updatedDetails = mutableListOf<Pair<String, Int>>()
             var first = true
             val cloud = object : CloudClient by dummy {
                 override fun createSharedEvent(
@@ -314,7 +318,7 @@ class CalendarSyncWorkerTest {
                     transactionId: String,
                 ): arrow.core.Either<Throwable, no.nav.delta.room.MasterEventResult> {
                     transactionIds.add(transactionId)
-                    createdTitles.add(event.title)
+                    createdDetails.add(event.title to event.participantLimit)
                     val created = dummy.createSharedEvent(event, attendees, transactionId)
                     if (first) {
                         first = false
@@ -323,18 +327,25 @@ class CalendarSyncWorkerTest {
                     return created
                 }
                 override fun updateSharedDetails(calendarEventId: String, event: no.nav.delta.event.Event) =
-                    dummy.updateSharedDetails(calendarEventId, event).also { updatedTitles.add(event.title) }
+                    dummy.updateSharedDetails(calendarEventId, event).also {
+                        updatedDetails.add(event.title to event.participantLimit)
+                    }
             }
-            val draft = futureEvent()
+            val draft = futureEvent().copy(participantLimit = initialLimit)
+            val edited = draft.copy(
+                title = if (rename) "New title" else draft.title,
+                participantLimit = updatedLimit,
+                invitees = null,
+            )
             val event = repository.create(draft, Participant("host@nav.no", "Host"))
             val worker = CalendarSyncWorker(repository, cloud)
-            worker.runOnce()
-            repository.update(event.id, draft.copy(title = "New title", invitees = null), "host@nav.no")
-            worker.runOnce()
+            assertTrue(worker.runOnce())
+            repository.update(event.id, edited, "host@nav.no")
+            assertTrue(worker.runOnce())
             assertEquals(2, transactionIds.size)
             assertEquals(transactionIds[0], transactionIds[1])
-            assertEquals(listOf(draft.title, draft.title), createdTitles)
-            assertEquals(listOf("New title"), updatedTitles)
+            assertEquals(List(2) { draft.title to draft.participantLimit }, createdDetails)
+            assertEquals(listOf(edited.title to edited.participantLimit), updatedDetails)
             assertEquals("SYNCED", db.database.getFullEvent(event.id.toString()).getOrNull()!!.event.calendarSyncStatus?.name)
         }
     }
