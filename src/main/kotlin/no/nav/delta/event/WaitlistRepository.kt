@@ -40,7 +40,7 @@ class WaitlistRepository(private val db: DatabaseInterface) {
         if (current.registered || current.position != null) return@repeatableReadTransaction current
         if (hasSeatReservation(c, event, email))
             throw SharedCalendarValidationException(409, "Du har en reservert plass. Meld deg på arrangementet.")
-        if (allocatedSeats(c, event) < event.participantLimit)
+        if (current.count == 0 && allocatedSeats(c, event) < event.participantLimit)
             throw SharedCalendarValidationException(409, "Det er en ledig plass. Meld deg på arrangementet.")
         c.exec("""
             INSERT INTO event_waitlist(event_id,email,name) VALUES (?,?,?)
@@ -122,7 +122,8 @@ internal fun DatabaseInterface.legacyCalendarNotificationRecipients(
 ): List<Pair<Participant, String?>> = connection.use { c ->
     val current = c.prepareStatement("""
         SELECT p.email,p.calendar_event_id,p.waitlist_calendar_event_id IS NOT NULL AS managed,
-            EXISTS(SELECT 1 FROM waitlist_notification n WHERE n.id=p.waitlist_notification_id) AS pending
+            EXISTS(SELECT 1 FROM waitlist_notification n
+                WHERE n.id=p.waitlist_notification_id AND n.calendar_event_id IS NULL) AS pending
         FROM participant p WHERE p.event_id=?
     """.trimIndent()).use { s ->
         s.setObject(1, eventId)

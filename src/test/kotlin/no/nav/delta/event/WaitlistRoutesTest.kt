@@ -40,26 +40,26 @@ class WaitlistRoutesTest {
             assertEquals(HttpStatusCode.BadRequest, missing.status)
             assertProblem(missing, code = "INVALID_ID")
         }
+    }
 
-        @Test
-        fun `waitlist endpoints deny machine tokens regardless of read role`() = testApplication {
-            TestDatabase.create().use { fixture ->
-                val algorithm = Algorithm.HMAC256("waitlist-route-test-secret-long-enough")
-                val verifier = JWT.require(algorithm).build()
-                application {
-                    installTestApi(localTestEnvironment(), fixture.database, verifier) { waitlistApi(fixture.database) }
-                }
-                val id = java.util.UUID.randomUUID()
-                for (roles in listOf(emptyList(), listOf("delta.read"))) {
-                    val token = JWT.create().withClaim("idtyp", "app")
-                        .withArrayClaim("roles", roles.toTypedArray()).sign(algorithm)
-                    assertEquals(HttpStatusCode.Forbidden, client.get("/user/waitlist") { bearerAuth(token) }.status)
-                    assertEquals(HttpStatusCode.Forbidden, client.get("/user/event/$id/waitlist") { bearerAuth(token) }.status)
-                    assertEquals(HttpStatusCode.Forbidden, client.post("/user/event/$id/waitlist") { bearerAuth(token) }.status)
-                    assertEquals(HttpStatusCode.Forbidden, client.delete("/user/event/$id/waitlist") { bearerAuth(token) }.status)
-                    assertEquals(HttpStatusCode.Forbidden, client.get("/admin/event/$id/waitlist") { bearerAuth(token) }.status)
-                    assertEquals(HttpStatusCode.Forbidden, client.delete("/admin/event/$id/waitlist") { bearerAuth(token) }.status)
-                }
+    @Test
+    fun `waitlist endpoints deny machine tokens regardless of read role`() = testApplication {
+        TestDatabase.create().use { fixture ->
+            val algorithm = Algorithm.HMAC256("waitlist-route-test-secret-long-enough")
+            val verifier = JWT.require(algorithm).build()
+            application {
+                installTestApi(localTestEnvironment(), fixture.database, verifier) { waitlistApi(fixture.database) }
+            }
+            val id = java.util.UUID.randomUUID()
+            for (roles in listOf(emptyList(), listOf("delta.read"))) {
+                val token = JWT.create().withClaim("idtyp", "app")
+                    .withArrayClaim("roles", roles.toTypedArray()).sign(algorithm)
+                assertEquals(HttpStatusCode.Forbidden, client.get("/user/waitlist") { bearerAuth(token) }.status)
+                assertEquals(HttpStatusCode.Forbidden, client.get("/user/event/$id/waitlist") { bearerAuth(token) }.status)
+                assertEquals(HttpStatusCode.Forbidden, client.post("/user/event/$id/waitlist") { bearerAuth(token) }.status)
+                assertEquals(HttpStatusCode.Forbidden, client.delete("/user/event/$id/waitlist") { bearerAuth(token) }.status)
+                assertEquals(HttpStatusCode.Forbidden, client.get("/admin/event/$id/waitlist") { bearerAuth(token) }.status)
+                assertEquals(HttpStatusCode.Forbidden, client.delete("/admin/event/$id/waitlist") { bearerAuth(token) }.status)
             }
         }
     }

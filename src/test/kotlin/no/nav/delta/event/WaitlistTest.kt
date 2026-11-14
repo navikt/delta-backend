@@ -53,6 +53,17 @@ class WaitlistTest {
     }
 
     @Test
+    fun `free seats without an existing queue remain available for direct registration`() {
+        val event = calendar.create(draft(), "host@nav.no", "Host").getOrNull()!!
+
+        assertThrows(SharedCalendarValidationException::class.java) {
+            waitlist.join(event.id, Participant("newcomer@nav.no", "Newcomer"))
+        }
+        assertEquals(0, waitlist.state(event.id, "newcomer@nav.no").count)
+        assertTrue(calendar.signup(event.id, "newcomer@nav.no", "Newcomer").isRight())
+    }
+
+    @Test
     fun `joining a full event queues the caller without creating attendance or calendar work`() {
         val event = calendar.create(draft(), "host@nav.no", "Host").getOrNull()!!
         calendar.signup(event.id, "attendee@nav.no", "Attendee")
@@ -195,7 +206,7 @@ class WaitlistTest {
     }
 
     @Test
-    fun `reserved invitees can accept while the queue waits for a calendar slot`() {
+    fun `reserved invitees can accept and newcomers can queue while promotion waits for a calendar slot`() {
         val event = calendar.create(draft().copy(invitees = listOf(InviteeRequest("invitee@nav.no"))),
             "host@nav.no", "Host").getOrNull()!!
         waitlist.join(event.id, Participant("waiting@nav.no", "Waiting"))
@@ -209,9 +220,20 @@ class WaitlistTest {
         }
         calendar.update(event.id, draft(3), "host@nav.no")
 
+        assertThrows(SharedCalendarValidationException::class.java) {
+            waitlist.join(event.id, Participant("invitee@nav.no", "Invitee"))
+        }
         assertTrue(calendar.signup(event.id, "invitee@nav.no", "Invitee").isRight())
         assertTrue(waitlist.state(event.id, "invitee@nav.no").registered)
         assertEquals(1, waitlist.state(event.id, "waiting@nav.no").position)
+        val joined = waitlist.join(event.id, Participant("newcomer@nav.no", "Newcomer"))
+        assertEquals(2, joined.position)
+        assertFalse(joined.registered)
+        assertEquals(EventFullException, calendar.signup(event.id, "newcomer@nav.no", "Newcomer").leftOrNull())
+
+        calendar.complete(calendar.claimNext()!!)
+        assertTrue(waitlist.state(event.id, "waiting@nav.no").registered)
+        assertEquals(1, waitlist.state(event.id, "newcomer@nav.no").position)
     }
 
     @Test
@@ -321,6 +343,66 @@ class WaitlistTest {
         assertTrue(worker.runOnce())
         assertEquals(1, cloud.createdCalendarEventIds.size)
         assertEquals(1, cloud.sentEmails.size)
+        assertFalse(worker.runOnce())
+    }
+
+    @Test
+    fun `calendar updates remain independent of pending or exhausted promotion mail`() {
+        val event = promotedLegacy("waiting@nav.no")
+        val db = fixture.database
+        val cloud = RecordingCloudClient()
+        val updatedTitles = mutableListOf<String>()
+        var failMail = true
+        val adapter = object : CloudClient by cloud {
+            override fun sendEmail(subject: String, body: String, toRecipients: List<String>,
+                ccRecipients: List<String>, bccRecipients: List<String>) {
+                if (failMail) throw java.io.IOException("Synthetic mail outage")
+                cloud.sendEmail(subject, body, toRecipients, ccRecipients, bccRecipients)
+            }
+            override fun updateEvent(calendarEventId: String, event: Event, participant: Participant): arrow.core.Either<Throwable, Unit> {
+                updatedTitles += event.title
+                return cloud.updateEvent(calendarEventId, event, participant)
+            }
+        }
+        val worker = WaitlistNotificationWorker(db, adapter)
+        assertTrue(worker.runOnce())
+        val calendarId = cloud.createdCalendarEventIds.single()
+        val person = Participant("waiting@nav.no", "Waiting")
+
+        for (deliveryState in listOf("PENDING", "FAILED")) {
+            if (deliveryState == "FAILED") {
+                db.connection.use { c ->
+                    c.createStatement().use { it.executeUpdate("UPDATE waitlist_notification SET attempts=9,next_attempt=NOW()") }
+                    c.commit()
+                }
+                assertTrue(worker.runOnce())
+                assertTrue(worker.metrics().contains("delta_waitlist_notifications_failed 1"))
+                assertFalse(worker.runOnce())
+            }
+            val edited = db.updateEvent(event.copy(title = "Edited while mail is $deliveryState")).getOrNull()!!
+            val before = cloud.updatedCalendarEventIds.size
+
+            cloud.batchSendUpdateOrCreationNotification(edited, db, listOf(person to null))
+            adapter.sendUpdateOrCreationNotification(edited, db, person, null)
+
+            assertEquals(before + 2, cloud.updatedCalendarEventIds.size)
+            assertEquals(listOf(calendarId, calendarId), cloud.updatedCalendarEventIds.takeLast(2))
+            assertEquals(edited.title, updatedTitles.last())
+            assertEquals(listOf(calendarId), cloud.createdCalendarEventIds)
+            assertTrue(cloud.sentEmails.isEmpty())
+        }
+
+        failMail = false
+        db.connection.use { c ->
+            c.createStatement().use {
+                it.executeUpdate("UPDATE waitlist_notification SET state='PENDING',attempts=0,next_attempt=NOW()")
+            }
+            c.commit()
+        }
+        assertTrue(worker.runOnce())
+        assertEquals("Edited while mail is FAILED", updatedTitles.last())
+        assertTrue(cloud.sentEmails.single().subject.contains("Edited while mail is FAILED"))
+        assertEquals(listOf(calendarId), cloud.createdCalendarEventIds)
         assertFalse(worker.runOnce())
     }
 
