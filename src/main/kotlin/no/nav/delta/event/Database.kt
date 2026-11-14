@@ -633,8 +633,6 @@ WHERE  event_id = Uuid(?)
             preparedStatement.setString(2, email)
 
             val rowsAffected = preparedStatement.executeUpdate()
-            connection.exec("DELETE FROM waitlist_notification WHERE event_id=? AND lower(email)=?",
-                event.id, email.trim().lowercase())
             promoteWaitlist(connection, event)
             if (rowsAffected == 0) EmailNotFoundException.left() else Unit.right()
         }

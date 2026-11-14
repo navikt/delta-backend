@@ -1,6 +1,9 @@
 package no.nav.delta.event
 
 import com.microsoft.kiota.ApiException
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +23,7 @@ import java.util.UUID
 
 class WaitlistNotificationWorker(private val db: DatabaseInterface, private val cloud: CloudClient) {
     private val logger = LoggerFactory.getLogger(WaitlistNotificationWorker::class.java)
+    private val mapper = jacksonObjectMapper().registerModule(JavaTimeModule())
 
     fun initialize(scope: CoroutineScope) {
         scope.launch(Dispatchers.IO) {
@@ -38,56 +42,132 @@ class WaitlistNotificationWorker(private val db: DatabaseInterface, private val 
 
     fun runOnce(): Boolean {
         if (cancelOnce()) return true
-        val candidate = db.connection.use { c ->
-            c.prepareStatement("""
+        return db.connection.use { c ->
+            c.autoCommit = true
+            val candidates = c.prepareStatement("""
                 SELECT id,event_id FROM waitlist_notification
-                WHERE state='PENDING' AND next_attempt<=NOW() ORDER BY next_attempt,id LIMIT 1
-            """.trimIndent()).use { s -> s.executeQuery().use {
-                if (it.next()) it.getObject(1, UUID::class.java) to it.getObject(2, UUID::class.java) else null
-            } }
-        } ?: return false
-        val (id, eventId) = candidate
-        // Event-before-job lock order also fences signoff while a legacy invite is being sent.
-        // Graph creation uses a stable transactionId; mail runs separately without the event lock.
-        val ready = db.repeatableReadTransaction { c ->
-            val event = try { lockAllocationEvent(c, eventId) } catch (_: EventNotFoundException) {
-                return@repeatableReadTransaction false
+                WHERE state='PENDING' AND next_attempt<=NOW() ORDER BY next_attempt,id LIMIT 100
+            """.trimIndent()).use { s ->
+                s.executeQuery().use { it.toList { getObject(1, UUID::class.java) to getObject(2, UUID::class.java) } }
             }
-            val person = c.prepareStatement("""
-                SELECT email,name,calendar_event_id FROM waitlist_notification
+            for ((id, eventId) in candidates) {
+                val locked = c.prepareStatement("SELECT pg_try_advisory_lock(hashtextextended(?::text, 7823492))").use { s ->
+                    s.setObject(1, id); s.executeQuery().use { it.next(); it.getBoolean(1) }
+                }
+                if (!locked) continue
+                try {
+                    if (process(id, eventId)) return@use true
+                } finally {
+                    c.prepareStatement("SELECT pg_advisory_unlock(hashtextextended(?::text, 7823492))").use { s ->
+                        s.setObject(1, id); s.executeQuery().close()
+                    }
+                }
+            }
+            false
+        }
+    }
+
+    private fun process(id: UUID, eventId: UUID): Boolean {
+        // Persist the immutable POST before Graph, then acknowledge by promotion generation.
+        val work = db.repeatableReadTransaction { c ->
+            val event = lockEvent(c, eventId)
+            c.prepareStatement("""
+                SELECT email,name,calendar_event_id,creation_snapshot,cancel FROM waitlist_notification
                 WHERE id=? AND state='PENDING' AND next_attempt<=NOW() FOR UPDATE SKIP LOCKED
             """.trimIndent()).use { s ->
                 s.setObject(1, id)
                 s.executeQuery().use { r ->
-                    if (r.next()) Triple(r.getString(1), r.getString(2), r.getString(3)) else null
+                    if (!r.next()) return@repeatableReadTransaction null
+                    val cancel = r.getBoolean("cancel") || event == null
+                    val snapshot = r.getString("creation_snapshot")
+                        ?: event?.takeIf { !cancel && it.inviteMode == InviteMode.PER_PARTICIPANT }?.let {
+                            mapper.writeValueAsString(it).also { json ->
+                                c.exec("UPDATE waitlist_notification SET creation_snapshot=? WHERE id=?", json, id)
+                            }
+                        }
+                    PromotionDelivery(id, eventId, Participant(r.getString("email"), r.getString("name")),
+                        event, snapshot, r.getString("calendar_event_id"), cancel)
                 }
-            } ?: return@repeatableReadTransaction false
-            try {
-                if (event.inviteMode == InviteMode.PER_PARTICIPANT && person.third == null) {
-                    val calendarId = cloud.createWaitlistEvent(event, Participant(person.first, person.second), id.toString())
-                        .fold({ throw WaitlistDeliveryException(it) }, { it })
-                    c.exec("UPDATE participant SET calendar_event_id=?,waitlist_calendar_event_id=? WHERE event_id=? AND email=?",
-                        calendarId, calendarId, eventId, person.first)
-                    c.exec("UPDATE waitlist_notification SET calendar_event_id=? WHERE id=?", calendarId, id)
-                }
-                true
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: SQLException) {
-                throw error
-            } catch (error: Exception) {
-                recordFailure(c, id, error)
-                false
             }
+        } ?: return false
+        try {
+            val event = work.snapshot?.let { mapper.readValue<Event>(it) } ?: work.event
+            var calendarId = work.calendarId
+            if (calendarId == null && event?.inviteMode == InviteMode.PER_PARTICIPANT &&
+                (!work.cancel || work.snapshot != null)) {
+                calendarId = cloud.createWaitlistEvent(event, work.person, id.toString())
+                    .fold({ throw WaitlistDeliveryException(it) }, { it })
+            }
+            val current = acknowledge(work, calendarId)
+            if (current != null) {
+                if (calendarId != null && current != event) {
+                    cloud.updateEvent(calendarId, current, work.person).fold({ throw WaitlistDeliveryException(it) }, {})
+                }
+                deliverMail(id)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: SQLException) {
+            throw error
+        } catch (error: Exception) {
+            db.repeatableReadTransaction { c -> recordFailure(c, id, error) }
         }
-        if (ready) deliverMail(id)
         return true
+    }
+
+    private fun lockEvent(c: Connection, id: UUID): Event? {
+        val event = c.prepareStatement("SELECT * FROM event WHERE id=? FOR UPDATE").use { s ->
+            s.setObject(1, id); s.executeQuery().use { if (it.next()) it.toEvent() else null }
+        }
+        if (event != null) c.exec("UPDATE event SET title=title WHERE id=?", id)
+        return event
+    }
+
+    private fun acknowledge(work: PromotionDelivery, calendarId: String?): Event? = db.repeatableReadTransaction { c ->
+        val event = lockEvent(c, work.eventId)
+        val cancel = c.prepareStatement("SELECT cancel FROM waitlist_notification WHERE id=? FOR UPDATE").use { s ->
+            s.setObject(1, work.id); s.executeQuery().use { if (it.next()) it.getBoolean(1) else null }
+        }
+        if (cancel == null) {
+            val stillUsed = calendarId != null && c.prepareStatement("""
+                SELECT 1 FROM participant WHERE event_id=? AND email=? AND waitlist_calendar_event_id=?
+            """.trimIndent()).use { s ->
+                s.setObject(1, work.eventId); s.setString(2, work.person.email); s.setString(3, calendarId)
+                s.executeQuery().use { it.next() }
+            }
+            if (calendarId != null && !stillUsed) enqueueCancellation(c, calendarId)
+            return@repeatableReadTransaction null
+        }
+        val active = c.prepareStatement("""
+            SELECT 1 FROM participant WHERE event_id=? AND email=? AND waitlist_notification_id=?
+            AND (type='HOST' OR status='REGISTERED')
+        """.trimIndent()).use { s ->
+            s.setObject(1, work.eventId); s.setString(2, work.person.email); s.setObject(3, work.id)
+            s.executeQuery().use { it.next() }
+        }
+        if (cancel || event == null || !active) {
+            if (calendarId != null) enqueueCancellation(c, calendarId)
+            c.exec("DELETE FROM waitlist_notification WHERE id=?", work.id)
+            return@repeatableReadTransaction null
+        }
+        if (calendarId != null) {
+            c.exec("""
+                UPDATE participant SET calendar_event_id=?,waitlist_calendar_event_id=?
+                WHERE event_id=? AND email=? AND waitlist_notification_id=?
+            """.trimIndent(), calendarId, calendarId, work.eventId, work.person.email, work.id)
+            c.exec("UPDATE waitlist_notification SET calendar_event_id=? WHERE id=?", calendarId, work.id)
+        }
+        event
+    }
+
+    private fun enqueueCancellation(c: Connection, calendarId: String) {
+        c.exec("INSERT INTO waitlist_calendar_cancellation(calendar_event_id) VALUES (?) ON CONFLICT DO NOTHING", calendarId)
     }
 
     private fun deliverMail(id: UUID) = db.repeatableReadTransaction { c ->
         val notice = c.prepareStatement("""
             SELECT n.email,e.title,e.id FROM waitlist_notification n JOIN event e ON e.id=n.event_id
-            WHERE n.id=? AND n.state='PENDING' AND n.next_attempt<=NOW()
+            WHERE n.id=? AND n.state='PENDING' AND n.next_attempt<=NOW() AND NOT n.cancel
             FOR UPDATE OF n SKIP LOCKED
         """.trimIndent()).use { s ->
             s.setObject(1, id)
@@ -160,3 +240,13 @@ class WaitlistNotificationWorker(private val db: DatabaseInterface, private val 
 }
 
 private class WaitlistDeliveryException(cause: Throwable) : RuntimeException(cause)
+
+private data class PromotionDelivery(
+    val id: UUID,
+    val eventId: UUID,
+    val person: Participant,
+    val event: Event?,
+    val snapshot: String?,
+    val calendarId: String?,
+    val cancel: Boolean,
+)

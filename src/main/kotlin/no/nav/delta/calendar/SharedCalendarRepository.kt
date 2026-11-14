@@ -388,7 +388,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 if (status == ParticipantStatus.REGISTERED)
                     c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, email)
                 if (status == ParticipantStatus.DECLINED)
-                    c.exec("DELETE FROM waitlist_notification WHERE event_id=? AND email=?", id, email)
+                    cancelWaitlistNotification(c, id, email)
                 promoteWaitlist(c, event)
             }
         }
@@ -434,7 +434,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             if (event.waitlistEnabled && !waitlistOpen(event)) throw DeadlinePassedException
             if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) throw DeadlinePassedException
             requireCapacity(c, event, if (existing?.status == ParticipantStatus.INVITED) 0 else 1)
-            requireAttendeeRoom(c, event, if (existing == null) 1 else 0)
+            requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, id, address))
             putPerson(c, id, address, name, ParticipantType.PARTICIPANT, ParticipantStatus.REGISTERED)
             c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, address)
             c.exec("UPDATE participant SET last_response_time=NOW() WHERE event_id=? AND email=?", id, address)
@@ -450,7 +450,6 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val existing = person(c, id, address) ?: throw EmailNotFoundException
             guardLastHost(c, id, existing)
             c.exec("DELETE FROM participant WHERE event_id=? AND email=?", id, address)
-            c.exec("DELETE FROM waitlist_notification WHERE event_id=? AND email=?", id, address)
             revoke(c, id, address)
         }
 
@@ -460,7 +459,6 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val existing = person(c, id, address) ?: throw EmailNotFoundException
             guardLastHost(c, id, existing)
             c.exec("DELETE FROM participant WHERE event_id=? AND email=?", id, address)
-            c.exec("DELETE FROM waitlist_notification WHERE event_id=? AND email=?", id, address)
             revoke(c, id, address)
         }
 
@@ -473,6 +471,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 if (change.type == ParticipantType.HOST && existing.status != ParticipantStatus.REGISTERED &&
                     !(existing.status == ParticipantStatus.INVITED && event.signupDeadline?.let { it <= LocalDateTime.now() } != true))
                     requireCapacity(c, event)
+                requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, id, email))
                 putPerson(c, id, email, existing.name, change.type, ParticipantStatus.REGISTERED)
                 c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, email)
                 prepareReadd(c, id, email)
@@ -562,6 +561,10 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 (SELECT revision=applied_revision FROM shared_calendar_outbox WHERE event_id=?) THEN 'SYNCED' ELSE 'PENDING' END,
                 calendar_sync_error=NULL WHERE id=?
         """.trimIndent(), work.eventId, work.eventId)
+        if (!work.cancel) c.prepareStatement("SELECT * FROM event WHERE id=?").use { s ->
+            s.setObject(1, work.eventId)
+            s.executeQuery().use { if (it.next()) promoteWaitlist(c, it.toEvent()) }
+        }
         true
     }
 
@@ -679,7 +682,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                     s.setObject(1, event.id); s.executeQuery().use { it.next() }
                 }) throw SharedCalendarValidationException(409, "Ventelisten må få ledige plasser før nye invitasjoner kan sendes.")
                 requireCapacity(c, event, if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) 0 else 1)
-                requireAttendeeRoom(c, event, if (existing == null) 1 else 0)
+                requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, event.id, email))
                 if (existing?.status == ParticipantStatus.DECLINED) revoke(c, event.id, email)
                 putPerson(c, event.id, email, existing?.name ?: email, ParticipantType.PARTICIPANT, ParticipantStatus.INVITED)
                 c.exec("UPDATE participant SET invited_by=?,invited_at=NOW() WHERE event_id=? AND email=?", invitedBy, event.id, email)
@@ -718,6 +721,9 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
 
     private fun requireCapacity(c: Connection, event: Event, extra: Int = 1) {
         if (event.waitlistEnabled) {
+            if (extra > 0 && c.prepareStatement("SELECT 1 FROM event_waitlist WHERE event_id=? LIMIT 1").use { s ->
+                s.setObject(1, event.id); s.executeQuery().use { it.next() }
+            }) throw EventFullException
             if (event.participantLimit > 0 && allocatedSeats(c, event) + extra > event.participantLimit)
                 throw EventFullException
             return
@@ -735,10 +741,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
     }
 
     private fun requireAttendeeRoom(c: Connection, event: Event, extra: Int) {
-        val count = c.prepareStatement("SELECT COUNT(*) FROM participant WHERE event_id=?").use { s ->
-            s.setObject(1, event.id); s.executeQuery().use { it.next(); it.getInt(1) }
-        }
-        if (count + extra + (if (event.roomEmail == null) 0 else 1) > 490)
+        if (sharedCalendarAttendeeCount(c, event) + extra > 490)
             throw SharedCalendarValidationException(409, "Grensen for antall deltakere i kalenderen er nådd.")
     }
 

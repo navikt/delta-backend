@@ -116,7 +116,35 @@ class WaitlistRepository(private val db: DatabaseInterface) {
     }
 }
 
+internal fun DatabaseInterface.legacyCalendarNotificationRecipients(
+    eventId: UUID,
+    candidates: List<Pair<Participant, String?>>,
+): List<Pair<Participant, String?>> = connection.use { c ->
+    val current = c.prepareStatement("""
+        SELECT p.email,p.calendar_event_id,p.waitlist_calendar_event_id IS NOT NULL AS managed,
+            EXISTS(SELECT 1 FROM waitlist_notification n WHERE n.id=p.waitlist_notification_id) AS pending
+        FROM participant p WHERE p.event_id=?
+    """.trimIndent()).use { s ->
+        s.setObject(1, eventId)
+        s.executeQuery().use { r ->
+            r.toList { getString("email") to Triple(getString("calendar_event_id"),getBoolean("managed"),getBoolean("pending")) }.toMap()
+        }
+    }
+    candidates.mapNotNull { (participant, calendarId) ->
+        val saved = current[participant.email] ?: return@mapNotNull null
+        if (saved.third) null
+        else participant to if (saved.second) requireNotNull(saved.first) { "Promoted participant has no calendar ID" } else calendarId
+    }
+}
+
 internal fun allocationNow(): LocalDateTime = LocalDateTime.now(ZoneId.of("Europe/Oslo"))
+
+internal fun cancelWaitlistNotification(c: Connection, id: UUID, email: String) {
+    c.exec("""
+        UPDATE waitlist_notification SET cancel=TRUE,state='PENDING',attempts=0,next_attempt=NOW()
+        WHERE event_id=? AND email=? AND NOT cancel
+    """.trimIndent(), id, email)
+}
 
 internal fun waitlistOpen(event: Event): Boolean {
     val now = allocationNow()
@@ -174,6 +202,57 @@ internal fun validateWaitlistEdit(c: Connection, event: Event, enabled: Boolean,
     }
 }
 
+internal fun sharedCalendarAttendeeCount(c: Connection, event: Event): Int =
+    c.prepareStatement("""
+        SELECT COUNT(*) FROM participant p WHERE p.event_id=? AND NOT EXISTS(
+            SELECT 1 FROM shared_calendar_removal r
+            WHERE r.event_id=p.event_id AND r.email=p.email AND r.phase='REMOVED'
+        )
+    """.trimIndent()).use { s ->
+        s.setObject(1, event.id)
+        s.executeQuery().use { it.next(); it.getInt(1) + if (event.roomEmail == null) 0 else 1 }
+    }
+
+internal fun sharedCalendarSlotNeeded(c: Connection, id: UUID, email: String): Int =
+    c.prepareStatement("""
+        SELECT 1 FROM participant p WHERE p.event_id=? AND p.email=? AND NOT EXISTS(
+            SELECT 1 FROM shared_calendar_removal r
+            WHERE r.event_id=p.event_id AND r.email=p.email AND r.phase='REMOVED'
+        )
+    """.trimIndent()).use { s ->
+        s.setObject(1, id); s.setString(2, email)
+        s.executeQuery().use { if (it.next()) 0 else 1 }
+    }
+
+private fun reclaimWaitlistCalendarSlot(c: Connection, event: Event) {
+    val pending = c.prepareStatement("""
+        SELECT COUNT(*) FROM shared_calendar_removal r JOIN participant p
+        ON p.event_id=r.event_id AND p.email=r.email
+        WHERE r.event_id=? AND r.phase='REMOVING' AND NOT r.readd
+    """.trimIndent()).use { s ->
+        s.setObject(1, event.id); s.executeQuery().use { it.next(); it.getInt(1) }
+    }
+    val needed = sharedCalendarAttendeeCount(c, event) + 1 - 490 - pending
+    if (needed <= 0) return
+    val victims = c.prepareStatement("""
+        SELECT p.email FROM participant p WHERE p.event_id=? AND p.type<>'HOST'
+        AND p.status IN ('DECLINED','FORWARDED') AND NOT EXISTS(
+            SELECT 1 FROM shared_calendar_removal r WHERE r.event_id=p.event_id AND r.email=p.email
+        ) ORDER BY p.email LIMIT ?
+    """.trimIndent()).use { s ->
+        s.setObject(1, event.id); s.setInt(2, needed)
+        s.executeQuery().use { it.toList { getString(1) } }
+    }
+    if (victims.isEmpty()) return
+    enqueue(c, event.id)
+    victims.forEach { email ->
+        c.exec("""
+            INSERT INTO shared_calendar_removal(event_id,email,revision)
+            SELECT event_id,?,revision FROM shared_calendar_outbox WHERE event_id=?
+        """.trimIndent(), email, event.id)
+    }
+}
+
 internal fun promoteWaitlist(c: Connection, event: Event) {
     if (!event.waitlistEnabled || event.participantLimit <= 0 || !waitlistOpen(event)) return
     val available = event.participantLimit - allocatedSeats(c, event)
@@ -187,20 +266,23 @@ internal fun promoteWaitlist(c: Connection, event: Event) {
             s.setObject(1, event.id); s.setString(2, participant.email)
             s.executeQuery().use { if (it.next()) it.getString(1) else null }
         }
-        if (event.inviteMode == InviteMode.SHARED && previousStatus == null) {
-            val calendarCount = c.prepareStatement("SELECT COUNT(*) FROM participant WHERE event_id=?").use { s ->
-                s.setObject(1, event.id); s.executeQuery().use { it.next(); it.getInt(1) }
+        if (event.inviteMode == InviteMode.SHARED && sharedCalendarSlotNeeded(c, event.id, participant.email) > 0) {
+            if (sharedCalendarAttendeeCount(c, event) >= 490) {
+                reclaimWaitlistCalendarSlot(c, event)
+                return
             }
-            if (calendarCount + (if (event.roomEmail == null) 0 else 1) >= 490) return
         }
+        val deliveryId = UUID.randomUUID()
         c.exec("""
-            INSERT INTO participant(event_id,email,name,type,status,last_response_time)
-            VALUES (?,?,?,'PARTICIPANT','REGISTERED',NOW())
-            ON CONFLICT(event_id,email) DO UPDATE SET status='REGISTERED',last_response_time=NOW()
-        """.trimIndent(), event.id, participant.email, participant.name)
+            INSERT INTO participant(event_id,email,name,type,status,last_response_time,waitlist_notification_id)
+            VALUES (?,?,?,'PARTICIPANT','REGISTERED',NOW(),?)
+            ON CONFLICT(event_id,email) DO UPDATE SET status='REGISTERED',last_response_time=NOW(),
+                waitlist_notification_id=EXCLUDED.waitlist_notification_id,
+                calendar_event_id=NULL,waitlist_calendar_event_id=NULL
+        """.trimIndent(), event.id, participant.email, participant.name, deliveryId)
         c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", event.id, participant.email)
         c.exec("INSERT INTO waitlist_notification(id,event_id,email,name) VALUES (?,?,?,?)",
-            UUID.randomUUID(), event.id, participant.email, participant.name)
+            deliveryId, event.id, participant.email, participant.name)
         if (event.inviteMode == InviteMode.SHARED) {
             c.exec("DELETE FROM shared_calendar_refusal WHERE event_id=? AND email=?", event.id, participant.email)
             enqueue(c, event.id)

@@ -1,6 +1,7 @@
 package no.nav.delta.event
 
 import arrow.core.left
+import arrow.core.right
 import com.microsoft.kiota.ApiException
 import no.nav.delta.calendar.SharedCalendarRepository
 import no.nav.delta.support.TestDatabase
@@ -9,8 +10,11 @@ import no.nav.delta.calendar.SharedCalendarValidationException
 import no.nav.delta.calendar.SharedCalendarAttendeeSnapshot
 import no.nav.delta.calendar.SharedCalendarResponse
 import no.nav.delta.email.CloudClient
+import no.nav.delta.email.batchSendUpdateOrCreationNotification
+import no.nav.delta.email.sendUpdateOrCreationNotification
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -37,6 +41,16 @@ class WaitlistTest {
         startTime = LocalDateTime.now().plusDays(2), endTime = LocalDateTime.now().plusDays(2).plusHours(1),
         signupDeadline = LocalDateTime.now().plusDays(1), participantLimit = limit, waitlistEnabled = true,
     )
+
+    private fun promotedLegacy(email: String): Event {
+        val db = fixture.database
+        val event = db.addEvent(draft())
+        db.registerForEvent(event.id.toString(), "host@nav.no", "Host", ParticipantType.HOST)
+        db.registerForEvent(event.id.toString(), "attendee@nav.no", "Attendee")
+        waitlist.join(event.id, Participant(email, "Waiting"))
+        db.unregisterFromEvent(event.id.toString(), "attendee@nav.no")
+        return event
+    }
 
     @Test
     fun `joining a full event queues the caller without creating attendance or calendar work`() {
@@ -118,6 +132,86 @@ class WaitlistTest {
             SharedCalendarAttendeeSnapshot("invitee@nav.no", "Invitee", SharedCalendarResponse.DECLINED),
         ))
         assertTrue(waitlist.state(event.id, "waiting@nav.no").registered)
+    }
+
+    @Test
+    fun `existing calendar attendees cannot bypass a queue blocked by the attendee ceiling`() {
+        val event = calendar.create(draft(), "host@nav.no", "Host").getOrNull()!!
+        calendar.signup(event.id, "attendee@nav.no", "Attendee")
+        waitlist.join(event.id, Participant("waiting@nav.no", "Waiting"))
+        fixture.database.connection.use { c ->
+            c.prepareStatement("""
+                INSERT INTO participant(event_id,email,name,type,status)
+                SELECT ?, 'declined-'||i||'@nav.no','Declined','PARTICIPANT','DECLINED'
+                FROM generate_series(1,487) i
+            """.trimIndent()).use { it.setObject(1, event.id); it.executeUpdate() }
+            c.prepareStatement("""
+                INSERT INTO participant(event_id,email,name,type,status)
+                VALUES (?,'forwarded@nav.no','Forwarded','PARTICIPANT','FORWARDED')
+            """.trimIndent()).use { it.setObject(1, event.id); it.executeUpdate() }
+            c.prepareStatement("UPDATE participant SET status='DECLINED' WHERE event_id=? AND email='attendee@nav.no'")
+                .use { it.setObject(1, event.id); it.executeUpdate() }
+            c.commit()
+        }
+
+        assertEquals(EventFullException, calendar.signup(event.id, "declined-1@nav.no", "Declined").leftOrNull())
+        assertTrue(calendar.reconcile(event.id, listOf(
+            SharedCalendarAttendeeSnapshot("forwarded@nav.no", "Forwarded", SharedCalendarResponse.ACCEPTED),
+        )).isRight())
+        assertFalse(waitlist.state(event.id, "forwarded@nav.no").registered)
+        assertEquals(1, waitlist.state(event.id, "waiting@nav.no").position)
+    }
+
+    @Test
+    fun `declines reclaim calendar slots durably before promoting a new queued attendee`() {
+        val event = calendar.create(draft(), "host@nav.no", "Host").getOrNull()!!
+        calendar.signup(event.id, "attendee@nav.no", "Attendee")
+        waitlist.join(event.id, Participant("waiting@nav.no", "Waiting"))
+        fixture.database.connection.use { c ->
+            c.prepareStatement("""
+                INSERT INTO participant(event_id,email,name,type,status)
+                SELECT ?, 'forwarded-'||i||'@nav.no','Forwarded','PARTICIPANT','FORWARDED'
+                FROM generate_series(1,488) i
+            """.trimIndent()).use { it.setObject(1, event.id); it.executeUpdate() }
+            c.commit()
+        }
+        calendar.complete(calendar.claimNext()!!)
+
+        calendar.reconcile(event.id, listOf(
+            SharedCalendarAttendeeSnapshot("attendee@nav.no", "Attendee", SharedCalendarResponse.DECLINED),
+        ))
+
+        assertFalse(waitlist.state(event.id, "waiting@nav.no").registered)
+        val removal = calendar.claimNext()
+        assertNotNull(removal, "the declined calendar attendee needs durable removal work")
+        assertTrue(calendar.loadDesired(removal!!).removals.contains("attendee@nav.no"))
+        assertFalse(calendar.loadDesired(removal).attendees.any { it.email == "waiting@nav.no" })
+        calendar.complete(removal)
+        assertTrue(waitlist.state(event.id, "waiting@nav.no").registered)
+        val replacement = calendar.claimNext()!!
+        val desired = calendar.loadDesired(replacement)
+        assertTrue(desired.attendees.any { it.email == "waiting@nav.no" })
+        assertTrue(desired.attendees.size <= 490)
+    }
+
+    @Test
+    fun `reserved invitees can accept while the queue waits for a calendar slot`() {
+        val event = calendar.create(draft().copy(invitees = listOf(InviteeRequest("invitee@nav.no"))),
+            "host@nav.no", "Host").getOrNull()!!
+        waitlist.join(event.id, Participant("waiting@nav.no", "Waiting"))
+        fixture.database.connection.use { c ->
+            c.prepareStatement("""
+                INSERT INTO participant(event_id,email,name,type,status)
+                SELECT ?, 'forwarded-'||i||'@nav.no','Forwarded','PARTICIPANT','FORWARDED'
+                FROM generate_series(1,488) i
+            """.trimIndent()).use { it.setObject(1, event.id); it.executeUpdate() }
+            c.commit()
+        }
+        calendar.update(event.id, draft(3), "host@nav.no")
+
+        assertTrue(calendar.signup(event.id, "invitee@nav.no", "Invitee").isRight())
+        assertTrue(waitlist.state(event.id, "invitee@nav.no").registered)
+        assertEquals(1, waitlist.state(event.id, "waiting@nav.no").position)
     }
 
     @Test
@@ -228,6 +322,203 @@ class WaitlistTest {
         assertEquals(1, cloud.createdCalendarEventIds.size)
         assertEquals(1, cloud.sentEmails.size)
         assertFalse(worker.runOnce())
+    }
+
+    @Test
+    fun `workers skip in-flight promotion delivery and process later jobs without spinning`() {
+        promotedLegacy("first@nav.no")
+        promotedLegacy("second@nav.no")
+        val cloud = RecordingCloudClient()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val adapter = object : CloudClient by cloud {
+            override fun sendEmail(subject: String, body: String, toRecipients: List<String>,
+                ccRecipients: List<String>, bccRecipients: List<String>) {
+                if (toRecipients == listOf("first@nav.no")) {
+                    entered.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                }
+                cloud.sendEmail(subject, body, toRecipients, ccRecipients, bccRecipients)
+            }
+        }
+        val pool = Executors.newSingleThreadExecutor()
+        val first = pool.submit<Boolean> { WaitlistNotificationWorker(fixture.database, adapter).runOnce() }
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val other = WaitlistNotificationWorker(fixture.database, adapter)
+            assertTrue(other.runOnce())
+            assertEquals(listOf("second@nav.no"), cloud.sentEmails.single().toRecipients)
+            assertFalse(other.runOnce(), "in-flight work must not report progress or cause a tight polling loop")
+        } finally {
+            release.countDown()
+            try { assertTrue(first.get(5, TimeUnit.SECONDS)) } finally { pool.shutdownNow() }
+        }
+        assertEquals(2, cloud.sentEmails.size)
+    }
+
+    @Test
+    fun `legacy update batches leave promotion creation to its worker even with stale recipient ids`() {
+        val event = promotedLegacy("waiting@nav.no")
+        val cloud = RecordingCloudClient()
+        val staleRecipients = listOf(Participant("waiting@nav.no", "Waiting") to null)
+
+        cloud.batchSendUpdateOrCreationNotification(event, fixture.database, staleRecipients)
+        assertTrue(cloud.createdCalendarEventIds.isEmpty())
+        val worker = WaitlistNotificationWorker(fixture.database, cloud)
+        assertTrue(worker.runOnce())
+        cloud.batchSendUpdateOrCreationNotification(event, fixture.database, staleRecipients)
+
+        assertEquals(1, cloud.createdCalendarEventIds.size)
+        assertEquals(cloud.createdCalendarEventIds, cloud.updatedCalendarEventIds)
+        fixture.database.unregisterFromEvent(event.id.toString(), "waiting@nav.no")
+        assertTrue(worker.runOnce())
+        assertEquals(cloud.createdCalendarEventIds, cloud.deletedCalendarEventIds)
+    }
+
+    @Test
+    fun `uncertain legacy creation is recovered and cancelled after signoff or event deletion`() {
+        for (deleteEvent in listOf(false, true)) {
+            val event = promotedLegacy("waiting@nav.no")
+            val cloud = RecordingCloudClient()
+            val requests = mutableListOf<Pair<Event, String>>()
+            val created = mutableMapOf<String, String>()
+            var loseResponse = true
+            val adapter = object : CloudClient by cloud {
+                override fun createWaitlistEvent(event: Event, participant: Participant, transactionId: String): arrow.core.Either<Throwable, String> {
+                    requests += event to transactionId
+                    val id = created.getOrPut(transactionId) { cloud.createEvent(event, participant).getOrNull()!! }
+                    return if (loseResponse) {
+                        loseResponse = false
+                        java.io.IOException("Synthetic lost Graph response").left()
+                    } else id.right()
+                }
+            }
+
+            val worker = WaitlistNotificationWorker(fixture.database, adapter)
+            assertTrue(worker.runOnce())
+            assertEquals(1, cloud.createdCalendarEventIds.size)
+            assertNull(fixture.database.getCalendarEventId(event.id.toString(), "waiting@nav.no").getOrNull())
+            fixture.database.updateEvent(event.copy(title = "Changed after uncertain creation"))
+            if (deleteEvent) fixture.database.deleteEvent(event.id.toString())
+            else fixture.database.unregisterFromEvent(event.id.toString(), "waiting@nav.no")
+
+            repeat(3) { worker.runOnce() }
+
+            assertEquals(cloud.createdCalendarEventIds, cloud.deletedCalendarEventIds)
+            assertEquals(2, requests.size)
+            assertEquals(requests.first(), requests.last(), "recovery must reuse the exact creation snapshot and transaction ID")
+            assertTrue(cloud.sentEmails.isEmpty())
+            assertFalse(worker.runOnce())
+        }
+    }
+
+    @Test
+    fun `retried promotion creation preserves its original request then applies current event details`() {
+        val event = promotedLegacy("waiting@nav.no")
+        val cloud = RecordingCloudClient()
+        val requests = mutableListOf<Event>()
+        var savedId: String? = null
+        val adapter = object : CloudClient by cloud {
+            override fun createWaitlistEvent(event: Event, participant: Participant, transactionId: String): arrow.core.Either<Throwable, String> {
+                requests += event
+                if (savedId == null) {
+                    savedId = cloud.createEvent(event, participant).getOrNull()!!
+                    return java.io.IOException("Synthetic lost Graph response").left()
+                }
+                return savedId!!.right()
+            }
+        }
+        val worker = WaitlistNotificationWorker(fixture.database, adapter)
+        worker.runOnce()
+        fixture.database.updateEvent(event.copy(title = "Updated after creation"))
+        fixture.database.connection.use { c ->
+            c.createStatement().use { it.executeUpdate("UPDATE waitlist_notification SET next_attempt=NOW()") }
+            c.commit()
+        }
+
+        assertTrue(worker.runOnce())
+        assertEquals(2, requests.size)
+        assertEquals(requests.first(), requests.last())
+        assertEquals(1, cloud.createdCalendarEventIds.size)
+        assertEquals(cloud.createdCalendarEventIds, cloud.updatedCalendarEventIds)
+        assertTrue(cloud.sentEmails.single().subject.contains("Updated after creation"))
+    }
+
+    @Test
+    fun `cancellation before delivery never creates an invitation or sends a notice`() {
+        val event = promotedLegacy("waiting@nav.no")
+        fixture.database.unregisterFromEvent(event.id.toString(), "waiting@nav.no")
+        val cloud = RecordingCloudClient()
+        val worker = WaitlistNotificationWorker(fixture.database, cloud)
+
+        assertTrue(worker.runOnce())
+        assertFalse(worker.runOnce())
+        assertTrue(cloud.createdCalendarEventIds.isEmpty())
+        assertTrue(cloud.sentEmails.isEmpty())
+    }
+
+    @Test
+    fun `recovering a cancelled promotion cannot overwrite a later promotion for the same person`() {
+        val event = promotedLegacy("waiting@nav.no")
+        val cloud = RecordingCloudClient()
+        val created = mutableMapOf<String, String>()
+        var loseResponse = true
+        val adapter = object : CloudClient by cloud {
+            override fun createWaitlistEvent(event: Event, participant: Participant, transactionId: String): arrow.core.Either<Throwable, String> {
+                val id = created.getOrPut(transactionId) { cloud.createEvent(event, participant).getOrNull()!! }
+                return if (loseResponse) {
+                    loseResponse = false
+                    java.io.IOException("Synthetic lost Graph response").left()
+                } else id.right()
+            }
+        }
+        val worker = WaitlistNotificationWorker(fixture.database, adapter)
+        assertTrue(worker.runOnce())
+        val db = fixture.database
+        db.unregisterFromEvent(event.id.toString(), "waiting@nav.no")
+        db.registerForEvent(event.id.toString(), "replacement@nav.no", "Replacement")
+        waitlist.join(event.id, Participant("waiting@nav.no", "Waiting again"))
+        db.unregisterFromEvent(event.id.toString(), "replacement@nav.no")
+
+        repeat(5) { worker.runOnce() }
+
+        assertEquals(2, cloud.createdCalendarEventIds.size)
+        assertEquals(listOf(cloud.createdCalendarEventIds.first()), cloud.deletedCalendarEventIds)
+        assertEquals(cloud.createdCalendarEventIds.last(),
+            db.getCalendarEventId(event.id.toString(), "waiting@nav.no").getOrNull())
+        assertTrue(waitlist.state(event.id, "waiting@nav.no").registered)
+        assertEquals(1, cloud.sentEmails.size)
+        assertFalse(worker.runOnce())
+    }
+
+    @Test
+    fun `cancelled recovery work cannot suppress a later direct registration invitation`() {
+        val event = promotedLegacy("waiting@nav.no")
+        val cloud = RecordingCloudClient()
+        var savedId: String? = null
+        val adapter = object : CloudClient by cloud {
+            override fun createWaitlistEvent(event: Event, participant: Participant, transactionId: String): arrow.core.Either<Throwable, String> {
+                if (savedId == null) {
+                    savedId = cloud.createEvent(event, participant).getOrNull()!!
+                    return java.io.IOException("Synthetic lost Graph response").left()
+                }
+                return savedId!!.right()
+            }
+        }
+        val worker = WaitlistNotificationWorker(fixture.database, adapter)
+        assertTrue(worker.runOnce())
+        val db = fixture.database
+        db.unregisterFromEvent(event.id.toString(), "waiting@nav.no")
+        assertTrue(db.registerForEvent(event.id.toString(), "waiting@nav.no", "Direct registration").isRight())
+
+        cloud.sendUpdateOrCreationNotification(event, db, Participant("waiting@nav.no", "Direct registration"), null)
+
+        assertEquals(2, cloud.createdCalendarEventIds.size)
+        repeat(3) { worker.runOnce() }
+        assertEquals(listOf(cloud.createdCalendarEventIds.first()), cloud.deletedCalendarEventIds)
+        assertEquals(cloud.createdCalendarEventIds.last(),
+            db.getCalendarEventId(event.id.toString(), "waiting@nav.no").getOrNull())
+        assertTrue(cloud.sentEmails.isEmpty())
     }
 
     @Test
