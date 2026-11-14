@@ -12,6 +12,7 @@ import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.calendar.SharedCalendarRepository
 import no.nav.delta.calendar.sharedResultTransaction
+import no.nav.delta.calendar.exec
 
 data class RecurringEventMutationResult(
     val referenceEventId: UUID,
@@ -206,6 +207,7 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                         newEvent =
                             Event(
                                 id = occurrence.event.id,
+                                waitlistEnabled = createEvent.waitlistEnabled,
                                 title = createEvent.title,
                                 description = createEvent.description,
                                 startTime = desired.startTime,
@@ -711,6 +713,8 @@ private fun insertEvent(
     connection: Connection,
     createEvent: CreateEvent,
 ): Event {
+    if (createEvent.waitlistEnabled && createEvent.participantLimit <= 0)
+        throw no.nav.delta.calendar.SharedCalendarValidationException(400, "Venteliste krever et begrenset antall plasser.")
     val preparedStatement =
         connection.prepareStatement(
             """
@@ -751,13 +755,17 @@ private fun insertEvent(
 
     val result = preparedStatement.executeQuery()
     result.next()
-    return result.toEvent()
+    val event = result.toEvent()
+    connection.exec("UPDATE event SET waitlist_enabled=? WHERE id=?", createEvent.waitlistEnabled, event.id)
+    return event.copy(waitlistEnabled = createEvent.waitlistEnabled)
 }
 
 private fun updateEvent(
     connection: Connection,
     newEvent: Event,
 ): Event {
+    val original = lockAllocationEvent(connection, newEvent.id)
+    validateWaitlistEdit(connection, original, newEvent.waitlistEnabled, newEvent.participantLimit)
     val preparedStatement =
         connection.prepareStatement(
             """
@@ -785,7 +793,10 @@ WHERE  id=Uuid(?) returning *;
 
     val result = preparedStatement.executeQuery()
     result.next()
-    return result.toEvent()
+    val event = result.toEvent().copy(waitlistEnabled = newEvent.waitlistEnabled)
+    connection.exec("UPDATE event SET waitlist_enabled=? WHERE id=?", event.waitlistEnabled, event.id)
+    promoteWaitlist(connection, event)
+    return event
 }
 
 private fun insertParticipant(

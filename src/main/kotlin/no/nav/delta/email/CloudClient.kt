@@ -104,6 +104,9 @@ interface CloudClient {
 
     fun createEvent(event: Event, participant: Participant): Either<Throwable, String>
 
+    fun createWaitlistEvent(event: Event, participant: Participant, transactionId: String): Either<Throwable, String> =
+        createEvent(event, participant)
+
     fun updateEvent(
         calendarEventId: String,
         event: Event,
@@ -345,6 +348,20 @@ class AzureCloudClient internal constructor(
             } catch (e: Exception) {
                 RuntimeException("Failed to create event", e).left()
             }
+        }
+    }
+
+    override fun createWaitlistEvent(
+        event: Event,
+        participant: Participant,
+        transactionId: String,
+    ): Either<Throwable, String> = prepareCalendarEvent(event, participant).flatMap { calendarEvent ->
+        calendarEvent.transactionId = transactionId
+        try {
+            graphClient.users().byUserId(applicationEmailAddress).calendar().events().post(calendarEvent)
+                ?.id?.right() ?: RuntimeException("Failed to create waitlist calendar event").left()
+        } catch (e: Exception) {
+            RuntimeException("Failed to create waitlist calendar event", e).left()
         }
     }
 

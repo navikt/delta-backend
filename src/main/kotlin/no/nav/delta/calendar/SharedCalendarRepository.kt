@@ -127,6 +127,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         mutate(id) { c, original ->
             if (actorEmail != null) requireHost(c, id, actorEmail)
             validateDraft(draft)
+            validateWaitlistEdit(c, original, draft.waitlistEnabled, draft.participantLimit)
             requireNonRecurringInvites(c, id, draft.invitees ?: emptyList())
             if (original.isOnlineMeeting && draft.isOnlineMeeting == false)
                 throw SharedCalendarValidationException(400, "Et eksisterende Teams-møte kan ikke slås av.")
@@ -145,7 +146,10 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 s.executeQuery().use { it.next(); it.toEvent() }
             }
             draft.categories?.let { replaceCategories(c, id, it) }
-            draft.invitees?.let { invite(c, event, it, actorEmail?.let { email -> identityEmail(email) }) }
+            c.exec("UPDATE event SET waitlist_enabled=? WHERE id=?", draft.waitlistEnabled, id)
+            val allocatedEvent = event.copy(waitlistEnabled = draft.waitlistEnabled)
+            promoteWaitlist(c, allocatedEvent)
+            draft.invitees?.let { invite(c, allocatedEvent, it, actorEmail?.let { email -> identityEmail(email) }) }
             requireCapacity(c, event, 0)
             requireAttendeeRoom(c, event, 0)
             val detailsChanged = original.title != event.title || original.description != event.description ||
@@ -153,7 +157,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 original.location != event.location || original.roomEmail != event.roomEmail ||
                 original.roomName != event.roomName || original.isOnlineMeeting != event.isOnlineMeeting
             if (detailsChanged) enqueue(c, id, details = true)
-            if (detailsChanged) event.copy(calendarSyncStatus = CalendarSyncStatus.PENDING) else event
+            if (detailsChanged) allocatedEvent.copy(calendarSyncStatus = CalendarSyncStatus.PENDING) else allocatedEvent
         }
 
     fun retry(id: UUID) { routeResult(retryFailed(id)) }
@@ -182,13 +186,14 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 s.setBoolean(11, draft.isOnlineMeeting ?: false)
                 s.executeQuery().use { it.next(); it.toEvent() }
             }
+            c.exec("UPDATE event SET waitlist_enabled=? WHERE id=?", draft.waitlistEnabled, event.id)
             putPerson(c, event.id, host, hostName, ParticipantType.HOST, ParticipantStatus.REGISTERED)
             enqueue(c, event.id)
             replaceCategories(c, event.id, draft.categories ?: emptyList())
             invite(c, event, draft.invitees ?: emptyList(), host)
             requireCapacity(c, event, 0)
             requireAttendeeRoom(c, event, 0)
-            event.right()
+            event.copy(waitlistEnabled = draft.waitlistEnabled).right()
         }
 
     fun claimNext(now: Instant = Instant.now(), lease: Duration = Duration.ofMinutes(5)): SharedCalendarWork? =
@@ -361,7 +366,8 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                         else {
                             val reserved = existing.status == ParticipantStatus.INVITED &&
                                 event.signupDeadline?.let { it <= LocalDateTime.now() } != true
-                            val deadlinePassed = !reserved && event.signupDeadline?.let { it <= LocalDateTime.now() } == true
+                            val deadlinePassed = if (event.waitlistEnabled) !waitlistOpen(event)
+                                else !reserved && event.signupDeadline?.let { it <= LocalDateTime.now() } == true
                             if (deadlinePassed || !capacityAvailable(c, event, if (reserved) 0 else 1)) {
                                 c.exec("""
                                     INSERT INTO shared_calendar_refusal(event_id,email,reason) VALUES (?,?,?)
@@ -379,6 +385,11 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 if (respondedAt != null)
                     c.exec("UPDATE participant SET last_response_time=? WHERE event_id=? AND email=?",
                         Timestamp.from(respondedAt), id, email)
+                if (status == ParticipantStatus.REGISTERED)
+                    c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, email)
+                if (status == ParticipantStatus.DECLINED)
+                    c.exec("DELETE FROM waitlist_notification WHERE event_id=? AND email=?", id, email)
+                promoteWaitlist(c, event)
             }
         }
 
@@ -420,10 +431,12 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val existing = person(c, id, address)
             if (existing?.type == ParticipantType.HOST || existing?.status == ParticipantStatus.REGISTERED)
                 throw ParticipantAlreadyRegisteredException
+            if (event.waitlistEnabled && !waitlistOpen(event)) throw DeadlinePassedException
             if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) throw DeadlinePassedException
             requireCapacity(c, event, if (existing?.status == ParticipantStatus.INVITED) 0 else 1)
             requireAttendeeRoom(c, event, if (existing == null) 1 else 0)
             putPerson(c, id, address, name, ParticipantType.PARTICIPANT, ParticipantStatus.REGISTERED)
+            c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, address)
             c.exec("UPDATE participant SET last_response_time=NOW() WHERE event_id=? AND email=?", id, address)
             c.exec("DELETE FROM shared_calendar_refusal WHERE event_id=? AND email=?", id, address)
             if (existing?.status == ParticipantStatus.DECLINED) revoke(c, id, address)
@@ -437,6 +450,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val existing = person(c, id, address) ?: throw EmailNotFoundException
             guardLastHost(c, id, existing)
             c.exec("DELETE FROM participant WHERE event_id=? AND email=?", id, address)
+            c.exec("DELETE FROM waitlist_notification WHERE event_id=? AND email=?", id, address)
             revoke(c, id, address)
         }
 
@@ -446,6 +460,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val existing = person(c, id, address) ?: throw EmailNotFoundException
             guardLastHost(c, id, existing)
             c.exec("DELETE FROM participant WHERE event_id=? AND email=?", id, address)
+            c.exec("DELETE FROM waitlist_notification WHERE event_id=? AND email=?", id, address)
             revoke(c, id, address)
         }
 
@@ -459,6 +474,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                     !(existing.status == ParticipantStatus.INVITED && event.signupDeadline?.let { it <= LocalDateTime.now() } != true))
                     requireCapacity(c, event)
                 putPerson(c, id, email, existing.name, change.type, ParticipantStatus.REGISTERED)
+                c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, email)
                 prepareReadd(c, id, email)
                 enqueue(c, id)
             }
@@ -611,7 +627,13 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             // A row lock alone does not refresh a REPEATABLE_READ snapshot. A write forces stale
             // contenders to retry with a fresh snapshot before counting seats.
             c.exec("UPDATE event SET title=title WHERE id=?", id)
-            block(c, event).right()
+            promoteWaitlist(c, event)
+            val result = block(c, event)
+            c.prepareStatement("SELECT * FROM event WHERE id=?").use { s ->
+                s.setObject(1, id)
+                s.executeQuery().use { if (it.next()) promoteWaitlist(c, it.toEvent()) }
+            }
+            result.right()
         }
 
     private fun <T> resultTransaction(block: (Connection) -> Either<ExceptionWithDefaultResponse, T>): Either<ExceptionWithDefaultResponse, T> =
@@ -653,6 +675,9 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             val existing = person(c, event.id, email)
             if (existing == null || (existing.type != ParticipantType.HOST &&
                         existing.status in setOf(ParticipantStatus.DECLINED, ParticipantStatus.FORWARDED))) {
+                if (event.waitlistEnabled && c.prepareStatement("SELECT 1 FROM event_waitlist WHERE event_id=? LIMIT 1").use { s ->
+                    s.setObject(1, event.id); s.executeQuery().use { it.next() }
+                }) throw SharedCalendarValidationException(409, "Ventelisten må få ledige plasser før nye invitasjoner kan sendes.")
                 requireCapacity(c, event, if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) 0 else 1)
                 requireAttendeeRoom(c, event, if (existing == null) 1 else 0)
                 if (existing?.status == ParticipantStatus.DECLINED) revoke(c, event.id, email)
@@ -668,6 +693,8 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
     private fun validateDraft(draft: CreateEvent) {
         if (draft.startTime >= draft.endTime || draft.participantLimit < 0)
             throw SharedCalendarValidationException(400, "Ugyldig tidspunkt eller kapasitet.")
+        if (draft.waitlistEnabled && draft.participantLimit <= 0)
+            throw SharedCalendarValidationException(400, "Venteliste krever et begrenset antall plasser.")
         draft.invitees?.forEach { normalize(it.email) }
     }
 
@@ -690,6 +717,11 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         }
 
     private fun requireCapacity(c: Connection, event: Event, extra: Int = 1) {
+        if (event.waitlistEnabled) {
+            if (event.participantLimit > 0 && allocatedSeats(c, event) + extra > event.participantLimit)
+                throw EventFullException
+            return
+        }
         val count = c.prepareStatement("""
             SELECT COUNT(*) FROM participant WHERE event_id=? AND
             (type='HOST' OR status='REGISTERED' OR (status='INVITED' AND (?::timestamp IS NULL OR ?::timestamp > ?)))

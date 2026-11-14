@@ -430,6 +430,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     val mergedEvent =
                         Event(
                             id = originalEvent.id,
+                            waitlistEnabled = changedEvent.waitlistEnabled,
                             title = changedEvent.title,
                             description = changedEvent.description,
                             startTime = changedEvent.startTime,

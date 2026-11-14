@@ -26,6 +26,7 @@ data class Event(
     val teamsDialIn: String? = null,
     val inviteMode: InviteMode = InviteMode.PER_PARTICIPANT,
     val calendarSyncStatus: CalendarSyncStatus? = null,
+    val waitlistEnabled: Boolean = false,
 )
 
 enum class InviteMode { PER_PARTICIPANT, SHARED }
@@ -95,6 +96,7 @@ data class CreateEvent(
     val roomName: String? = null,
     val isOnlineMeeting: Boolean? = null,
     val invitees: List<InviteeRequest>? = null,
+    val waitlistEnabled: Boolean = false,
 )
 
 data class Category(
