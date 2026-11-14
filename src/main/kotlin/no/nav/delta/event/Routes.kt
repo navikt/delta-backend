@@ -430,6 +430,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     val mergedEvent =
                         Event(
                             id = originalEvent.id,
+                            waitlistEnabled = changedEvent.waitlistEnabled,
                             title = changedEvent.title,
                             description = changedEvent.description,
                             startTime = changedEvent.startTime,
@@ -533,8 +534,13 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             }
                             .getOrElse { {} }
 
-                    database.updateEvent(newEvent).getOrElse {
-                        rollbackNewMaster()
+                    var eventUpdated = false
+                    val updateResult = try {
+                        database.updateEvent(newEvent).also { eventUpdated = it.isRight() }
+                    } finally {
+                        if (!eventUpdated) rollbackNewMaster()
+                    }
+                    updateResult.getOrElse {
                         return@post it.left().unwrapAndRespond(call)
                     }
 

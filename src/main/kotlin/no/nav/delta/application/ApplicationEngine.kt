@@ -36,6 +36,8 @@ import no.nav.delta.calendar.sharedCalendarApi
 import no.nav.delta.calendar.SharedCalendarRepository
 import no.nav.delta.calendar.CalendarSyncWorker
 import no.nav.delta.event.eventApi
+import no.nav.delta.event.waitlistApi
+import no.nav.delta.event.WaitlistNotificationWorker
 import no.nav.delta.faggruppe.faggruppeApi
 import no.nav.delta.feature.featureApi
 import no.nav.delta.room.RoomCatalog
@@ -110,10 +112,12 @@ fun Application.mySetup(
     val roomCatalog = RoomCatalog(cloudClient)
     val sharedCalendar = SharedCalendarRepository(database)
     val calendarWorker = CalendarSyncWorker(sharedCalendar, cloudClient)
+    val waitlistWorker = WaitlistNotificationWorker(database, cloudClient)
 
     routing {
         swaggerUI(path = "openapi")
         eventApi(database, cloudClient, env)
+        waitlistApi(database)
         sharedCalendarApi(database)
         faggruppeApi(database, cloudClient, env)
         webhookApi(database, cloudClient, env)
@@ -129,7 +133,7 @@ fun Application.mySetup(
         }
         get("/internal/metrics") {
             call.respondText(
-                calendarWorker.metrics.scrape(sharedCalendar.statistics()),
+                calendarWorker.metrics.scrape(sharedCalendar.statistics()) + waitlistWorker.metrics(),
                 io.ktor.http.ContentType.parse("text/plain; version=0.0.4"),
             )
         }
@@ -147,6 +151,7 @@ fun Application.mySetup(
     // from webhook subscription health so the app can degrade gracefully.
     if (startBackgroundTasks) {
         calendarWorker.initialize(this)
+        waitlistWorker.initialize(this)
         launch { subscriptionService.initialize(this) }
         if (env.featureRoomBooking != FeatureAccess.OFF) {
             launch(Dispatchers.IO) { roomCatalog.warmUp() }

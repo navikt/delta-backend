@@ -2,6 +2,7 @@ package no.nav.delta.email
 
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
+import no.nav.delta.event.legacyCalendarNotificationRecipients
 import no.nav.delta.event.setCalendarEventId
 import no.nav.delta.plugins.DatabaseInterface
 import org.slf4j.LoggerFactory
@@ -18,13 +19,16 @@ fun CloudClient.sendUpdateOrCreationNotification(
     participant: Participant,
     calendarEventId: String?,
 ) {
-    if (calendarEventId != null) {
+    val recipient = database.legacyCalendarNotificationRecipients(event.id, listOf(participant to calendarEventId))
+        .singleOrNull() ?: return
+    val currentCalendarId = recipient.second
+    if (currentCalendarId != null) {
         updateEvent(
             event = event,
             participant = participant,
-            calendarEventId = calendarEventId,
+            calendarEventId = currentCalendarId,
         ).onLeft { e ->
-            log.error("Failed to update calendar event $calendarEventId for ${participant.email}: ${e.message}", e)
+            log.error("Failed to update calendar event $currentCalendarId for ${participant.email}: ${e.message}", e)
         }
     } else {
         createEvent(
@@ -45,7 +49,9 @@ fun CloudClient.batchSendUpdateOrCreationNotification(
     database: DatabaseInterface,
     participantsWithCalendarIds: List<Pair<Participant, String?>>,
 ) {
-    batchUpdateOrCreateEvents(event, participantsWithCalendarIds)
+    val recipients = database.legacyCalendarNotificationRecipients(event.id, participantsWithCalendarIds)
+    if (recipients.isEmpty()) return
+    batchUpdateOrCreateEvents(event, recipients)
         .forEach { (participant, result) ->
             result
                 .onLeft { e ->

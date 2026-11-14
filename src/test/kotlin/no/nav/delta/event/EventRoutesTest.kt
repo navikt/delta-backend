@@ -1079,6 +1079,25 @@ class EventRoutesTest {
         assertEquals(false, stored.isOnlineMeeting)
     }
 
+    @Test
+    fun `rejected waitlist edit restores the Graph master and leaves the event unchanged`() = testApplication {
+        val env = enabledEnv()
+        application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
+        val booked = bookedEvent("waitlist-rollback-${UUID.randomUUID()}")
+        val original = database.updateEvent(booked.copy(waitlistEnabled = true, participantLimit = 1)).getOrNull()!!
+        WaitlistRepository(database).join(original.id, Participant("waiting@nav.no", "Waiting"))
+
+        val response = client.post("/admin/event/${original.id}") {
+            contentType(ContentType.Application.Json)
+            setBody(createEventJson(title = "Rejected title", sendNotificationEmail = false))
+        }
+
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertEquals(original.title, database.getEvent(original.id.toString()).getOrNull()!!.title)
+        assertEquals(original.title, cloudClient.updatedMasterEvents.last().second.title)
+        assertTrue(database.getEvent(original.id.toString()).getOrNull()!!.waitlistEnabled)
+    }
+
     /** An event hosted by the test user with a room (ACCEPTED), Teams and a master event. */
     private fun bookedEvent(title: String): Event {
         val created = database.addEvent(futureEvent(title))

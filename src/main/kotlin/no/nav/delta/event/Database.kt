@@ -13,6 +13,8 @@ import java.sql.Timestamp
 import java.time.LocalDateTime
 import java.util.UUID
 import no.nav.delta.plugins.DatabaseInterface
+import no.nav.delta.calendar.repeatableReadTransaction
+import no.nav.delta.calendar.exec
 
 fun <T> ResultSet.toList(mapper: ResultSet.() -> T) =
     mutableListOf<T>().apply {
@@ -47,10 +49,12 @@ fun DatabaseInterface.addEvent(
                         signup_deadline,
                         room_email,
                         room_name,
-                        is_online_meeting
+                        is_online_meeting,
+                        waitlist_enabled
             )
             VALUES
             (
+                        ?,
                         ?,
                         ?,
                         ?,
@@ -77,6 +81,9 @@ fun DatabaseInterface.addEvent(
         preparedStatement.setString(9, createEvent.roomEmail)
         preparedStatement.setString(10, createEvent.roomName)
         preparedStatement.setBoolean(11, createEvent.isOnlineMeeting ?: false)
+        if (createEvent.waitlistEnabled && createEvent.participantLimit <= 0)
+            throw no.nav.delta.calendar.SharedCalendarValidationException(400, "Venteliste krever et begrenset antall plasser.")
+        preparedStatement.setBoolean(12, createEvent.waitlistEnabled)
 
         val result = preparedStatement.executeQuery()
         connection.commit()
@@ -547,7 +554,10 @@ fun DatabaseInterface.registerForEvent(
     name: String,
     type: ParticipantType = ParticipantType.PARTICIPANT,
 ): Either<RegisterForEventError, Unit> {
-    return connection.use { connection ->
+    return repeatableReadTransaction { connection ->
+        val event = lockAllocationEvent(connection, UUID.fromString(eventId))
+        if (event.waitlistEnabled && !waitlistOpen(event)) return@repeatableReadTransaction DeadlinePassedException.left()
+        promoteWaitlist(connection, event)
         checkIfEventExists(connection, eventId)
             .flatMap { checkIfParticipantIsRegistered(connection, eventId, email) }
             .flatMap { checkIfEventIsFull(connection, eventId) }
@@ -570,11 +580,10 @@ VALUES      (Uuid(?),
                 preparedStatement.setString(2, email)
                 preparedStatement.setString(3, name)
                 preparedStatement.setString(4, type.name)
-                println(type.name)
-                println(preparedStatement)
-
                 preparedStatement.executeUpdate()
-                connection.commit()
+                connection.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?",
+                    event.id, email.trim().lowercase())
+                Unit
             }
     }
 }
@@ -583,7 +592,8 @@ fun DatabaseInterface.changeParticipant(
     eventId: String,
     changeParticipant: ChangeParticipant,
 ): Either<ChangeParticipantError, Unit> {
-    return connection.use { connection ->
+    return repeatableReadTransaction { connection ->
+        lockAllocationEvent(connection, UUID.fromString(eventId))
         checkIfEventExists(connection, eventId)
             .flatMap { checkIfEventWillHaveNoHosts(connection, eventId, changeParticipant) }
             .map {
@@ -600,7 +610,7 @@ WHERE  event_id = Uuid(?)
                 preparedStatement.setString(3, changeParticipant.email)
 
                 preparedStatement.executeUpdate()
-                connection.commit()
+                Unit
             }
     }
 }
@@ -609,7 +619,8 @@ fun DatabaseInterface.unregisterFromEvent(
     eventId: String,
     email: String
 ): Either<UnregisterFromEventError, Unit> {
-    return connection.use { connection ->
+    return repeatableReadTransaction { connection ->
+        val event = lockAllocationEvent(connection, UUID.fromString(eventId))
         checkIfEventExists(connection, eventId).flatMap {
             val preparedStatement =
                 connection.prepareStatement(
@@ -622,7 +633,7 @@ WHERE  event_id = Uuid(?)
             preparedStatement.setString(2, email)
 
             val rowsAffected = preparedStatement.executeUpdate()
-            connection.commit()
+            promoteWaitlist(connection, event)
             if (rowsAffected == 0) EmailNotFoundException.left() else Unit.right()
         }
     }
@@ -647,7 +658,9 @@ WHERE  id = Uuid(?);
 fun DatabaseInterface.updateEvent(
     newEvent: Event,
 ): Either<EventNotFoundException, Event> {
-    return connection.use { connection ->
+    return repeatableReadTransaction { connection ->
+        val original = lockAllocationEvent(connection, newEvent.id)
+        validateWaitlistEdit(connection, original, newEvent.waitlistEnabled, newEvent.participantLimit)
         val preparedStatement =
             connection.prepareStatement(
                 """
@@ -666,7 +679,8 @@ SET    title=?,
        is_online_meeting=?,
        teams_join_url=?,
        teams_conference_id=?,
-       teams_dial_in=?
+       teams_dial_in=?,
+       waitlist_enabled=?
 WHERE  id=Uuid(?) returning *;
 """)
         preparedStatement.setString(1, newEvent.title)
@@ -684,12 +698,13 @@ WHERE  id=Uuid(?) returning *;
         preparedStatement.setString(13, newEvent.teamsJoinUrl)
         preparedStatement.setString(14, newEvent.teamsConferenceId)
         preparedStatement.setString(15, newEvent.teamsDialIn)
-        preparedStatement.setString(16, newEvent.id.toString())
+        preparedStatement.setBoolean(16, newEvent.waitlistEnabled)
+        preparedStatement.setString(17, newEvent.id.toString())
 
         val result = preparedStatement.executeQuery()
-        connection.commit()
-
-        if (!result.next()) EventNotFoundException.left() else result.toEvent().right()
+        if (!result.next()) EventNotFoundException.left() else result.toEvent().also {
+            promoteWaitlist(connection, it)
+        }.right()
     }
 }
 
@@ -901,6 +916,7 @@ fun ResultSet.toEvent(): Event {
         teamsDialIn = getString("teams_dial_in"),
         inviteMode = InviteMode.valueOf(getString("invite_mode")),
         calendarSyncStatus = getString("calendar_sync_status")?.let { CalendarSyncStatus.valueOf(it) },
+        waitlistEnabled = getBoolean("waitlist_enabled"),
     )
 }
 
@@ -958,13 +974,13 @@ fun checkIfEventIsFull(
         .prepareStatement(
             """
 SELECT e.participant_limit,
-       Count(p.event_id) AS participants_count
+       Count(p.event_id) FILTER (WHERE p.type='HOST' OR p.status='REGISTERED') AS participants_count
 FROM   event e
        LEFT JOIN participant p
               ON p.event_id = e.id
 WHERE  e.id = Uuid(?)
 GROUP  BY e.participant_limit
-HAVING Count(p.event_id) >= e.participant_limit
+HAVING Count(p.event_id) FILTER (WHERE p.type='HOST' OR p.status='REGISTERED') >= e.participant_limit
        AND e.participant_limit > 0;
 """)
         .use { preparedStatement ->
