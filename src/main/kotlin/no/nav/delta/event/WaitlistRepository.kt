@@ -311,17 +311,16 @@ private fun reclaimWaitlistCalendarSlot(c: Connection, event: Event) {
 
 internal fun promoteWaitlist(c: Connection, event: Event) {
     if (!waitlistOpen(event)) return
-    for (scope in allocationScopes(c, event)) {
-        if (!promoteWaitlist(c, scope)) return
-    }
+    // A queue blocked by calendar room must not stop other options from promoting.
+    allocationScopes(c, event).forEach { promoteWaitlist(c, it) }
 }
 
-/** Promotes queued people into free seats of one scope. Returns false when calendar room ran out. */
-private fun promoteWaitlist(c: Connection, scope: AllocationScope): Boolean {
+/** Promotes queued people into free seats of one scope, stopping when calendar room runs out. */
+private fun promoteWaitlist(c: Connection, scope: AllocationScope) {
     val event = scope.event
-    if (!scope.waitlistEnabled || scope.limit <= 0) return true
+    if (!scope.waitlistEnabled || scope.limit <= 0) return
     val available = scope.limit - allocatedSeats(c, scope)
-    if (available <= 0) return true
+    if (available <= 0) return
     val queue = c.prepareStatement("""
         SELECT * FROM event_waitlist WHERE event_id=? AND signup_option_id IS NOT DISTINCT FROM ?::uuid
         ORDER BY id LIMIT ?
@@ -337,7 +336,7 @@ private fun promoteWaitlist(c: Connection, scope: AllocationScope): Boolean {
         if (event.inviteMode == InviteMode.SHARED && sharedCalendarSlotNeeded(c, event.id, participant.email) > 0) {
             if (sharedCalendarAttendeeCount(c, event) >= 490) {
                 reclaimWaitlistCalendarSlot(c, event)
-                return false
+                return
             }
         }
         val deliveryId = UUID.randomUUID()
@@ -366,5 +365,4 @@ private fun promoteWaitlist(c: Connection, scope: AllocationScope): Boolean {
             c.exec("UPDATE shared_calendar_removal SET readd=TRUE WHERE event_id=? AND email=?", event.id, participant.email)
         }
     }
-    return true
 }

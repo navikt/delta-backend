@@ -114,6 +114,60 @@ class SignupOptionsTest {
     }
 
     @Test
+    fun `an option waiting for calendar room does not block promotion in other options`() {
+        val event = create(draft(listOf(
+            SignupOptionRequest(label = "Fysisk", participantLimit = 1, waitlistEnabled = true),
+            SignupOptionRequest(label = "Digitalt", participantLimit = 1, waitlistEnabled = true),
+        )))
+        val physical = event.option("Fysisk").id
+        val digital = event.option("Digitalt").id
+        calendar.signup(event.id, "physical@nav.no", "Physical", physical)
+        calendar.signup(event.id, "digital@nav.no", "Digital", digital)
+        waitlist.join(event.id, Participant("newcomer@nav.no", "Newcomer", physical))
+        waitlist.join(event.id, Participant("forwarded@nav.no", "Forwarded", digital))
+        fixture.database.connection.use { c ->
+            c.prepareStatement("""
+                INSERT INTO participant(event_id,email,name,type,status)
+                SELECT ?, 'filler-'||i||'@nav.no','Filler','PARTICIPANT','FORWARDED'
+                FROM generate_series(1,490) i
+                UNION ALL SELECT ?, 'forwarded@nav.no','Forwarded','PARTICIPANT'::participant_type,'FORWARDED'
+            """.trimIndent()).use { it.setObject(1, event.id); it.setObject(2, event.id); it.executeUpdate() }
+            c.commit()
+        }
+
+        assertTrue(calendar.signoff(event.id, "physical@nav.no").isRight())
+        assertTrue(calendar.signoff(event.id, "digital@nav.no").isRight())
+
+        assertFalse(waitlist.state(event.id, "newcomer@nav.no").registered)
+        assertEquals(digital, full(event).participants.single { it.email == "forwarded@nav.no" }.signupOptionId)
+    }
+
+    @Test
+    fun `an upcoming edit without options keeps capacity on ordinary occurrences`() {
+        val series = fixture.database.createRecurringEventSeries(
+            draft(options = null).copy(participantLimit = 2, waitlistEnabled = true,
+                recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY,
+                    LocalDateTime.now().plusDays(2).toLocalDate().plusWeeks(1))),
+            "host@nav.no", "Host", InviteMode.SHARED,
+        ).getOrNull()!!.affectedEvents
+        val first = series.first()
+        calendar.update(first.id, draft().copy(startTime = first.startTime, endTime = first.endTime,
+            signupDeadline = first.signupDeadline), "host@nav.no")
+
+        val updated = fixture.database.updateRecurringSeriesFromOccurrence(first.id.toString(),
+            draft(options = null).copy(participantLimit = 3, waitlistEnabled = true, startTime = first.startTime,
+                endTime = first.endTime, editScope = EventEditScope.UPCOMING), "host@nav.no")
+            .getOrNull()!!.affectedEvents
+
+        assertEquals(listOf("Fysisk", "Digitalt"), updated.first().signupOptions.map { it.label })
+        assertEquals(0, updated.first().participantLimit)
+        val ordinary = updated.last()
+        assertTrue(ordinary.signupOptions.isEmpty())
+        assertEquals(3, ordinary.participantLimit)
+        assertTrue(ordinary.waitlistEnabled)
+    }
+
+    @Test
     fun `an Outlook acceptance without a chosen option asks the person to choose in Delta`() {
         val event = create()
         calendar.complete(calendar.claimNext()!!)

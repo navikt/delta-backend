@@ -143,6 +143,7 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
         val insertedOptions = requestedOptions ?: selectedOptions.takeIf { it.isNotEmpty() }
             ?.let { SeriesSignupOptions.copyOf(it) }
         val optionSeries = insertedOptions != null && insertedOptions.requests.isNotEmpty()
+        val requestedCapacity = createEvent
         val createEvent = if (optionSeries) createEvent.copy(participantLimit = 0, waitlistEnabled = false) else createEvent
 
         // If the recurrence specifies an offset, it takes precedence over CreateEvent.signupDeadline
@@ -218,7 +219,10 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
             upcomingOccurrences.take(desiredCount).mapIndexed { index, occurrence ->
                 val desired = desiredOccurrences[index]
                 val wasSeatLimited = seatLimited(connection, occurrence.event.id)
-                val optionEvent = optionSeries || usesSignupOptions(connection, occurrence.event.id)
+                // Without requested options each occurrence keeps its own kind, so ordinary ones keep their capacity.
+                val optionEvent = requestedOptions?.requests?.isNotEmpty()
+                    ?: usesSignupOptions(connection, occurrence.event.id)
+                val capacity = if (optionEvent) createEvent else requestedCapacity
                 val updatedEvent =
                     updateEvent(
                         connection = connection,
@@ -226,14 +230,14 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                         newEvent =
                             Event(
                                 id = occurrence.event.id,
-                                waitlistEnabled = createEvent.waitlistEnabled,
+                                waitlistEnabled = capacity.waitlistEnabled,
                                 title = createEvent.title,
                                 description = createEvent.description,
                                 startTime = desired.startTime,
                                 endTime = desired.endTime,
                                 location = createEvent.location,
                                 public = createEvent.public,
-                                participantLimit = createEvent.participantLimit,
+                                participantLimit = capacity.participantLimit,
                                 signupDeadline = desired.signupDeadline,
                             ),
                     )

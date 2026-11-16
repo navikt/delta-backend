@@ -14,7 +14,6 @@ import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -382,9 +381,9 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                         else {
                             val scope = calendarAcceptanceScope(c, event, email)
                             val reserved = existing.status == ParticipantStatus.INVITED &&
-                                event.signupDeadline?.let { it <= LocalDateTime.now() } != true
+                                !event.signupDeadlinePassed()
                             val deadlinePassed = if (scope?.waitlistEnabled ?: event.waitlistEnabled) !waitlistOpen(event)
-                                else !reserved && event.signupDeadline?.let { it <= LocalDateTime.now() } == true
+                                else !reserved && event.signupDeadlinePassed()
                             val refusal = when {
                                 deadlinePassed -> "DEADLINE"
                                 scope == null -> "OPTION_REQUIRED"
@@ -475,7 +474,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 throw ParticipantAlreadyRegisteredException
             val scope = resolveScope(c, event, signupOptionId)
             if (scope.waitlistEnabled && !waitlistOpen(event)) throw DeadlinePassedException
-            if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) throw DeadlinePassedException
+            if (event.signupDeadlinePassed()) throw DeadlinePassedException
             // An invitation reserves a seat only in the option it was sent for.
             val reserved = existing?.status == ParticipantStatus.INVITED &&
                 participantSignupOption(c, id, address) == scope.optionId
@@ -550,7 +549,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 }
                 if (scope?.option != null) requireCapacity(c, scope, 1)
                 else if (scope != null && change.type == ParticipantType.HOST && existing.status != ParticipantStatus.REGISTERED &&
-                    !(existing.status == ParticipantStatus.INVITED && event.signupDeadline?.let { it <= LocalDateTime.now() } != true))
+                    !(existing.status == ParticipantStatus.INVITED && !event.signupDeadlinePassed()))
                     requireCapacity(c, scope)
                 requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, id, email))
                 putPerson(c, id, email, existing.name, change.type, ParticipantStatus.REGISTERED)
@@ -764,7 +763,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 val scope = resolveScope(c, event, selections[email])
                 if (scope.waitlistEnabled && queueHasEntries(c, scope))
                     throw SharedCalendarValidationException(409, "Ventelisten må få ledige plasser før nye invitasjoner kan sendes.")
-                requireCapacity(c, scope, if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) 0 else 1)
+                requireCapacity(c, scope, if (event.signupDeadlinePassed()) 0 else 1)
                 requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, event.id, email))
                 if (existing?.status == ParticipantStatus.DECLINED) revoke(c, event.id, email)
                 putPerson(c, event.id, email, existing?.name ?: email, ParticipantType.PARTICIPANT, ParticipantStatus.INVITED)
@@ -776,6 +775,9 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         }
         return changed
     }
+
+    /** Uses the same Oslo clock as seat allocation, so reservations expire consistently. */
+    private fun Event.signupDeadlinePassed(): Boolean = signupDeadline?.let { it <= allocationNow() } == true
 
     /** Option events allocate per option, so their event-level capacity stays unlimited. */
     private fun CreateEvent.withoutEventLevelCapacity() = copy(participantLimit = 0, waitlistEnabled = false)
@@ -822,7 +824,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             (type='HOST' OR status='REGISTERED' OR (status='INVITED' AND (?::timestamp IS NULL OR ?::timestamp > ?)))
         """.trimIndent()).use { s ->
             s.setObject(1, event.id); s.setObject(2, event.signupDeadline); s.setObject(3, event.signupDeadline)
-            s.setObject(4, LocalDateTime.now())
+            s.setObject(4, allocationNow())
             s.executeQuery().use { it.next(); it.getInt(1) }
         }
 
