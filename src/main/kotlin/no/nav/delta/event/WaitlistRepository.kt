@@ -19,7 +19,7 @@ data class WaitlistState(
 )
 
 data class WaitlistEntry(val email: String, val name: String, val position: Int)
-data class MyWaitlistEvent(val event: Event, val position: Int, val open: Boolean)
+data class MyWaitlistEvent(val event: Event, val position: Int, val open: Boolean, val hosts: List<Participant>)
 
 class WaitlistRepository(private val db: DatabaseInterface) {
     fun state(id: UUID, email: String): WaitlistState = db.repeatableReadTransaction { c ->
@@ -75,9 +75,24 @@ class WaitlistRepository(private val db: DatabaseInterface) {
             s.executeQuery().use { r -> r.toList {
                 val event = toEvent()
                 MyWaitlistEvent(event.copy(teamsJoinUrl = null, teamsConferenceId = null, teamsDialIn = null),
-                    getInt("position"), waitlistOpen(event))
+                    getInt("position"), waitlistOpen(event), emptyList())
             } }
+        }.let { events ->
+            val hosts = hosts(c, events.map { it.event.id })
+            events.map { it.copy(hosts = hosts[it.event.id].orEmpty()) }
         }
+    }
+
+    private fun hosts(c: Connection, eventIds: List<UUID>): Map<UUID, List<Participant>> {
+        if (eventIds.isEmpty()) return emptyMap()
+        return c.prepareStatement(
+            "SELECT event_id,email,name FROM participant WHERE type='HOST' AND event_id = ANY(?) ORDER BY id"
+        ).use { s ->
+            s.setArray(1, c.createArrayOf("uuid", eventIds.toTypedArray()))
+            s.executeQuery().use { r ->
+                r.toList { getObject("event_id", UUID::class.java) to Participant(getString("email"), getString("name")) }
+            }
+        }.groupBy({ it.first }, { it.second })
     }
 
     private fun entries(c: Connection, id: UUID): List<WaitlistEntry> =

@@ -131,7 +131,9 @@ class WaitlistTest {
         calendar.update(event.id, draft(3), "host@nav.no")
         assertTrue(waitlist.state(event.id, "first@nav.no").registered)
         assertEquals(1, waitlist.state(event.id, "second@nav.no").position)
-        assertEquals(1, waitlist.mine("second@nav.no").single().position)
+        val mine = waitlist.mine("second@nav.no").single()
+        assertEquals(1, mine.position)
+        assertEquals(listOf(Participant("host@nav.no", "Host")), mine.hosts)
     }
 
     @Test
