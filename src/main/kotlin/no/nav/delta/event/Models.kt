@@ -27,13 +27,45 @@ data class Event(
     val inviteMode: InviteMode = InviteMode.PER_PARTICIPANT,
     val calendarSyncStatus: CalendarSyncStatus? = null,
     val waitlistEnabled: Boolean = false,
+    // Empty for events using the event-level participantLimit/waitlistEnabled.
+    val signupOptions: List<SignupOption> = emptyList(),
 )
+
+/** Whether any seats are limited, at event level or in a signup option. */
+fun Event.seatLimited(): Boolean = participantLimit > 0 || signupOptions.any { it.participantLimit > 0 }
+
+data class SignupOption(
+    val id: UUID,
+    val label: String,
+    // 0 means no organizer-configured limit.
+    val participantLimit: Int,
+    val waitlistEnabled: Boolean,
+    // Registrations and active invitation reservations; hosts never count.
+    val allocatedSeats: Int = 0,
+    val waitlistCount: Int = 0,
+)
+
+/** A null or unknown id creates a new option; a known id of the same event updates it. */
+data class SignupOptionRequest(
+    val id: UUID? = null,
+    val label: String,
+    val participantLimit: Int = 0,
+    val waitlistEnabled: Boolean = false,
+)
+
+/** A missing option is accepted only when the event has at most one signup option. */
+data class SignupOptionSelection(val signupOptionId: UUID? = null)
 
 enum class InviteMode { PER_PARTICIPANT, SHARED }
 enum class CalendarSyncStatus { PENDING, SYNCED, FAILED }
 enum class ParticipantStatus { INVITED, REGISTERED, DECLINED, FORWARDED }
-data class InviteeRequest(val email: String)
-data class Invitation(val name: String, val email: String, val status: ParticipantStatus)
+data class InviteeRequest(val email: String, val signupOptionId: UUID? = null)
+data class Invitation(
+    val name: String,
+    val email: String,
+    val status: ParticipantStatus,
+    val signupOptionId: UUID? = null,
+)
 
 enum class RoomBookingStatus {
     PENDING,
@@ -55,6 +87,7 @@ data class FullEvent(
 data class Participant(
     val email: String,
     val name: String,
+    val signupOptionId: UUID? = null,
 )
 
 data class EmailToken(
@@ -69,6 +102,8 @@ enum class ParticipantType {
 data class ChangeParticipant(
     val email: String,
     val type: ParticipantType,
+    // Required when a person becomes a participant in an event with several signup options.
+    val signupOptionId: UUID? = null,
 )
 
 // Server-managed room/Teams fields are silently ignored if a client echoes them back (e.g. by
@@ -97,6 +132,8 @@ data class CreateEvent(
     val isOnlineMeeting: Boolean? = null,
     val invitees: List<InviteeRequest>? = null,
     val waitlistEnabled: Boolean = false,
+    // Null keeps the current options on update. Option events ignore participantLimit/waitlistEnabled.
+    val signupOptions: List<SignupOptionRequest>? = null,
 )
 
 data class Category(

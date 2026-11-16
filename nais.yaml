@@ -64,6 +64,8 @@ spec:
       value: "all"
     - name: FEATURE_SHARED_CALENDAR
       value: "all"
+    - name: FEATURE_SIGNUP_OPTIONS
+      value: "off"
   envFrom:
     - secret: delta-backend-webhook-secret
   leaderElection: true

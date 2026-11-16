@@ -52,6 +52,16 @@ class FeatureRoutesTest {
         assertEquals(true, features.sharedCalendar)
         assertEquals(true, features.peopleSearch)
         assertEquals(false, features.roomBooking)
+        assertEquals(false, features.signupOptions)
+    }
+
+    @Test
+    fun `signup options follow their own rollout access`() = testApplication {
+        val env = localTestEnvironment().copy(featureSignupOptions = no.nav.delta.FeatureAccess.MAINTAINERS)
+        application { installTestApi(env, database) { featureApi(env) } }
+        val features = readJson<Features>(client.get("/features").bodyAsText())
+        assertEquals(true, features.signupOptions)
+        assertEquals(false, features.sharedCalendar)
     }
 
     @Test

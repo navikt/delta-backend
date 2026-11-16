@@ -8,6 +8,10 @@ import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveText
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import no.nav.delta.calendar.SharedCalendarValidationException
 import io.ktor.server.response.respond
 import io.ktor.server.routing.*
 import java.time.LocalDateTime
@@ -156,6 +160,12 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 val usesSharedCalendar = env.isSharedCalendarEnabledFor(call.principalGroups())
                 if (!createEvent.invitees.isNullOrEmpty() && !usesSharedCalendar) {
                     return@put call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner krever en delt kalender.")
+                }
+                if (createEvent.configuresSignupOptions()) {
+                    if (!env.isSignupOptionsEnabledFor(call.principalGroups()))
+                        return@put call.respondProblem(HttpStatusCode.BadRequest, SIGNUP_OPTIONS_NOT_ENABLED)
+                    if (!usesSharedCalendar)
+                        return@put call.respondProblem(HttpStatusCode.BadRequest, SIGNUP_OPTIONS_REQUIRE_SHARED)
                 }
 
                 if (createEvent.recurrence != null) {
@@ -364,6 +374,14 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                     }
                     if (changedEvent.startTime.isAfter(changedEvent.endTime)) {
                         return@post call.respondProblem(HttpStatusCode.BadRequest, "Starttidspunktet må være før sluttidspunktet.")
+                    }
+                    if (changedEvent.configuresSignupOptions()) {
+                        if (originalEvent.inviteMode != InviteMode.SHARED)
+                            return@post call.respondProblem(HttpStatusCode.BadRequest, SIGNUP_OPTIONS_REQUIRE_SHARED)
+                        // Existing option events stay editable when the toggle is turned off.
+                        if (!database.usesSignupOptions(originalEvent.id) &&
+                            !env.isSignupOptionsEnabledFor(call.principalGroups()))
+                            return@post call.respondProblem(HttpStatusCode.BadRequest, SIGNUP_OPTIONS_NOT_ENABLED)
                     }
 
                     validateRoomAndTeamsToggles(changedEvent, call.principalGroups(), env)?.let {
@@ -594,6 +612,8 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             return@post it.left().unwrapAndRespond(call)
                         }
                     val changeParticipant = call.receive<ChangeParticipant>()
+                    if (changeParticipant.signupOptionId != null && event.inviteMode != InviteMode.SHARED)
+                        throw invalidSignupOption()
                     if (event.inviteMode == InviteMode.SHARED) {
                         return@post sharedMutation(call) {
                             sharedCalendar.changeRole(event.id, changeParticipant)
@@ -621,12 +641,25 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
         }
         route("/user/event") {
             route("/{id}") {
+                post("/signup-option") {
+                    val id = call.getUuidFromPath().getOrElse { return@post it.left().unwrapAndRespond(call) }
+                    val selection = call.receive<SignupOptionSelection>()
+                    val event = database.getEvent(id.toString()).getOrElse {
+                        return@post it.left().unwrapAndRespond(call)
+                    }
+                    if (event.inviteMode != InviteMode.SHARED) throw invalidSignupOption()
+                    sharedMutation(call) {
+                        sharedCalendar.changeSignupOption(id, call.principalEmail(), selection.signupOptionId)
+                        database.getFullEvent(id.toString()).unwrapAndRespond(call)
+                    }
+                }
                 post {
                     val id =
                         call.getUuidFromPath().getOrElse {
                             return@post it.left().unwrapAndRespond(call)
                         }
-                    val user = Participant(call.principalEmail(), call.principalName())
+                    val selection = call.receiveSignupOptionSelection()
+                    val user = Participant(call.principalEmail(), call.principalName(), selection.signupOptionId)
                     val event = database.getEvent(id.toString()).getOrElse {
                         return@post it.left().unwrapAndRespond(call)
                     }
@@ -636,6 +669,7 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                             call.respond("Success")
                         }
                     }
+                    if (selection.signupOptionId != null) throw invalidSignupOption()
 
                     val updateCalendarEventFuture =
                         database
@@ -929,5 +963,20 @@ fun ApplicationCall.principalName(): String {
         return "test@localhost"
     } else {
         principal<JWTPrincipal>()!!["name"]!!
+    }
+}
+
+private const val SIGNUP_OPTIONS_NOT_ENABLED = "Påmeldingsalternativer er ikke tilgjengelig ennå."
+private const val SIGNUP_OPTIONS_REQUIRE_SHARED = "Påmeldingsalternativer krever en delt kalender."
+private val selectionMapper = jacksonObjectMapper()
+
+/** Reads an optional signup option selection; older clients send no body. */
+internal suspend fun ApplicationCall.receiveSignupOptionSelection(): SignupOptionSelection {
+    val body = receiveText()
+    if (body.isBlank()) return SignupOptionSelection()
+    return try {
+        selectionMapper.readValue<SignupOptionSelection>(body)
+    } catch (_: Exception) {
+        throw SharedCalendarValidationException(400, "Ugyldig påmeldingsalternativ.")
     }
 }

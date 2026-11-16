@@ -35,6 +35,7 @@ Følgende hemmeligheter må injiseres som miljøvariabler i NAIS:
 | `FEATURE_ROOM_BOOKING` | `off` (default), `maintainers` eller `all`. Slår på rombooking. Se `docs/teams-meeting-room-booking-plan.md` |
 | `FEATURE_TEAMS_MEETING` | `off` (default), `maintainers` eller `all`. Slår på Teams-møter på hendelser |
 | `FEATURE_SHARED_CALENDAR` | `off` (default), `maintainers` eller `all`. Nye hendelser får en felles kalenderinvitasjon. Eksisterende hendelser beholder kalendermodellen sin. Se `docs/adr/0001-shared-calendar-event.md` |
+| `FEATURE_SIGNUP_OPTIONS` | `off` (default), `maintainers` or `all`. Allows creating shared-calendar events with several signup options (for example physical and digital attendance) with separate capacity. Existing option events stay editable when off |
 
 `WEBHOOK_CLIENT_STATE` lagres inn i Nais console secret `delta-backend-webhook-secret` og refereres i `nais.yaml`.
 

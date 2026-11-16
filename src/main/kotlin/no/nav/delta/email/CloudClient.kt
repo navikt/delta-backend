@@ -22,6 +22,7 @@ import java.time.OffsetDateTime
 import no.nav.delta.Environment
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
+import no.nav.delta.event.seatLimited
 import no.nav.delta.event.RoomBookingStatus
 import no.nav.delta.room.RoomAvailability
 import no.nav.delta.room.RoomAvailabilityRequest
@@ -1375,7 +1376,7 @@ internal fun prepareMasterCalendarEvent(event: Event): com.microsoft.graph.model
 private fun forwardingPolicy(event: Event) = listOf(
     SingleValueLegacyExtendedProperty().apply {
         id = "Boolean {00020329-0000-0000-C000-000000000046} Name DoNotForward"
-        value = (event.participantLimit > 0).toString()
+        value = event.seatLimited().toString()
     }
 )
 

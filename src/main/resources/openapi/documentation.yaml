@@ -309,7 +309,9 @@ paths:
     post:
       tags:
         - user
-      description: "Join an event"
+      description: >-
+        Join an event. The body is optional. It is required when the event has more than one
+        signup option (400 otherwise), and rejected with 400 on events without options.
       operationId: joinEvent
       parameters:
         - name: id
@@ -319,6 +321,12 @@ paths:
           schema:
             type: string
             format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupOptionSelection'
       responses:
         "200":
           description: "Event joined"
@@ -338,6 +346,36 @@ paths:
       responses:
         "200":
           description: "Event left"
+  /user/event/{id}/signup-option:
+    post:
+      tags:
+        - user
+      description: >-
+        Switch the caller's registration to another signup option. Allowed only before the signup
+        deadline. Returns 409 if the caller is not a registered participant, and the event-full
+        error if the destination option is full; the current place is kept in both cases.
+      operationId: switchSignupOption
+      parameters:
+        - name: id
+          in: path
+          description: "Event id"
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupOptionSelection'
+      responses:
+        "200":
+          description: "Registration moved"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FullEvent'
   /event:
     get:
       tags:
@@ -1013,6 +1051,64 @@ components:
             value. Once enabled it cannot be turned off (false returns 400); delete the event
             instead. Server-managed fields (roomStatus, teamsJoinUrl, teamsConferenceId,
             teamsDialIn) are ignored if sent.
+        signupOptions:
+          type: array
+          nullable: true
+          maxItems: 10
+          description: >-
+            Signup options with their own capacity (feature toggled, SHARED events only).
+            Null keeps the current options. Converting an event needs at least two options;
+            once converted, an empty list is rejected. Options are matched by id; omitted
+            options are removed (409 if anyone is registered, invited or queued in them).
+            Event-level participantLimit and waitlistEnabled are ignored for option events.
+          items:
+            $ref: "#/components/schemas/SignupOptionRequest"
+    SignupOptionRequest:
+      type: object
+      required: [label]
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Existing option to update; null creates a new option.
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        participantLimit:
+          type: integer
+          minimum: 0
+          description: 0 means no limit other than the calendar attendee ceiling.
+        waitlistEnabled:
+          type: boolean
+          description: Requires participantLimit above 0.
+    SignupOption:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        participantLimit:
+          type: integer
+          description: 0 means no limit other than the calendar attendee ceiling.
+        waitlistEnabled:
+          type: boolean
+        allocatedSeats:
+          type: integer
+          description: Registrations plus open invitations in this option. Hosts never count.
+        waitlistCount:
+          type: integer
+    SignupOptionSelection:
+      type: object
+      properties:
+        signupOptionId:
+          type: string
+          format: uuid
+          nullable: true
+          description: May be omitted only when the event has at most one signup option.
     Event:
       type: object
       properties:
@@ -1046,6 +1142,12 @@ components:
           format: date-time
         participantLimit:
           type: integer
+          description: Always 0 for events with signup options; capacity is per option.
+        signupOptions:
+          type: array
+          description: Empty for events without signup options.
+          items:
+            $ref: "#/components/schemas/SignupOption"
         roomEmail:
           type: string
           nullable: true
@@ -1094,6 +1196,9 @@ components:
         peopleSearch:
           type: boolean
           description: Caller can use directory-backed people search.
+        signupOptions:
+          type: boolean
+          description: Caller can configure signup options on new events.
     InviteeRequest:
       type: object
       additionalProperties: false
@@ -1103,6 +1208,11 @@ components:
           type: string
           format: email
           description: Individually addressed Nav user; no distribution lists or groups.
+        signupOptionId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Option to reserve a place in; required when the event has several options.
     DirectoryPerson:
       type: object
       properties:
@@ -1124,6 +1234,10 @@ components:
         status:
           type: string
           enum: [INVITED, REGISTERED, DECLINED, FORWARDED]
+        signupOptionId:
+          type: string
+          format: uuid
+          nullable: true
     RoomList:
       type: object
       properties:
@@ -1309,6 +1423,11 @@ components:
           format: email
         name:
           type: string
+        signupOptionId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for hosts and for events without signup options.
     ChangeParticipant:
       type: object
       properties:
@@ -1318,6 +1437,13 @@ components:
         type:
           type: string
           enum: [HOST, PARTICIPANT]
+        signupOptionId:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            Option to move a participant or invitation to. Required when making a host a
+            participant on an event with several options; ignored when making someone a host.
     LeaveEvent:
       properties:
         otp:
