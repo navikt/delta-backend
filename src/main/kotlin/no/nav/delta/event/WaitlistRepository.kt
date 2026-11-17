@@ -16,10 +16,18 @@ data class WaitlistState(
     val position: Int?,
     val registered: Boolean,
     val open: Boolean,
+    // The option the caller is queued for or registered in, when the event has signup options.
+    val signupOptionId: UUID? = null,
 )
 
-data class WaitlistEntry(val email: String, val name: String, val position: Int)
-data class MyWaitlistEvent(val event: Event, val position: Int, val open: Boolean, val hosts: List<Participant>)
+data class WaitlistEntry(val email: String, val name: String, val position: Int, val signupOptionId: UUID? = null)
+data class MyWaitlistEvent(
+    val event: Event,
+    val position: Int,
+    val open: Boolean,
+    val hosts: List<Participant>,
+    val signupOptionId: UUID? = null,
+)
 
 class WaitlistRepository(private val db: DatabaseInterface) {
     fun state(id: UUID, email: String): WaitlistState = db.repeatableReadTransaction { c ->
@@ -33,19 +41,20 @@ class WaitlistRepository(private val db: DatabaseInterface) {
     fun join(id: UUID, participant: Participant): WaitlistState = db.repeatableReadTransaction { c ->
         val event = lockAllocationEvent(c, id)
         val email = participant.email.trim().lowercase()
-        if (!event.waitlistEnabled || event.participantLimit <= 0)
+        val scope = resolveScope(c, event, participant.signupOptionId)
+        if (!scope.waitlistEnabled || scope.limit <= 0)
             throw SharedCalendarValidationException(409, "Arrangementet har ikke venteliste.")
         if (!waitlistOpen(event)) throw DeadlinePassedException
         val current = state(c, event, email)
         if (current.registered || current.position != null) return@repeatableReadTransaction current
-        if (hasSeatReservation(c, event, email))
+        if (hasSeatReservation(c, scope, email))
             throw SharedCalendarValidationException(409, "Du har en reservert plass. Meld deg på arrangementet.")
-        if (current.count == 0 && allocatedSeats(c, event) < event.participantLimit)
+        if (!queueHasEntries(c, scope) && allocatedSeats(c, scope) < scope.limit)
             throw SharedCalendarValidationException(409, "Det er en ledig plass. Meld deg på arrangementet.")
         c.exec("""
-            INSERT INTO event_waitlist(event_id,email,name) VALUES (?,?,?)
+            INSERT INTO event_waitlist(event_id,email,name,signup_option_id) VALUES (?,?,?,?::uuid)
             ON CONFLICT(event_id,email) DO NOTHING
-        """.trimIndent(), id, email, participant.name)
+        """.trimIndent(), id, email, participant.name, scope.optionId)
         state(c, event, email)
     }
 
@@ -65,8 +74,9 @@ class WaitlistRepository(private val db: DatabaseInterface) {
 
     fun mine(email: String): List<MyWaitlistEvent> = db.repeatableReadTransaction { c ->
         c.prepareStatement("""
-            SELECT e.*, (SELECT COUNT(*) FROM event_waitlist before
-                WHERE before.event_id=w.event_id AND before.id<=w.id) AS position
+            SELECT e.*, w.signup_option_id AS queued_option, (SELECT COUNT(*) FROM event_waitlist before
+                WHERE before.event_id=w.event_id AND before.id<=w.id
+                AND before.signup_option_id IS NOT DISTINCT FROM w.signup_option_id) AS position
             FROM event_waitlist w JOIN event e ON e.id=w.event_id
             WHERE w.email=? AND e.end_time>? ORDER BY e.start_time,e.id
         """.trimIndent()).use { s ->
@@ -75,18 +85,23 @@ class WaitlistRepository(private val db: DatabaseInterface) {
             s.executeQuery().use { r -> r.toList {
                 val event = toEvent()
                 MyWaitlistEvent(event.copy(teamsJoinUrl = null, teamsConferenceId = null, teamsDialIn = null),
-                    getInt("position"), waitlistOpen(event), emptyList())
+                    getInt("position"), waitlistOpen(event), emptyList(), getObject("queued_option", UUID::class.java))
             } }
         }.let { events ->
-            val hosts = hosts(c, events.map { it.event.id })
-            events.map { it.copy(hosts = hosts[it.event.id].orEmpty()) }
+            val ids = events.map { it.event.id }
+            val hosts = hosts(c, ids)
+            val options = loadSignupOptions(c, ids)
+            events.map {
+                it.copy(event = it.event.copy(signupOptions = options[it.event.id].orEmpty()),
+                    hosts = hosts[it.event.id].orEmpty())
+            }
         }
     }
 
     private fun hosts(c: Connection, eventIds: List<UUID>): Map<UUID, List<Participant>> {
         if (eventIds.isEmpty()) return emptyMap()
         return c.prepareStatement(
-            "SELECT event_id,email,name FROM participant WHERE type='HOST' AND event_id = ANY(?) ORDER BY id"
+            "SELECT event_id,email,name FROM participant WHERE type='HOST' AND event_id = ANY(?) ORDER BY name,email"
         ).use { s ->
             s.setArray(1, c.createArrayOf("uuid", eventIds.toTypedArray()))
             s.executeQuery().use { r ->
@@ -96,38 +111,47 @@ class WaitlistRepository(private val db: DatabaseInterface) {
     }
 
     private fun entries(c: Connection, id: UUID): List<WaitlistEntry> =
-        c.prepareStatement("SELECT email,name FROM event_waitlist WHERE event_id=? ORDER BY id").use { s ->
+        c.prepareStatement("""
+            SELECT email,name,signup_option_id,
+                ROW_NUMBER() OVER(PARTITION BY signup_option_id ORDER BY id) AS position
+            FROM event_waitlist WHERE event_id=? ORDER BY id
+        """.trimIndent()).use { s ->
             s.setObject(1, id)
             s.executeQuery().use { r ->
-                r.toList { getString("email") to getString("name") }
-                    .mapIndexed { index, person -> WaitlistEntry(person.first, person.second, index + 1) }
+                r.toList {
+                    WaitlistEntry(getString("email"), getString("name"), getInt("position"),
+                        getObject("signup_option_id", UUID::class.java))
+                }
             }
         }
 
     private fun state(c: Connection, event: Event, email: String): WaitlistState {
-        val (count, position) = c.prepareStatement("""
-            WITH queue AS (
-                SELECT email,ROW_NUMBER() OVER(ORDER BY id) AS position
-                FROM event_waitlist WHERE event_id=?
-            )
-            SELECT COUNT(*),MAX(position) FILTER(WHERE email=?) FROM queue
+        val options = signupOptions(c, event.id)
+        val queued = c.prepareStatement("""
+            SELECT signup_option_id,(SELECT COUNT(*) FROM event_waitlist before WHERE before.event_id=w.event_id
+                AND before.id<=w.id AND before.signup_option_id IS NOT DISTINCT FROM w.signup_option_id)
+            FROM event_waitlist w WHERE event_id=? AND email=?
         """.trimIndent()).use { s ->
             s.setObject(1, event.id); s.setString(2, email)
-            s.executeQuery().use {
-                it.next()
-                val count = it.getInt(1)
-                val position = it.getInt(2).let { position -> if (it.wasNull()) null else position }
-                count to position
-            }
+            s.executeQuery().use { if (it.next()) it.getObject(1, UUID::class.java) to it.getInt(2) else null }
         }
-        val registered = c.prepareStatement("""
-            SELECT 1 FROM participant WHERE event_id=? AND lower(email)=?
+        val registration = c.prepareStatement("""
+            SELECT signup_option_id FROM participant WHERE event_id=? AND lower(email)=?
             AND (type='HOST' OR status='REGISTERED')
         """.trimIndent()).use { s ->
             s.setObject(1, event.id); s.setString(2, email)
-            s.executeQuery().use { it.next() }
+            s.executeQuery().use { if (it.next()) listOf(it.getObject(1, UUID::class.java)) else null }
         }
-        return WaitlistState(event.waitlistEnabled, count, position, registered, waitlistOpen(event))
+        val optionId = queued?.first ?: registration?.firstOrNull()
+        val count = c.prepareStatement("""
+            SELECT COUNT(*) FROM event_waitlist WHERE event_id=?
+            AND (?::uuid IS NULL OR signup_option_id=?::uuid)
+        """.trimIndent()).use { s ->
+            s.setObject(1, event.id); s.setObject(2, optionId); s.setObject(3, optionId)
+            s.executeQuery().use { it.next(); it.getInt(1) }
+        }
+        val enabled = if (options.isEmpty()) event.waitlistEnabled else options.any { it.waitlistEnabled }
+        return WaitlistState(enabled, count, queued?.second, registration != null, waitlistOpen(event), optionId)
     }
 }
 
@@ -184,24 +208,38 @@ internal fun lockAllocationEvent(c: Connection, id: UUID): Event {
     return event
 }
 
-internal fun hasSeatReservation(c: Connection, event: Event, email: String): Boolean =
+/** Whether the person holds an active invitation reservation in this allocation scope. */
+internal fun hasSeatReservation(c: Connection, scope: AllocationScope, email: String): Boolean =
     c.prepareStatement("""
         SELECT 1 FROM participant WHERE event_id=? AND lower(email)=? AND status='INVITED'
+        AND signup_option_id IS NOT DISTINCT FROM ?::uuid
         AND (?::timestamp IS NULL OR ?::timestamp>?)
     """.trimIndent()).use { s ->
-        s.setObject(1, event.id); s.setString(2, email)
-        s.setObject(3, event.signupDeadline); s.setObject(4, event.signupDeadline); s.setObject(5, allocationNow())
+        val deadline = scope.event.signupDeadline
+        s.setObject(1, scope.event.id); s.setString(2, email); s.setObject(3, scope.optionId)
+        s.setObject(4, deadline); s.setObject(5, deadline); s.setObject(6, allocationNow())
         s.executeQuery().use { it.next() }
     }
 
-internal fun allocatedSeats(c: Connection, event: Event): Int =
+/**
+ * Seats taken in a scope. Event-level scopes count hosts, registrations and active invitations;
+ * option scopes count only non-host registrations and active invitations in that option.
+ */
+internal fun allocatedSeats(c: Connection, scope: AllocationScope): Int =
     c.prepareStatement("""
-        SELECT COUNT(*) FROM participant WHERE event_id=? AND
-        (type='HOST' OR status='REGISTERED' OR
-            (status='INVITED' AND (?::timestamp IS NULL OR ?::timestamp>?)))
+        SELECT COUNT(*) FROM participant WHERE event_id=? AND (
+            (?::uuid IS NULL AND (type='HOST' OR status='REGISTERED' OR
+                (status='INVITED' AND (?::timestamp IS NULL OR ?::timestamp>?))))
+            OR (signup_option_id=?::uuid AND type<>'HOST' AND (status='REGISTERED' OR
+                (status='INVITED' AND (?::timestamp IS NULL OR ?::timestamp>?))))
+        )
     """.trimIndent()).use { s ->
-        s.setObject(1, event.id); s.setObject(2, event.signupDeadline)
-        s.setObject(3, event.signupDeadline); s.setObject(4, allocationNow())
+        val deadline = scope.event.signupDeadline
+        val now = allocationNow()
+        s.setObject(1, scope.event.id); s.setObject(2, scope.optionId)
+        s.setObject(3, deadline); s.setObject(4, deadline); s.setObject(5, now)
+        s.setObject(6, scope.optionId)
+        s.setObject(7, deadline); s.setObject(8, deadline); s.setObject(9, now)
         s.executeQuery().use { it.next(); it.getInt(1) }
     }
 
@@ -210,7 +248,9 @@ internal fun validateWaitlistEdit(c: Connection, event: Event, enabled: Boolean,
     if (enabled && limit <= 0)
         throw SharedCalendarValidationException(400, "Venteliste krever et begrenset antall plasser.")
     if (!enabled || limit <= 0) {
-        val queued = c.prepareStatement("SELECT 1 FROM event_waitlist WHERE event_id=? LIMIT 1").use { s ->
+        val queued = c.prepareStatement(
+            "SELECT 1 FROM event_waitlist WHERE event_id=? AND signup_option_id IS NULL LIMIT 1"
+        ).use { s ->
             s.setObject(1, event.id); s.executeQuery().use { it.next() }
         }
         if (queued) throw SharedCalendarValidationException(409,
@@ -270,11 +310,22 @@ private fun reclaimWaitlistCalendarSlot(c: Connection, event: Event) {
 }
 
 internal fun promoteWaitlist(c: Connection, event: Event) {
-    if (!event.waitlistEnabled || event.participantLimit <= 0 || !waitlistOpen(event)) return
-    val available = event.participantLimit - allocatedSeats(c, event)
+    if (!waitlistOpen(event)) return
+    // A queue blocked by calendar room must not stop other options from promoting.
+    allocationScopes(c, event).forEach { promoteWaitlist(c, it) }
+}
+
+/** Promotes queued people into free seats of one scope, stopping when calendar room runs out. */
+private fun promoteWaitlist(c: Connection, scope: AllocationScope) {
+    val event = scope.event
+    if (!scope.waitlistEnabled || scope.limit <= 0) return
+    val available = scope.limit - allocatedSeats(c, scope)
     if (available <= 0) return
-    val queue = c.prepareStatement("SELECT * FROM event_waitlist WHERE event_id=? ORDER BY id LIMIT ?").use { s ->
-        s.setObject(1, event.id); s.setInt(2, available)
+    val queue = c.prepareStatement("""
+        SELECT * FROM event_waitlist WHERE event_id=? AND signup_option_id IS NOT DISTINCT FROM ?::uuid
+        ORDER BY id LIMIT ?
+    """.trimIndent()).use { s ->
+        s.setObject(1, event.id); s.setObject(2, scope.optionId); s.setInt(3, available)
         s.executeQuery().use { it.toList { Participant(getString("email"), getString("name")) } }
     }
     queue.forEach { participant ->
@@ -290,12 +341,13 @@ internal fun promoteWaitlist(c: Connection, event: Event) {
         }
         val deliveryId = UUID.randomUUID()
         c.exec("""
-            INSERT INTO participant(event_id,email,name,type,status,last_response_time,waitlist_notification_id)
-            VALUES (?,?,?,'PARTICIPANT','REGISTERED',NOW(),?)
+            INSERT INTO participant(event_id,email,name,type,status,last_response_time,waitlist_notification_id,signup_option_id)
+            VALUES (?,?,?,'PARTICIPANT','REGISTERED',NOW(),?,?::uuid)
             ON CONFLICT(event_id,email) DO UPDATE SET status='REGISTERED',last_response_time=NOW(),
                 waitlist_notification_id=EXCLUDED.waitlist_notification_id,
+                signup_option_id=EXCLUDED.signup_option_id,
                 calendar_event_id=NULL,waitlist_calendar_event_id=NULL
-        """.trimIndent(), event.id, participant.email, participant.name, deliveryId)
+        """.trimIndent(), event.id, participant.email, participant.name, deliveryId, scope.optionId)
         c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", event.id, participant.email)
         c.exec("INSERT INTO waitlist_notification(id,event_id,email,name) VALUES (?,?,?,?)",
             deliveryId, event.id, participant.email, participant.name)

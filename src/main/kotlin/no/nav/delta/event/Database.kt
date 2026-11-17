@@ -136,6 +136,7 @@ WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
                             Participant(
                                 email = result.getString("email"),
                                 name = result.getString("name"),
+                                signupOptionId = result.getObject("signup_option_id", UUID::class.java),
                             ))
                     } else {
                         null
@@ -152,20 +153,21 @@ WHERE  id = Uuid(?)${if (onlyPublic) " AND event.public = TRUE" else ""};
                             Participant(
                                 email = getString("email"),
                                 name = getString("name"),
+                                signupOptionId = getObject("signup_option_id", UUID::class.java),
                     )))
                 }
             }
             val recurringSeries = loadRecurringSeriesSummaries(connection, listOf(event.id))[event.id]
 
             FullEvent(
-                event = event,
+                event = event.withSignupOptions(connection),
                 participants =
                     participants
                         .filter { it.first.first == ParticipantType.PARTICIPANT && it.first.second == ParticipantStatus.REGISTERED }
                         .map { it.second },
-                hosts = participants.filter { it.first.first == ParticipantType.HOST }.map { it.second },
+                hosts = participants.filter { it.first.first == ParticipantType.HOST }.map { it.second.copy(signupOptionId = null) },
                 invited = participants.filter { it.first.first != ParticipantType.HOST && it.first.second != ParticipantStatus.REGISTERED }
-                    .map { Invitation(it.second.name, it.second.email, it.first.second) },
+                    .map { Invitation(it.second.name, it.second.email, it.first.second, it.second.signupOptionId) },
                 calendarSyncError = calendarSyncError,
                 categories = categories,
                 recurringSeries = recurringSeries,
@@ -484,7 +486,8 @@ fun DatabaseInterface.getFullEvents(
     return connection.use { connection ->
         // Query 1: all matching events with their participants
         val eventsStmt = connection.prepareStatement("""
-            SELECT e.*, p.email AS p_email, p.name AS p_name, p.type AS p_type, p.status AS p_status
+            SELECT e.*, p.email AS p_email, p.name AS p_name, p.type AS p_type, p.status AS p_status,
+                p.signup_option_id AS p_signup_option_id
             FROM (SELECT * FROM event WHERE ${filter.whereClause} ORDER BY start_time) e
             LEFT JOIN participant p ON e.id = p.event_id
             ORDER BY e.start_time, e.id
@@ -499,13 +502,14 @@ fun DatabaseInterface.getFullEvents(
             val acc = eventsMap.getOrPut(event.id) { EventAccumulator(event, calendarSyncError = eventsResult.getString("calendar_sync_error")) }
             val pEmail = eventsResult.getString("p_email")
             if (pEmail != null) {
-                val participant = Participant(email = pEmail, name = eventsResult.getString("p_name"))
+                val participant = Participant(email = pEmail, name = eventsResult.getString("p_name"),
+                    signupOptionId = eventsResult.getObject("p_signup_option_id", UUID::class.java))
                 when (ParticipantType.valueOf(eventsResult.getString("p_type"))) {
-                    ParticipantType.HOST -> acc.hosts.add(participant)
+                    ParticipantType.HOST -> acc.hosts.add(participant.copy(signupOptionId = null))
                     ParticipantType.PARTICIPANT -> {
                         val status = ParticipantStatus.valueOf(eventsResult.getString("p_status"))
                         if (status == ParticipantStatus.REGISTERED) acc.participants.add(participant)
-                        else acc.invited.add(Invitation(participant.name, participant.email, status))
+                        else acc.invited.add(Invitation(participant.name, participant.email, status, participant.signupOptionId))
                     }
                 }
             }
@@ -533,10 +537,11 @@ fun DatabaseInterface.getFullEvents(
         }
 
         val recurringSeriesMap = loadRecurringSeriesSummaries(connection, eventsMap.keys)
+        val signupOptionsMap = loadSignupOptions(connection, eventsMap.keys)
 
         eventsMap.values.map { acc ->
             FullEvent(
-                event = acc.event,
+                event = acc.event.copy(signupOptions = signupOptionsMap[acc.event.id].orEmpty()),
                 participants = acc.participants,
                 hosts = acc.hosts,
                 categories = categoriesMap[acc.event.id] ?: emptyList(),

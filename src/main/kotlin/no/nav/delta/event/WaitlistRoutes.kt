@@ -35,7 +35,9 @@ fun Route.waitlistApi(database: DatabaseInterface) {
             }
             post {
                 val id = call.getUuidFromPath().getOrElse { return@post it.left().unwrapAndRespond(call) }
-                call.respond(repository.join(id, Participant(call.principalEmail(), call.principalName())))
+                val selection = call.receiveSignupOptionSelection()
+                call.respond(repository.join(id,
+                    Participant(call.principalEmail(), call.principalName(), selection.signupOptionId)))
             }
             delete {
                 val id = call.getUuidFromPath().getOrElse { return@delete it.left().unwrapAndRespond(call) }

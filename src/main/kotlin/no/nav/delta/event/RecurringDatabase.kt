@@ -49,6 +49,9 @@ fun DatabaseInterface.createRecurringEventSeries(
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
     if (!createEvent.invitees.isNullOrEmpty())
         return UnsupportedRecurringOperationException("Invitasjoner støttes ikke for gjentakende serier.").left()
+    val signupOptions = createEvent.signupOptions?.takeIf { createEvent.configuresSignupOptions() }
+        ?.let { SeriesSignupOptions(emptyList(), it) }
+    val createEvent = if (signupOptions != null) createEvent.copy(participantLimit = 0, waitlistEnabled = false) else createEvent
     val draft =
         when (val seriesDraft = createEvent.toRecurringSeriesDraft(hostEmail)) {
             is Either.Left -> return seriesDraft
@@ -76,9 +79,14 @@ fun DatabaseInterface.createRecurringEventSeries(
                 insertRecurringOccurrence(connection, seriesId, event.id, occurrence.occurrenceIndex, occurrence.occurrenceDate)
                 insertParticipant(connection, event.id, hostEmail, hostName, ParticipantType.HOST)
                 replaceEventCategories(connection, event.id, draft.categories)
-                if (inviteMode == InviteMode.SHARED)
-                    SharedCalendarRepository(this).initializeOccurrence(connection, event, createEvent.invitees ?: emptyList())
-                else event
+                val initialized =
+                    if (inviteMode == InviteMode.SHARED)
+                        SharedCalendarRepository(this).initializeOccurrence(connection, event, createEvent.invitees ?: emptyList())
+                    else event
+                if (signupOptions != null) {
+                    signupOptions.apply(connection, initialized)
+                    initialized.withSignupOptions(connection)
+                } else initialized
             }
 
         connection.commit()
@@ -128,6 +136,15 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
         if (upcomingOccurrences.any { !isHostOf(connection, it.event.id, updatedByEmail) }) {
             return ForbiddenException.left()
         }
+
+        val selectedOptions = storedSignupOptions(connection, selectedOccurrence.event.id)
+        val requestedOptions = createEvent.signupOptions?.let { SeriesSignupOptions(selectedOptions, it) }
+        // New occurrences copy the options of the edited occurrence when the request keeps them.
+        val insertedOptions = requestedOptions ?: selectedOptions.takeIf { it.isNotEmpty() }
+            ?.let { SeriesSignupOptions.copyOf(it) }
+        val optionSeries = insertedOptions != null && insertedOptions.requests.isNotEmpty()
+        val requestedCapacity = createEvent
+        val createEvent = if (optionSeries) createEvent.copy(participantLimit = 0, waitlistEnabled = false) else createEvent
 
         // If the recurrence specifies an offset, it takes precedence over CreateEvent.signupDeadline
         val signupDeadlineOffsetMinutes =
@@ -201,27 +218,35 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
         val updatedEvents =
             upcomingOccurrences.take(desiredCount).mapIndexed { index, occurrence ->
                 val desired = desiredOccurrences[index]
+                val wasSeatLimited = seatLimited(connection, occurrence.event.id)
+                // Without requested options each occurrence keeps its own kind, so ordinary ones keep their capacity.
+                val optionEvent = requestedOptions?.requests?.isNotEmpty()
+                    ?: usesSignupOptions(connection, occurrence.event.id)
+                val capacity = if (optionEvent) createEvent else requestedCapacity
                 val updatedEvent =
                     updateEvent(
                         connection = connection,
+                        validateWaitlist = !optionEvent,
                         newEvent =
                             Event(
                                 id = occurrence.event.id,
-                                waitlistEnabled = createEvent.waitlistEnabled,
+                                waitlistEnabled = capacity.waitlistEnabled,
                                 title = createEvent.title,
                                 description = createEvent.description,
                                 startTime = desired.startTime,
                                 endTime = desired.endTime,
                                 location = createEvent.location,
                                 public = createEvent.public,
-                                participantLimit = createEvent.participantLimit,
+                                participantLimit = capacity.participantLimit,
                                 signupDeadline = desired.signupDeadline,
                             ),
                     )
                 if (createEvent.categories != null) {
                     replaceEventCategories(connection, updatedEvent.id, createEvent.categories)
                 }
-                val detailsChanged = sharedCalendarDetailsChanged(occurrence.event, updatedEvent)
+                if (requestedOptions?.apply(connection, updatedEvent) == true) promoteWaitlist(connection, updatedEvent)
+                val detailsChanged = sharedCalendarDetailsChanged(occurrence.event, updatedEvent) ||
+                    wasSeatLimited != seatLimited(connection, updatedEvent.id)
                 if (updatedEvent.inviteMode == InviteMode.SHARED) {
                     SharedCalendarRepository(this).initializeOccurrence(
                         connection, updatedEvent, createEvent.invitees ?: emptyList(), detailsChanged,
@@ -234,9 +259,10 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                     occurrenceIndex = if (!isSplit) occurrence.occurrenceIndex else index,
                     occurrenceDate = desired.occurrenceDate,
                 )
+                val result = updatedEvent.withSignupOptions(connection)
                 if (updatedEvent.inviteMode == InviteMode.SHARED && detailsChanged)
-                    updatedEvent.copy(calendarSyncStatus = CalendarSyncStatus.PENDING)
-                else updatedEvent
+                    result.copy(calendarSyncStatus = CalendarSyncStatus.PENDING)
+                else result
             }
 
         // Delete occurrences that fall beyond the new untilDate (shortening)
@@ -272,9 +298,14 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
                 }
                 replaceEventCategories(connection, newEvent.id, targetCategories)
                 insertRecurringOccurrence(connection, targetSeriesId, newEvent.id, absoluteIndex, desired.occurrenceDate)
-                if (selectedOccurrence.event.inviteMode == InviteMode.SHARED)
-                    SharedCalendarRepository(this).initializeOccurrence(connection, newEvent, createEvent.invitees ?: emptyList())
-                else newEvent
+                val initialized =
+                    if (selectedOccurrence.event.inviteMode == InviteMode.SHARED)
+                        SharedCalendarRepository(this).initializeOccurrence(connection, newEvent, createEvent.invitees ?: emptyList())
+                    else newEvent
+                if (optionSeries) {
+                    insertedOptions!!.apply(connection, initialized, minimumForConversion = 1)
+                    initialized.withSignupOptions(connection)
+                } else initialized
             }
 
         if (isSplit) {
@@ -763,9 +794,11 @@ private fun insertEvent(
 private fun updateEvent(
     connection: Connection,
     newEvent: Event,
+    // Option events validate their waiting lists per option.
+    validateWaitlist: Boolean = true,
 ): Event {
     val original = lockAllocationEvent(connection, newEvent.id)
-    validateWaitlistEdit(connection, original, newEvent.waitlistEnabled, newEvent.participantLimit)
+    if (validateWaitlist) validateWaitlistEdit(connection, original, newEvent.waitlistEnabled, newEvent.participantLimit)
     val preparedStatement =
         connection.prepareStatement(
             """

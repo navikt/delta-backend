@@ -11,6 +11,7 @@ import no.nav.delta.email.SharedGraphException
 import com.microsoft.graph.models.ResponseType
 import com.microsoft.kiota.ApiException
 import no.nav.delta.event.Participant
+import no.nav.delta.event.seatLimited
 import no.nav.delta.room.MasterEventResult
 import org.slf4j.LoggerFactory
 import java.time.Instant
@@ -176,10 +177,11 @@ class CalendarSyncWorker(
             repository.recordEstimatedRecipients(work, 1)
             cloudClient.sendEmail(
                 subject = "Delta registration was not accepted",
-                body = if (refusal.reason == "FULL") {
-                    "Your Outlook acceptance could not register you in Delta because the event is full."
-                } else {
-                    "Your Outlook acceptance could not register you in Delta because the signup deadline has passed."
+                body = when (refusal.reason) {
+                    "FULL" -> "Your Outlook acceptance could not register you in Delta because the event is full."
+                    "OPTION_REQUIRED" -> "Your Outlook acceptance could not register you in Delta because the " +
+                        "event has several ways to attend. Sign up in Delta and choose how you will attend."
+                    else -> "Your Outlook acceptance could not register you in Delta because the signup deadline has passed."
                 },
                 toRecipients = listOf(refusal.email),
             )
@@ -222,7 +224,7 @@ class CalendarSyncWorker(
                 original.startTime != event.startTime || original.endTime != event.endTime ||
                 original.location != event.location || original.roomEmail != event.roomEmail ||
                 original.isOnlineMeeting != event.isOnlineMeeting ||
-                (original.participantLimit > 0) != (event.participantLimit > 0)
+                original.seatLimited() != event.seatLimited()
         } == true
         if (work.details && (!createsCalendar || creationDetailsChanged)) {
             repository.recordEstimatedRecipients(work, target.size)

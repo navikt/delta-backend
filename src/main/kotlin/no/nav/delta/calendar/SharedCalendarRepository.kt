@@ -14,7 +14,6 @@ import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -109,8 +108,13 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         """.trimIndent(), now.atOffset(ZoneOffset.UTC).toLocalDate(), count.toLong())
     }
     fun create(draft: CreateEvent, host: Participant): Event = routeResult(create(draft, host.email, host.name))
-    fun signup(id: UUID, participant: Participant) { routeResult(signup(id, participant.email, participant.name)) }
+    fun signup(id: UUID, participant: Participant) {
+        routeResult(signup(id, participant.email, participant.name, participant.signupOptionId))
+    }
     fun remove(id: UUID, email: String) { routeResult(removeParticipant(id, email)) }
+    fun changeSignupOption(id: UUID, email: String, signupOptionId: UUID?) {
+        routeResult(switchSignupOption(id, email, signupOptionId))
+    }
     fun changeRole(id: UUID, change: ChangeParticipant) { routeResult(changeParticipant(id, change)) }
     fun invite(id: UUID, requests: List<InviteeRequest>, actorEmail: String) {
         routeResult(mutate(id) { c, event ->
@@ -123,11 +127,14 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         routeResult(updateInternal(id, draft, actorEmail))
     fun update(id: UUID, draft: CreateEvent): Either<ExceptionWithDefaultResponse, Event> =
         updateInternal(id, draft, null)
-    private fun updateInternal(id: UUID, draft: CreateEvent, actorEmail: String?): Either<ExceptionWithDefaultResponse, Event> =
+    private fun updateInternal(id: UUID, request: CreateEvent, actorEmail: String?): Either<ExceptionWithDefaultResponse, Event> =
         mutate(id) { c, original ->
             if (actorEmail != null) requireHost(c, id, actorEmail)
+            val optionEvent = usesSignupOptions(c, id) || request.configuresSignupOptions()
+            val draft = if (optionEvent) request.withoutEventLevelCapacity() else request
             validateDraft(draft)
-            validateWaitlistEdit(c, original, draft.waitlistEnabled, draft.participantLimit)
+            if (!optionEvent) validateWaitlistEdit(c, original, draft.waitlistEnabled, draft.participantLimit)
+            val wasSeatLimited = seatLimited(c, id)
             requireNonRecurringInvites(c, id, draft.invitees ?: emptyList())
             if (original.isOnlineMeeting && draft.isOnlineMeeting == false)
                 throw SharedCalendarValidationException(400, "Et eksisterende Teams-møte kan ikke slås av.")
@@ -148,17 +155,20 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             draft.categories?.let { replaceCategories(c, id, it) }
             c.exec("UPDATE event SET waitlist_enabled=? WHERE id=?", draft.waitlistEnabled, id)
             val allocatedEvent = event.copy(waitlistEnabled = draft.waitlistEnabled)
+            applySignupOptions(c, allocatedEvent, request.signupOptions, ::matchSignupOptionById,
+                ::newSignupOptionWithRequestedId)
             promoteWaitlist(c, allocatedEvent)
             draft.invitees?.let { invite(c, allocatedEvent, it, actorEmail?.let { email -> identityEmail(email) }) }
-            requireCapacity(c, event, 0)
+            requireAllCapacity(c, allocatedEvent)
             requireAttendeeRoom(c, event, 0)
             val detailsChanged = original.title != event.title || original.description != event.description ||
                 original.startTime != event.startTime || original.endTime != event.endTime ||
                 original.location != event.location || original.roomEmail != event.roomEmail ||
                 original.roomName != event.roomName || original.isOnlineMeeting != event.isOnlineMeeting ||
-                (original.participantLimit > 0) != (event.participantLimit > 0)
+                wasSeatLimited != seatLimited(c, id)
             if (detailsChanged) enqueue(c, id, details = true)
-            if (detailsChanged) allocatedEvent.copy(calendarSyncStatus = CalendarSyncStatus.PENDING) else allocatedEvent
+            val updated = allocatedEvent.withSignupOptions(c)
+            if (detailsChanged) updated.copy(calendarSyncStatus = CalendarSyncStatus.PENDING) else updated
         }
 
     fun retry(id: UUID) { routeResult(retryFailed(id)) }
@@ -168,8 +178,9 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         Unit
     }
 
-    fun create(draft: CreateEvent, hostEmail: String, hostName: String): Either<ExceptionWithDefaultResponse, Event> =
+    fun create(request: CreateEvent, hostEmail: String, hostName: String): Either<ExceptionWithDefaultResponse, Event> =
         resultTransaction { c ->
+            val draft = if (request.configuresSignupOptions()) request.withoutEventLevelCapacity() else request
             validateDraft(draft)
             if (draft.recurrence != null)
                 throw SharedCalendarValidationException(400, "Bruk opprettelse av serie for gjentakende arrangementer.")
@@ -188,13 +199,16 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 s.executeQuery().use { it.next(); it.toEvent() }
             }
             c.exec("UPDATE event SET waitlist_enabled=? WHERE id=?", draft.waitlistEnabled, event.id)
+            val allocatedEvent = event.copy(waitlistEnabled = draft.waitlistEnabled)
             putPerson(c, event.id, host, hostName, ParticipantType.HOST, ParticipantStatus.REGISTERED)
+            applySignupOptions(c, allocatedEvent, draft.signupOptions, ::matchSignupOptionById,
+                ::newSignupOptionWithRequestedId)
             enqueue(c, event.id)
             replaceCategories(c, event.id, draft.categories ?: emptyList())
-            invite(c, event, draft.invitees ?: emptyList(), host)
-            requireCapacity(c, event, 0)
+            invite(c, allocatedEvent, draft.invitees ?: emptyList(), host)
+            requireAllCapacity(c, allocatedEvent)
             requireAttendeeRoom(c, event, 0)
-            event.copy(waitlistEnabled = draft.waitlistEnabled).right()
+            allocatedEvent.withSignupOptions(c).right()
         }
 
     fun claimNext(now: Instant = Instant.now(), lease: Duration = Duration.ofMinutes(5)): SharedCalendarWork? =
@@ -323,7 +337,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         """.trimIndent(), detailsChanged, event.id)
         enqueue(c, event.id, details = detailsChanged)
         invite(c, event, requests)
-        requireCapacity(c, event, 0)
+        requireAllCapacity(c, event)
         return event.copy(
             inviteMode = InviteMode.SHARED,
             calendarSyncStatus = if (detailsChanged) CalendarSyncStatus.PENDING else event.calendarSyncStatus,
@@ -365,18 +379,27 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                     SharedCalendarResponse.ACCEPTED -> {
                         if (existing.status == ParticipantStatus.REGISTERED) ParticipantStatus.REGISTERED
                         else {
+                            val scope = calendarAcceptanceScope(c, event, email)
                             val reserved = existing.status == ParticipantStatus.INVITED &&
-                                event.signupDeadline?.let { it <= LocalDateTime.now() } != true
-                            val deadlinePassed = if (event.waitlistEnabled) !waitlistOpen(event)
-                                else !reserved && event.signupDeadline?.let { it <= LocalDateTime.now() } == true
-                            if (deadlinePassed || !capacityAvailable(c, event, if (reserved) 0 else 1)) {
+                                !event.signupDeadlinePassed()
+                            val deadlinePassed = if (scope?.waitlistEnabled ?: event.waitlistEnabled) !waitlistOpen(event)
+                                else !reserved && event.signupDeadlinePassed()
+                            val refusal = when {
+                                deadlinePassed -> "DEADLINE"
+                                scope == null -> "OPTION_REQUIRED"
+                                !capacityAvailable(c, scope, if (reserved) 0 else 1) -> "FULL"
+                                else -> null
+                            }
+                            if (refusal != null) {
                                 c.exec("""
                                     INSERT INTO shared_calendar_refusal(event_id,email,reason) VALUES (?,?,?)
                                     ON CONFLICT(event_id,email) DO UPDATE SET reason=EXCLUDED.reason
-                                """.trimIndent(), id, email, if (deadlinePassed) "DEADLINE" else "FULL")
+                                """.trimIndent(), id, email, refusal)
                                 ParticipantStatus.DECLINED
+                            } else {
+                                setParticipantSignupOption(c, id, email, scope!!.optionId)
+                                ParticipantStatus.REGISTERED
                             }
-                            else ParticipantStatus.REGISTERED
                         }
                     }
                     SharedCalendarResponse.TENTATIVE, SharedCalendarResponse.NONE -> existing.status
@@ -393,6 +416,18 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
                 promoteWaitlist(c, event)
             }
         }
+
+    /**
+     * The scope an Outlook acceptance applies to: the person's invited or previous option, or the
+     * only option. Null when the person must choose among several options in Delta first.
+     */
+    private fun calendarAcceptanceScope(c: Connection, event: Event, email: String): AllocationScope? {
+        val options = signupOptions(c, event.id)
+        if (options.isEmpty()) return AllocationScope(event, null)
+        val selected = participantSignupOption(c, event.id, email)
+        val option = options.firstOrNull { it.id == selected } ?: options.singleOrNull() ?: return null
+        return AllocationScope(event, option)
+    }
 
     fun refusals(id: UUID): List<CalendarRefusal> = transaction { c ->
         c.prepareStatement("SELECT email,reason FROM shared_calendar_refusal WHERE event_id=? ORDER BY email").use { s ->
@@ -426,23 +461,48 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             throw SharedCalendarValidationException(400, "Invitasjoner støttes ikke for gjentakende serier.")
     }
 
-    fun signup(id: UUID, email: String, name: String): Either<ExceptionWithDefaultResponse, Unit> =
+    fun signup(
+        id: UUID,
+        email: String,
+        name: String,
+        signupOptionId: UUID? = null,
+    ): Either<ExceptionWithDefaultResponse, Unit> =
         mutate(id) { c, event ->
             val address = identityEmail(email)
             val existing = person(c, id, address)
             if (existing?.type == ParticipantType.HOST || existing?.status == ParticipantStatus.REGISTERED)
                 throw ParticipantAlreadyRegisteredException
-            if (event.waitlistEnabled && !waitlistOpen(event)) throw DeadlinePassedException
-            if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) throw DeadlinePassedException
-            requireCapacity(c, event, if (existing?.status == ParticipantStatus.INVITED) 0 else 1)
+            val scope = resolveScope(c, event, signupOptionId)
+            if (scope.waitlistEnabled && !waitlistOpen(event)) throw DeadlinePassedException
+            if (event.signupDeadlinePassed()) throw DeadlinePassedException
+            // An invitation reserves a seat only in the option it was sent for.
+            val reserved = existing?.status == ParticipantStatus.INVITED &&
+                participantSignupOption(c, id, address) == scope.optionId
+            requireCapacity(c, scope, if (reserved) 0 else 1)
             requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, id, address))
             putPerson(c, id, address, name, ParticipantType.PARTICIPANT, ParticipantStatus.REGISTERED)
+            setParticipantSignupOption(c, id, address, scope.optionId)
             c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, address)
             c.exec("UPDATE participant SET last_response_time=NOW() WHERE event_id=? AND email=?", id, address)
             c.exec("DELETE FROM shared_calendar_refusal WHERE event_id=? AND email=?", id, address)
             if (existing?.status == ParticipantStatus.DECLINED) revoke(c, id, address)
             prepareReadd(c, id, address)
             if (existing == null) enqueue(c, id)
+        }
+
+    /** Moves a registration to another option, keeping the current place when the destination is full. */
+    fun switchSignupOption(id: UUID, email: String, signupOptionId: UUID?): Either<ExceptionWithDefaultResponse, Unit> =
+        mutate(id) { c, event ->
+            val address = identityEmail(email)
+            val existing = person(c, id, address)
+            if (existing == null || existing.type == ParticipantType.HOST || existing.status != ParticipantStatus.REGISTERED)
+                throw SharedCalendarValidationException(409, "Du må være påmeldt for å bytte påmeldingsalternativ.")
+            if (signupOptionId == null || !usesSignupOptions(c, id)) throw invalidSignupOption()
+            val scope = resolveScope(c, event, signupOptionId)
+            if (participantSignupOption(c, id, address) == scope.optionId) return@mutate
+            if (!waitlistOpen(event)) throw DeadlinePassedException
+            requireCapacity(c, scope, 1)
+            setParticipantSignupOption(c, id, address, scope.optionId)
         }
 
     fun signoff(id: UUID, email: String): Either<ExceptionWithDefaultResponse, Unit> =
@@ -467,13 +527,33 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         mutate(id) { c, event ->
             val email = identityEmail(change.email)
             val existing = person(c, id, email) ?: throw EmailNotFoundException
+            val optionEvent = usesSignupOptions(c, id)
+            if (!optionEvent && change.signupOptionId != null) throw invalidSignupOption()
+            if (optionEvent && existing.type == change.type && change.type == ParticipantType.PARTICIPANT &&
+                change.signupOptionId != null &&
+                existing.status in setOf(ParticipantStatus.REGISTERED, ParticipantStatus.INVITED)) {
+                // Organizers may move a participant or invitation between options when there is room.
+                val scope = resolveScope(c, event, change.signupOptionId)
+                if (participantSignupOption(c, id, email) != scope.optionId) {
+                    requireCapacity(c, scope, 1)
+                    setParticipantSignupOption(c, id, email, scope.optionId)
+                }
+            }
             if (existing.type != change.type) {
                 if (change.type != ParticipantType.HOST) guardLastHost(c, id, existing)
-                if (change.type == ParticipantType.HOST && existing.status != ParticipantStatus.REGISTERED &&
-                    !(existing.status == ParticipantStatus.INVITED && event.signupDeadline?.let { it <= LocalDateTime.now() } != true))
-                    requireCapacity(c, event)
+                // Hosts consume event-level capacity, but never option capacity.
+                val scope = when {
+                    !optionEvent -> AllocationScope(event, null)
+                    change.type == ParticipantType.HOST -> null
+                    else -> resolveScope(c, event, change.signupOptionId)
+                }
+                if (scope?.option != null) requireCapacity(c, scope, 1)
+                else if (scope != null && change.type == ParticipantType.HOST && existing.status != ParticipantStatus.REGISTERED &&
+                    !(existing.status == ParticipantStatus.INVITED && !event.signupDeadlinePassed()))
+                    requireCapacity(c, scope)
                 requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, id, email))
                 putPerson(c, id, email, existing.name, change.type, ParticipantStatus.REGISTERED)
+                if (optionEvent) setParticipantSignupOption(c, id, email, scope?.optionId)
                 c.exec("DELETE FROM event_waitlist WHERE event_id=? AND email=?", id, email)
                 prepareReadd(c, id, email)
                 enqueue(c, id)
@@ -654,7 +734,7 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         val event = if (cancel) null else c.prepareStatement("SELECT * FROM event WHERE id=?").use { s ->
             s.setObject(1, id)
             s.executeQuery().use { if (it.next()) it.toEvent() else null }
-        }
+        }?.let { it.copy(signupOptions = signupOptions(c, id)) }
         val attendees = if (event == null) emptyList() else c.prepareStatement("""
             SELECT p.* FROM participant p WHERE event_id=?
             AND NOT EXISTS(SELECT 1 FROM shared_calendar_removal r WHERE r.event_id=p.event_id AND r.email=p.email)
@@ -673,19 +753,21 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
     }
 
     private fun invite(c: Connection, event: Event, requests: List<InviteeRequest>, invitedBy: String? = null): Boolean {
+        val selections = requests.reversed().associate { normalize(it.email) to it.signupOptionId }
         val emails = requests.map { normalize(it.email) }.distinct()
         var changed = false
         emails.forEach { email ->
             val existing = person(c, event.id, email)
             if (existing == null || (existing.type != ParticipantType.HOST &&
                         existing.status in setOf(ParticipantStatus.DECLINED, ParticipantStatus.FORWARDED))) {
-                if (event.waitlistEnabled && c.prepareStatement("SELECT 1 FROM event_waitlist WHERE event_id=? LIMIT 1").use { s ->
-                    s.setObject(1, event.id); s.executeQuery().use { it.next() }
-                }) throw SharedCalendarValidationException(409, "Ventelisten må få ledige plasser før nye invitasjoner kan sendes.")
-                requireCapacity(c, event, if (event.signupDeadline?.let { it <= LocalDateTime.now() } == true) 0 else 1)
+                val scope = resolveScope(c, event, selections[email])
+                if (scope.waitlistEnabled && queueHasEntries(c, scope))
+                    throw SharedCalendarValidationException(409, "Ventelisten må få ledige plasser før nye invitasjoner kan sendes.")
+                requireCapacity(c, scope, if (event.signupDeadlinePassed()) 0 else 1)
                 requireAttendeeRoom(c, event, sharedCalendarSlotNeeded(c, event.id, email))
                 if (existing?.status == ParticipantStatus.DECLINED) revoke(c, event.id, email)
                 putPerson(c, event.id, email, existing?.name ?: email, ParticipantType.PARTICIPANT, ParticipantStatus.INVITED)
+                setParticipantSignupOption(c, event.id, email, scope.optionId)
                 c.exec("UPDATE participant SET invited_by=?,invited_at=NOW() WHERE event_id=? AND email=?", invitedBy, event.id, email)
                 prepareReadd(c, event.id, email)
                 changed = true
@@ -693,6 +775,12 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
         }
         return changed
     }
+
+    /** Uses the same Oslo clock as seat allocation, so reservations expire consistently. */
+    private fun Event.signupDeadlinePassed(): Boolean = signupDeadline?.let { it <= allocationNow() } == true
+
+    /** Option events allocate per option, so their event-level capacity stays unlimited. */
+    private fun CreateEvent.withoutEventLevelCapacity() = copy(participantLimit = 0, waitlistEnabled = false)
 
     private fun validateDraft(draft: CreateEvent) {
         if (draft.startTime >= draft.endTime || draft.participantLimit < 0)
@@ -720,21 +808,23 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
             ) }
         }
 
-    private fun requireCapacity(c: Connection, event: Event, extra: Int = 1) {
-        if (event.waitlistEnabled) {
-            if (extra > 0 && c.prepareStatement("SELECT 1 FROM event_waitlist WHERE event_id=? LIMIT 1").use { s ->
-                s.setObject(1, event.id); s.executeQuery().use { it.next() }
-            }) throw EventFullException
-            if (event.participantLimit > 0 && allocatedSeats(c, event) + extra > event.participantLimit)
-                throw EventFullException
+    private fun requireAllCapacity(c: Connection, event: Event) {
+        allocationScopes(c, event).forEach { requireCapacity(c, it, 0) }
+    }
+
+    private fun requireCapacity(c: Connection, scope: AllocationScope, extra: Int = 1) {
+        if (scope.waitlistEnabled || scope.option != null) {
+            if (scope.waitlistEnabled && extra > 0 && queueHasEntries(c, scope)) throw EventFullException
+            if (scope.limit > 0 && allocatedSeats(c, scope) + extra > scope.limit) throw EventFullException
             return
         }
+        val event = scope.event
         val count = c.prepareStatement("""
             SELECT COUNT(*) FROM participant WHERE event_id=? AND
             (type='HOST' OR status='REGISTERED' OR (status='INVITED' AND (?::timestamp IS NULL OR ?::timestamp > ?)))
         """.trimIndent()).use { s ->
             s.setObject(1, event.id); s.setObject(2, event.signupDeadline); s.setObject(3, event.signupDeadline)
-            s.setObject(4, LocalDateTime.now())
+            s.setObject(4, allocationNow())
             s.executeQuery().use { it.next(); it.getInt(1) }
         }
 
@@ -749,8 +839,8 @@ class SharedCalendarRepository(private val db: DatabaseInterface) {
     private fun attendeeRoomAvailable(c: Connection, event: Event): Boolean =
         try { requireAttendeeRoom(c, event, 1); true } catch (_: SharedCalendarValidationException) { false }
 
-    private fun capacityAvailable(c: Connection, event: Event, extra: Int): Boolean =
-        try { requireCapacity(c, event, extra); true } catch (e: ExceptionWithDefaultResponse) {
+    private fun capacityAvailable(c: Connection, scope: AllocationScope, extra: Int): Boolean =
+        try { requireCapacity(c, scope, extra); true } catch (e: ExceptionWithDefaultResponse) {
             if (e == EventFullException) false else throw e
         }
 

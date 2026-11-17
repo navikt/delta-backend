@@ -15,6 +15,7 @@ data class Features(
     val teamsMeeting: Boolean,
     val sharedCalendar: Boolean = false,
     val peopleSearch: Boolean = false,
+    val signupOptions: Boolean = false,
 )
 
 fun Route.featureApi(env: Environment) {
@@ -28,6 +29,7 @@ fun Route.featureApi(env: Environment) {
                         teamsMeeting = env.isTeamsMeetingEnabledFor(call.principalGroups()),
                         sharedCalendar = env.isSharedCalendarEnabledFor(call.principalGroups()),
                         peopleSearch = env.isSharedCalendarEnabledFor(call.principalGroups()),
+                        signupOptions = env.isSignupOptionsEnabledFor(call.principalGroups()),
                     )
                 )
             }
