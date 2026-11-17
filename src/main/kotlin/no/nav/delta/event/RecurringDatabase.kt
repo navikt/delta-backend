@@ -45,7 +45,6 @@ fun DatabaseInterface.createRecurringEventSeries(
     createEvent: CreateEvent,
     hostEmail: String,
     hostName: String,
-    inviteMode: InviteMode = InviteMode.PER_PARTICIPANT,
 ): Either<ExceptionWithDefaultResponse, RecurringEventMutationResult> {
     if (!createEvent.invitees.isNullOrEmpty())
         return UnsupportedRecurringOperationException("Invitasjoner støttes ikke for gjentakende serier.").left()
@@ -80,9 +79,7 @@ fun DatabaseInterface.createRecurringEventSeries(
                 insertParticipant(connection, event.id, hostEmail, hostName, ParticipantType.HOST)
                 replaceEventCategories(connection, event.id, draft.categories)
                 val initialized =
-                    if (inviteMode == InviteMode.SHARED)
-                        SharedCalendarRepository(this).initializeOccurrence(connection, event, createEvent.invitees ?: emptyList())
-                    else event
+                    SharedCalendarRepository(this).initializeOccurrence(connection, event, createEvent.invitees ?: emptyList())
                 if (signupOptions != null) {
                     signupOptions.apply(connection, initialized)
                     initialized.withSignupOptions(connection)
@@ -174,6 +171,12 @@ fun DatabaseInterface.updateRecurringSeriesFromOccurrence(
         val isSplit = selectedOccurrence.occurrenceIndex > 0
         val existingCount = upcomingOccurrences.size
         val desiredCount = desiredOccurrences.size
+
+        if (desiredCount > existingCount && selectedOccurrence.event.inviteMode == InviteMode.PER_PARTICIPANT) {
+            return UnsupportedRecurringOperationException(
+                "Denne serien bruker en eldre kalendermodell og kan ikke utvides. Opprett en ny serie."
+            ).left()
+        }
 
         val targetSeriesId =
             if (!isSplit) {

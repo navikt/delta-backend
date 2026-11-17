@@ -9,7 +9,8 @@ For `event.inviteMode = SHARED`, use
 [`frontend-shared-calendar-handoff.md`](frontend-shared-calendar-handoff.md).
 Shared-mode saves are asynchronous: pending calendar sync and Teams provisioning
 are distinct from room acceptance and access restrictions. The synchronous
-502/no-save behavior below applies to legacy `PER_PARTICIPANT` events only.
+502/no-save behavior below applies only to edits of existing legacy
+`PER_PARTICIPANT` events. All new events use shared invitations.
 
 ## Feature toggle (implement first)
 

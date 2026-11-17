@@ -33,7 +33,7 @@ class FeatureRoutesTest {
     }
 
     @Test
-    fun `both features are off by default`() = testApplication {
+    fun `room and teams features are off by default`() = testApplication {
         val env = localTestEnvironment()
         application { installTestApi(env, database) { featureApi(env) } }
 
@@ -45,8 +45,8 @@ class FeatureRoutesTest {
     }
 
     @Test
-    fun `shared calendar and people search follow shared rollout access`() = testApplication {
-        val env = localTestEnvironment().copy(featureSharedCalendar = no.nav.delta.FeatureAccess.MAINTAINERS)
+    fun `shared calendar and people search are enabled without rollout access`() = testApplication {
+        val env = localTestEnvironment().copy(maintainersGroupId = "another-group")
         application { installTestApi(env, database) { featureApi(env) } }
         val features = readJson<Features>(client.get("/features").bodyAsText())
         assertEquals(true, features.sharedCalendar)
@@ -61,7 +61,7 @@ class FeatureRoutesTest {
         application { installTestApi(env, database) { featureApi(env) } }
         val features = readJson<Features>(client.get("/features").bodyAsText())
         assertEquals(true, features.signupOptions)
-        assertEquals(false, features.sharedCalendar)
+        assertEquals(true, features.sharedCalendar)
     }
 
     @Test

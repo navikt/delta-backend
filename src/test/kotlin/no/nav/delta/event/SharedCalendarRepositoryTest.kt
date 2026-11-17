@@ -271,7 +271,7 @@ class SharedCalendarRepositoryTest {
         val request = draft().copy(invitees = null, recurrence = RecurrenceRequest(
             RecurrenceFrequency.WEEKLY, LocalDateTime.now().plusDays(19).toLocalDate(),
         ))
-        val created = db.createRecurringEventSeries(request, "host@nav.no", "Host", InviteMode.SHARED).getOrNull()!!
+        val created = db.createRecurringEventSeries(request, "host@nav.no", "Host").getOrNull()!!
         assertEquals(3, created.affectedEvents.size)
         created.affectedEvents.forEach { event ->
             assertEquals(InviteMode.SHARED, event.inviteMode)
@@ -298,7 +298,7 @@ class SharedCalendarRepositoryTest {
             invitees = null,
             recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, LocalDateTime.now().plusDays(19).toLocalDate()),
         )
-        val created = db.createRecurringEventSeries(request, "host@nav.no", "Host", InviteMode.SHARED).getOrNull()!!
+        val created = db.createRecurringEventSeries(request, "host@nav.no", "Host").getOrNull()!!
         created.affectedEvents.forEach {
             val work = repository.claimNext()!!
             repository.recordGraphId(work, "graph-${work.eventId}")

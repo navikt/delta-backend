@@ -25,6 +25,7 @@ import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installTestApi
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
+import no.nav.delta.support.markEventsAsLegacy
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeAll
@@ -100,12 +101,15 @@ class AdminStatisticsTest {
     @Test
     fun `each recurring occurrence counts once for its calendar model`() {
         for (mode in InviteMode.entries) {
-            database.createRecurringEventSeries(
+            val series = database.createRecurringEventSeries(
                 draft(localNow.plusDays(1), localNow.plusDays(1).plusHours(1)).copy(
                     recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, localNow.toLocalDate().plusDays(15)),
                 ),
-                "host@example.com", "Host", mode,
+                "host@example.com", "Host",
             ).getOrNull()!!
+            if (mode == InviteMode.PER_PARTICIPANT) {
+                database.markEventsAsLegacy(series.affectedEvents)
+            }
         }
         assertEquals(
             listOf(EventTypeCount(InviteMode.PER_PARTICIPANT, 3, 3), EventTypeCount(InviteMode.SHARED, 3, 3)),

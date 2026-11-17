@@ -34,7 +34,6 @@ Følgende hemmeligheter må injiseres som miljøvariabler i NAIS:
 | `DELTA_MAINTAINERS_GROUP_ID` | Entra ID-gruppe for Delta-forvaltere: faggruppe-admin og tilgang til funksjoner satt til `maintainers`. Gruppen må også stå under `azure.application.claims.groups` i `nais.yaml` |
 | `FEATURE_ROOM_BOOKING` | `off` (default), `maintainers` eller `all`. Slår på rombooking. Se `docs/teams-meeting-room-booking-plan.md` |
 | `FEATURE_TEAMS_MEETING` | `off` (default), `maintainers` eller `all`. Slår på Teams-møter på hendelser |
-| `FEATURE_SHARED_CALENDAR` | `off` (default), `maintainers` eller `all`. Nye hendelser får en felles kalenderinvitasjon. Eksisterende hendelser beholder kalendermodellen sin. Se `docs/adr/0001-shared-calendar-event.md` |
 | `FEATURE_SIGNUP_OPTIONS` | `off` (default), `maintainers` or `all`. Allows creating shared-calendar events with several signup options (for example physical and digital attendance) with separate capacity. Existing option events stay editable when off |
 
 `WEBHOOK_CLIENT_STATE` lagres inn i Nais console secret `delta-backend-webhook-secret` og refereres i `nais.yaml`.
@@ -54,10 +53,15 @@ App-registreringen trenger følgende **application permissions** (ikke delegated
 
 ## Felles kalender og invitasjoner
 
-Nye hendelser med `FEATURE_SHARED_CALENDAR` aktivert lagres før Microsoft Graph
-svarer. API-et viser om kalendersynkroniseringen venter, er ferdig eller har feilet.
-V1 støtter individuelle invitasjoner og personsøk, ikke gruppeinvitasjoner.
-Lokalt brukes en kalenderadapter som ikke sender ekte invitasjoner.
+All new events, including recurring occurrences, use shared calendar invitations
+and are saved before Microsoft Graph responds. `FEATURE_SHARED_CALENDAR` is no
+longer used. Existing legacy events keep their calendar model until they finish.
+Legacy series can be edited or shortened, but cannot add occurrences; create a
+new shared series instead.
+
+The API exposes pending, completed and failed calendar synchronization.
+Individual invitations and people search are supported, but group invitations
+are not. The local calendar adapter does not send real invitations.
 
 Frontend-kontrakten er beskrevet i
 [`docs/frontend-shared-calendar-handoff.md`](docs/frontend-shared-calendar-handoff.md).

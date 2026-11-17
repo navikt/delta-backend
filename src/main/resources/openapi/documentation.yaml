@@ -34,11 +34,9 @@ paths:
       tags:
         - admin
       description: >-
-        Create an event. Shared-mode events save immediately with PENDING calendar sync;
-        invitations and room/Teams provisioning complete in the background. For legacy events,
-        with room/Teams fields (see CreateEvent), a room booking and/or Teams
-        meeting is created synchronously before the event is saved, so the response already
-        contains roomStatus and the Teams details. This adds ~0.3–0.8 s to the request.
+        Create an event. All new events, including recurring occurrences, use SHARED invitations
+        and save immediately with PENDING calendar sync. Invitations and room/Teams provisioning
+        complete in the background. Existing events retain their calendar model.
       operationId: createEvent
       requestBody:
         content:
@@ -56,8 +54,6 @@ paths:
           $ref: "#/components/responses/RoomTeamsBadRequest"
         "409":
           description: Capacity or shared-calendar attendee limit conflict
-        "502":
-          $ref: "#/components/responses/RoomTeamsBadGateway"
   /admin/event/{id}:
     delete:
       tags:
@@ -1030,6 +1026,10 @@ components:
           type: string
           enum: [SINGLE, UPCOMING]
           nullable: true
+          description: >-
+            UPCOMING changes this and following occurrences. Existing PER_PARTICIPANT series
+            can be edited or shortened, but an edit that adds occurrences is rejected with 400.
+            Create a new shared series instead.
         roomEmail:
           type: string
           nullable: true
@@ -1115,6 +1115,7 @@ components:
         inviteMode:
           type: string
           enum: [PER_PARTICIPANT, SHARED]
+          description: All new events use SHARED. PER_PARTICIPANT is retained for existing legacy events.
         calendarSyncStatus:
           type: string
           enum: [PENDING, SYNCED, FAILED]
@@ -1192,10 +1193,10 @@ components:
           type: boolean
         sharedCalendar:
           type: boolean
-          description: Caller can create new shared-calendar events.
+          description: Always true. All new events use shared-calendar invitations.
         peopleSearch:
           type: boolean
-          description: Caller can use directory-backed people search.
+          description: Always true. Directory-backed people search is available to user tokens.
         signupOptions:
           type: boolean
           description: Caller can configure signup options on new events.

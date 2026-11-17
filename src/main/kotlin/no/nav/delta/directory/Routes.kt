@@ -8,22 +8,17 @@ import io.ktor.server.auth.principal
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
-import no.nav.delta.Environment
 import no.nav.delta.email.CloudClient
 import no.nav.delta.email.SharedGraphException
-import no.nav.delta.event.principalGroups
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("no.nav.delta.directory")
 
-fun Route.directoryApi(cloudClient: CloudClient, env: Environment) {
+fun Route.directoryApi(cloudClient: CloudClient) {
     authenticate("jwt") {
         get("/directory/search") {
             if (call.principal<JWTPrincipal>()?.payload?.getClaim("idtyp")?.asString() == "app") {
                 return@get call.respondProblem(HttpStatusCode.Forbidden, "Personsøk er kun tilgjengelig for brukere.")
-            }
-            if (!env.isSharedCalendarEnabledFor(call.principalGroups())) {
-                return@get call.respondProblem(HttpStatusCode.BadRequest, "Personsøk er ikke slått på.")
             }
             val query = call.request.queryParameters["q"]?.trim().orEmpty()
             if (query.length !in 2..100 || query.any { it.isISOControl() }) {

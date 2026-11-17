@@ -33,6 +33,7 @@ import no.nav.delta.application.installDeltaApiPlugins
 import no.nav.delta.email.CloudClient
 import no.nav.delta.event.Event
 import no.nav.delta.event.Participant
+import no.nav.delta.calendar.exec
 import no.nav.delta.plugins.DatabaseConfig
 import no.nav.delta.plugins.DatabaseInterface
 import no.nav.delta.room.RoomAvailability
@@ -48,6 +49,17 @@ val testObjectMapper =
         .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
 
 inline fun <reified T> readJson(json: String): T = testObjectMapper.readValue(json)
+
+/** Fixture for events created before shared-only creation. */
+fun DatabaseInterface.markEventsAsLegacy(events: List<Event>) {
+    connection.use { c ->
+        events.forEach { event ->
+            c.exec("DELETE FROM shared_calendar_outbox WHERE event_id=?", event.id)
+            c.exec("UPDATE event SET invite_mode='PER_PARTICIPANT',calendar_sync_status=NULL WHERE id=?", event.id)
+        }
+        c.commit()
+    }
+}
 
 class TestDatabase private constructor(
     val database: DatabaseInterface,

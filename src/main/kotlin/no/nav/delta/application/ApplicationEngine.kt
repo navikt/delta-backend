@@ -123,7 +123,7 @@ fun Application.mySetup(
         webhookApi(database, cloudClient, env)
         featureApi(env)
         adminApi(database, env)
-        directoryApi(cloudClient, env)
+        directoryApi(cloudClient)
         roomApi(cloudClient, env, roomCatalog)
         get("/internal/is_alive") {
             call.respondText("I'm alive! :)")

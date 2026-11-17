@@ -235,6 +235,8 @@ class DatabasesTest {
 
         createdSeries.affectedEvents.forEach { event ->
             val fullEvent = db.getFullEvent(event.id.toString()).getOrNull()!!
+            Assertions.assertEquals(InviteMode.SHARED, fullEvent.event.inviteMode)
+            Assertions.assertEquals(CalendarSyncStatus.PENDING, fullEvent.event.calendarSyncStatus)
             Assertions.assertNotNull(fullEvent.recurringSeries)
             Assertions.assertEquals(seriesId, fullEvent.recurringSeries?.seriesId)
         }
