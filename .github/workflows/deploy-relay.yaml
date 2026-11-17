@@ -24,7 +24,7 @@ jobs:
           pull: true
           docker_context: nginx-relay/
           image_suffix: relay
-      - uses: nais/deploy/actions/deploy@420caaa3a59af9aca910e372e5b7a85f3c7cd553
+      - uses: nais/deploy/actions/deploy@b1a9a40dae937091497f8f29c5ea5334cc1c0643
         env:
           CLUSTER: prod-gcp
           RESOURCE: nginx-relay/nais.yaml
