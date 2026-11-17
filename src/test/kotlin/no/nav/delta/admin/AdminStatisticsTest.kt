@@ -95,20 +95,36 @@ class AdminStatisticsTest {
     }
 
     @Test
-    fun `lists only public legacy events including history in chronological order without participant duplication`() {
+    fun `lists only strictly future public legacy events in chronological order without participant duplication`() {
         val upcoming = database.addEvent(draft(localNow.plusDays(1), localNow.plusDays(1).plusHours(1)))
-        val past = database.addEvent(draft(localNow.minusDays(1), localNow.minusDays(1).plusHours(1)))
-        val ongoing = database.addEvent(draft(localNow.minusHours(1), localNow.plusHours(1)))
-        database.registerForEvent(ongoing.id.toString(), "host@example.com", "Host", ParticipantType.HOST)
-        database.registerForEvent(ongoing.id.toString(), "person@example.com", "Person", ParticipantType.PARTICIPANT)
-        database.addEvent(draft(localNow, localNow.plusHours(1), public = false))
+        val next = database.addEvent(draft(localNow.plusSeconds(1), localNow.plusHours(1)))
+        database.addEvent(draft(localNow.minusDays(1), localNow.minusDays(1).plusHours(1)))
+        database.addEvent(draft(localNow.minusHours(1), localNow.plusHours(1)))
+        database.addEvent(draft(localNow, localNow.plusHours(1)))
+        database.registerForEvent(upcoming.id.toString(), "host@example.com", "Host", ParticipantType.HOST)
+        database.registerForEvent(upcoming.id.toString(), "person@example.com", "Person", ParticipantType.PARTICIPANT)
+        database.addEvent(draft(localNow.plusHours(1), localNow.plusHours(2), public = false))
         val shared = SharedCalendarRepository(database)
-        shared.create(draft(localNow, localNow.plusHours(1)), "host@example.com", "Host").getOrNull()!!
-        shared.create(draft(localNow, localNow.plusHours(1), public = false), "host@example.com", "Host").getOrNull()!!
+        shared.create(draft(localNow.plusHours(1), localNow.plusHours(2)), "host@example.com", "Host").getOrNull()!!
+        shared.create(draft(localNow.plusHours(1), localNow.plusHours(2), public = false), "host@example.com", "Host").getOrNull()!!
 
         assertEquals(
-            listOf(past, ongoing, upcoming).map { AdminEventSummary(it.id, it.title, it.startTime, it.endTime) },
+            listOf(next, upcoming).map { AdminEventSummary(it.id, it.title, it.startTime, it.endTime) },
             database.getAdminStatistics(at).publicLegacyEvents,
+        )
+    }
+
+    @Test
+    fun `future legacy event cutoff uses Oslo winter time`() {
+        val winter = Instant.parse("2030-01-01T10:00:00Z")
+        val winterNow = LocalDateTime.parse("2030-01-01T11:00:00")
+        database.addEvent(draft(winterNow.minusSeconds(1), winterNow.plusHours(1)))
+        database.addEvent(draft(winterNow, winterNow.plusHours(1)))
+        val future = database.addEvent(draft(winterNow.plusSeconds(1), winterNow.plusHours(1)))
+
+        assertEquals(
+            listOf(AdminEventSummary(future.id, future.title, future.startTime, future.endTime)),
+            database.getAdminStatistics(winter).publicLegacyEvents,
         )
     }
 

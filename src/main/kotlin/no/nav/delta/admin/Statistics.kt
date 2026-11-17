@@ -30,6 +30,8 @@ data class AdminEventSummary(
 
 fun DatabaseInterface.getAdminStatistics(at: Instant = Instant.now()): AdminStatistics =
     connection.use { connection ->
+        // Event timestamps are stored as local calendar times in Europe/Oslo.
+        val localNow = Timestamp.valueOf(LocalDateTime.ofInstant(at, ZoneId.of("Europe/Oslo")))
         val eventTypes = connection.prepareStatement(
             """
             SELECT invite_mode, COUNT(*) AS total,
@@ -38,8 +40,7 @@ fun DatabaseInterface.getAdminStatistics(at: Instant = Instant.now()): AdminStat
             GROUP BY invite_mode
             """.trimIndent()
         ).use { statement ->
-            // Event timestamps are stored as local calendar times in Europe/Oslo.
-            statement.setTimestamp(1, Timestamp.valueOf(LocalDateTime.ofInstant(at, ZoneId.of("Europe/Oslo"))))
+            statement.setTimestamp(1, localNow)
             statement.executeQuery().use { result ->
                 val counts = mutableMapOf<InviteMode, EventTypeCount>()
                 while (result.next()) {
@@ -53,10 +54,11 @@ fun DatabaseInterface.getAdminStatistics(at: Instant = Instant.now()): AdminStat
             """
             SELECT id, title, start_time, end_time
             FROM event
-            WHERE public = TRUE AND invite_mode = 'PER_PARTICIPANT'
+            WHERE public = TRUE AND invite_mode = 'PER_PARTICIPANT' AND start_time > ?
             ORDER BY start_time, id
             """.trimIndent()
         ).use { statement ->
+            statement.setTimestamp(1, localNow)
             statement.executeQuery().use { result ->
                 result.toList {
                     AdminEventSummary(
