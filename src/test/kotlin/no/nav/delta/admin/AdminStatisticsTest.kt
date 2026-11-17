@@ -67,7 +67,11 @@ class AdminStatisticsTest {
     @Test
     fun `empty database returns both types with zero counts`() {
         assertEquals(
-            AdminStatistics(at, listOf(EventTypeCount(InviteMode.PER_PARTICIPANT, 0, 0), EventTypeCount(InviteMode.SHARED, 0, 0))),
+            AdminStatistics(
+                at,
+                listOf(EventTypeCount(InviteMode.PER_PARTICIPANT, 0, 0), EventTypeCount(InviteMode.SHARED, 0, 0)),
+                emptyList(),
+            ),
             database.getAdminStatistics(at),
         )
     }
@@ -87,6 +91,24 @@ class AdminStatisticsTest {
         assertEquals(
             listOf(EventTypeCount(InviteMode.PER_PARTICIPANT, 4, 2), EventTypeCount(InviteMode.SHARED, 2, 1)),
             database.getAdminStatistics(at).eventTypes,
+        )
+    }
+
+    @Test
+    fun `lists only public legacy events including history in chronological order without participant duplication`() {
+        val upcoming = database.addEvent(draft(localNow.plusDays(1), localNow.plusDays(1).plusHours(1)))
+        val past = database.addEvent(draft(localNow.minusDays(1), localNow.minusDays(1).plusHours(1)))
+        val ongoing = database.addEvent(draft(localNow.minusHours(1), localNow.plusHours(1)))
+        database.registerForEvent(ongoing.id.toString(), "host@example.com", "Host", ParticipantType.HOST)
+        database.registerForEvent(ongoing.id.toString(), "person@example.com", "Person", ParticipantType.PARTICIPANT)
+        database.addEvent(draft(localNow, localNow.plusHours(1), public = false))
+        val shared = SharedCalendarRepository(database)
+        shared.create(draft(localNow, localNow.plusHours(1)), "host@example.com", "Host").getOrNull()!!
+        shared.create(draft(localNow, localNow.plusHours(1), public = false), "host@example.com", "Host").getOrNull()!!
+
+        assertEquals(
+            listOf(past, ongoing, upcoming).map { AdminEventSummary(it.id, it.title, it.startTime, it.endTime) },
+            database.getAdminStatistics(at).publicLegacyEvents,
         )
     }
 
@@ -127,9 +149,14 @@ class AdminStatisticsTest {
             listOf(EventTypeCount(InviteMode.PER_PARTICIPANT, 0, 0), EventTypeCount(InviteMode.SHARED, 0, 0)),
             readJson<AdminStatistics>(response.bodyAsText()).eventTypes,
         )
-        database.addEvent(draft(localNow.plusHours(1), localNow.plusHours(2)))
+        val event = database.addEvent(draft(localNow.plusHours(1), localNow.plusHours(2)))
         val updated = client.get("/admin/statistics") { bearerAuth(token(listOf(env.maintainersGroupId))) }
-        assertEquals(1L, readJson<AdminStatistics>(updated.bodyAsText()).eventTypes.first().total)
+        val statistics = readJson<AdminStatistics>(updated.bodyAsText())
+        assertEquals(1L, statistics.eventTypes.first().total)
+        assertEquals(
+            listOf(AdminEventSummary(event.id, event.title, event.startTime, event.endTime)),
+            statistics.publicLegacyEvents,
+        )
     }
 
     @Test
