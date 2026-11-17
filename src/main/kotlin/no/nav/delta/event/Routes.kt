@@ -157,15 +157,9 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                 validateRoomFields(createEvent)?.let {
                     return@put call.respondProblem(HttpStatusCode.BadRequest, it)
                 }
-                val usesSharedCalendar = env.isSharedCalendarEnabledFor(call.principalGroups())
-                if (!createEvent.invitees.isNullOrEmpty() && !usesSharedCalendar) {
-                    return@put call.respondProblem(HttpStatusCode.BadRequest, "Invitasjoner krever en delt kalender.")
-                }
                 if (createEvent.configuresSignupOptions()) {
                     if (!env.isSignupOptionsEnabledFor(call.principalGroups()))
                         return@put call.respondProblem(HttpStatusCode.BadRequest, SIGNUP_OPTIONS_NOT_ENABLED)
-                    if (!usesSharedCalendar)
-                        return@put call.respondProblem(HttpStatusCode.BadRequest, SIGNUP_OPTIONS_REQUIRE_SHARED)
                 }
 
                 if (createEvent.recurrence != null) {
@@ -180,114 +174,18 @@ fun Route.eventApi(database: DatabaseInterface, cloudClient: CloudClient, env: E
                         database
                             .createRecurringEventSeries(
                                 createEvent, email, call.principalName(),
-                                if (usesSharedCalendar) InviteMode.SHARED else InviteMode.PER_PARTICIPANT,
                             )
                             .getOrElse {
                                 return@put it.left().unwrapAndRespond(call)
                             }
 
-                    if (!usesSharedCalendar && createEvent.sendNotificationEmail == true) {
-                        Thread(
-                            createCreationNotificationFuture(
-                                events = createdSeries.affectedEvents,
-                                database = database,
-                                cloudClient = cloudClient,
-                                participant = principal,
-                            )
-                        ).start()
-                    }
-
                     return@put database.getFullEvent(createdSeries.referenceEventId.toString()).unwrapAndRespond(call)
                 }
 
-                if (usesSharedCalendar) {
-                    return@put sharedMutation(call) {
-                        val created = sharedCalendar.create(createEvent, principal)
-                        database.getFullEvent(created.id.toString()).unwrapAndRespond(call)
-                    }
+                sharedMutation(call) {
+                    val created = sharedCalendar.create(createEvent, principal)
+                    database.getFullEvent(created.id.toString()).unwrapAndRespond(call)
                 }
-
-                // The master event (room booking / Teams meeting) is created before the row exists
-                // in the database, so a Graph failure leaves nothing behind to clean up.
-                val masterResult: MasterEventResult? =
-                    if (createEvent.requestsRoomOrTeams()) {
-                        cloudClient.createMasterEvent(createEvent.toDraftEvent(UUID.randomUUID())).getOrElse {
-                            logger.warn("Failed to create master event for room/Teams booking", it)
-                            return@put call.respondProblem(HttpStatusCode.BadGateway, "Kunne ikke opprette romreservasjon eller Teams-møte.")
-                        }
-                    } else {
-                        null
-                    }
-
-                // Graph can create the event but silently skip the Teams meeting (e.g. no Teams
-                // license on the Delta mailbox). Teams can't be turned off later, so never save
-                // isOnlineMeeting=true without a join link.
-                if (createEvent.isOnlineMeeting == true && masterResult?.teamsJoinUrl == null) {
-                    masterResult?.let { deleteMasterBestEffort(cloudClient, it.calendarEventId, null) }
-                    logger.warn("Teams meeting requested but Graph returned no join URL; nothing saved")
-                    return@put call.respondProblem(HttpStatusCode.BadGateway, TEAMS_MEETING_NOT_CREATED)
-                }
-
-                // If anything below fails after the master was created, undo both the master and
-                // the event row, so no room stays booked for an event that was never fully created.
-                fun rollbackCreate(eventId: UUID?) {
-                    if (masterResult == null) return
-                    deleteMasterBestEffort(cloudClient, masterResult.calendarEventId, eventId)
-                    eventId?.let { database.deleteEvent(it.toString()) }
-                }
-
-                val created =
-                    runCatching { database.addEvent(createEvent) }.getOrElse {
-                        rollbackCreate(null)
-                        throw it
-                    }
-                val event =
-                    if (masterResult != null) {
-                        val withMaster = created.withMasterResult(masterResult)
-                        val persisted =
-                            database.setMasterCalendarEventId(created.id.toString(), masterResult.calendarEventId)
-                                .flatMap { database.updateEvent(withMaster) }
-                        persisted.getOrElse {
-                            rollbackCreate(created.id)
-                            return@put it.left().unwrapAndRespond(call)
-                        }
-                        withMaster
-                    } else {
-                        created
-                    }
-                val createEventFuture = {
-                    cloudClient.sendUpdateOrCreationNotification(
-                        event,
-                        database,
-                        principal,
-                        null,
-                    )
-                }
-
-                database
-                    .registerForEvent(
-                        event.id.toString(),
-                        email,
-                        call.principalName(),
-                        ParticipantType.HOST,
-                    )
-                    .getOrElse {
-                        rollbackCreate(event.id)
-                        return@put it.left().unwrapAndRespond(call)
-                    }
-
-                createEvent.categories?.let { categories ->
-                    database.setCategories(event.id.toString(), categories).getOrElse {
-                        rollbackCreate(event.id)
-                        return@put it.left().unwrapAndRespond(call)
-                    }
-                }
-
-                if (createEvent.sendNotificationEmail == true) {
-                    Thread(createEventFuture).start()
-                }
-
-                database.getFullEvent(event.id.toString()).unwrapAndRespond(call)
             }
             route("/{id}") {
                 delete {
@@ -905,23 +803,6 @@ private fun FullEvent.hideTeamsDetailsUnlessParticipantOrHost(email: String): Fu
             teamsDialIn = null,
         )
     )
-}
-
-private fun createCreationNotificationFuture(
-    events: List<Event>,
-    database: DatabaseInterface,
-    cloudClient: CloudClient,
-    participant: Participant,
-): () -> Unit = {
-    events.forEach { event ->
-        if (event.inviteMode == InviteMode.SHARED) return@forEach
-        cloudClient.sendUpdateOrCreationNotification(
-            event = event,
-            database = database,
-            participant = participant,
-            calendarEventId = null,
-        )
-    }
 }
 
 private fun createUpdateNotificationFuture(

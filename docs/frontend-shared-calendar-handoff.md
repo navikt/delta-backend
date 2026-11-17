@@ -4,12 +4,15 @@ The contract is `src/main/resources/openapi/documentation.yaml`. ADR-0001 explai
 the calendar model. Group invitations are deferred: build a people picker, not a
 group picker.
 
-## Modes and rollout
+## Calendar modes
 
-Fetch `GET /features`. `sharedCalendar` controls creating new shared-mode events;
-`peopleSearch` controls directory search. Do not inspect Entra groups in the client.
-`event.inviteMode` is authoritative for an existing event, even after rollout is
-turned off. Existing `PER_PARTICIPANT` events retain their previous behavior.
+Fetch `GET /features`. `sharedCalendar` and `peopleSearch` are always true.
+All newly created events use shared invitations; the shared-calendar rollout
+flag has been removed. Do not inspect Entra groups in the client.
+`event.inviteMode` remains authoritative for an existing event.
+Existing `PER_PARTICIPANT` events retain their previous behavior until they finish.
+Legacy series can be edited or shortened, but an edit that adds occurrences
+returns 400 with instructions to create a new series.
 
 Keep room/Teams controls behind their existing independent features.
 Invitations are not supported on recurring series or individual series occurrences.
@@ -85,13 +88,12 @@ Adding/removing attendees sends notifications only to changed individuals;
 ordinary RSVP and forward adoption do not send meeting updates to everyone.
 Changing meeting details intentionally updates everyone.
 
-## Local verification and rollout
+## Local verification
 
-Use `FEATURE_SHARED_CALENDAR=maintainers` or `all` locally. The dummy Graph
-adapter supports shared events and people search; no real invitations are sent.
+Shared creation and people search are enabled locally without configuration.
+The dummy Graph adapter supports both; no real invitations are sent.
 Validate pending and failed states as well as successful saves.
 
-Production starts with shared calendar off. Backend permission consent and the
-frontend contract must be ready before enabling the people picker. Mailbox tests
+Backend permission consent is required for real directory search. Mailbox tests
 remain necessary for actual delivery/forwarding behavior; local tests cannot
 prove what arrives in Outlook inboxes.

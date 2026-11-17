@@ -20,6 +20,7 @@ import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installFullTestApplication
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
+import no.nav.delta.support.markEventsAsLegacy
 import no.nav.delta.support.waitUntilSuspending
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -109,7 +110,7 @@ class ApplicationE2ETest {
     }
 
     @Test
-    fun `webhook decline is observable through public api`() = testApplication {
+    fun `legacy webhook decline is observable through public api`() = testApplication {
         val env = localTestEnvironment()
         application {
             installFullTestApplication(env, database, cloudClient)
@@ -121,6 +122,7 @@ class ApplicationE2ETest {
                 setBody(createEventJson("webhook-e2e-${UUID.randomUUID()}"))
             }
         val created = readJson<FullEvent>(createResponse.bodyAsText())
+        database.markEventsAsLegacy(listOf(created.event))
 
         val joinResponse = client.post("/user/event/${created.event.id}")
         assertEquals(HttpStatusCode.Conflict, joinResponse.status)

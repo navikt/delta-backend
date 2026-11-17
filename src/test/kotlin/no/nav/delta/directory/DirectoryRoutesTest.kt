@@ -9,7 +9,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
-import no.nav.delta.FeatureAccess
 import no.nav.delta.application.installDeltaApiPlugins
 import no.nav.delta.email.CloudClient
 import no.nav.delta.email.DirectoryPerson
@@ -26,27 +25,26 @@ class DirectoryRoutesTest {
     private val jwtVerifier = JWT.require(Algorithm.HMAC256(jwtSecret)).build()
 
     @Test
-    fun `people search requires the rollout feature`() = testApplication {
-        val env = localTestEnvironment()
+    fun `people search is available without rollout access`() = testApplication {
+        val env = localTestEnvironment().copy(maintainersGroupId = "another-group")
         application {
             installDeltaApiPlugins(env, NoopJwkProvider)
-            routing { directoryApi(DummyCloudClient(), env) }
+            routing { directoryApi(DummyCloudClient()) }
         }
-        val disabled = client.get("/directory/search?q=alice")
-        assertEquals(HttpStatusCode.BadRequest, disabled.status)
-        assertProblem(disabled, "Personsøk er ikke slått på.")
+        val response = client.get("/directory/search?q=alice")
+        assertEquals(HttpStatusCode.OK, response.status)
     }
 
     @Test
     fun `people search validates query and returns basic people only`() = testApplication {
-        val env = localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL)
+        val env = localTestEnvironment()
         val cloud = object : CloudClient by DummyCloudClient() {
             override fun searchPeople(query: String) =
                 listOf(DirectoryPerson("person-id", "Alice", "alice@nav.no")).right()
         }
         application {
             installDeltaApiPlugins(env, NoopJwkProvider)
-            routing { directoryApi(cloud, env) }
+            routing { directoryApi(cloud) }
         }
         val tooShort = client.get("/directory/search?q=a")
         assertEquals(HttpStatusCode.BadRequest, tooShort.status)
@@ -58,7 +56,7 @@ class DirectoryRoutesTest {
 
     @Test
     fun `people search denies application tokens but allows user tokens`() = testApplication {
-        val env = localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL)
+        val env = localTestEnvironment()
         var searchCalls = 0
         val cloud = object : CloudClient by DummyCloudClient() {
             override fun searchPeople(query: String) =
@@ -68,7 +66,7 @@ class DirectoryRoutesTest {
         }
         application {
             installDeltaApiPlugins(env, NoopJwkProvider, jwtVerifier)
-            routing { directoryApi(cloud, env) }
+            routing { directoryApi(cloud) }
         }
 
         for (token in listOf(applicationToken(emptyList()), applicationToken(listOf("delta.read")))) {

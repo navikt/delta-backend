@@ -300,7 +300,7 @@ class WaitlistTest {
         val db = fixture.database
         val request = draft().copy(recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY,
             LocalDateTime.now().plusDays(10).toLocalDate()))
-        val series = db.createRecurringEventSeries(request, "host@nav.no", "Host", InviteMode.SHARED).getOrNull()!!
+        val series = db.createRecurringEventSeries(request, "host@nav.no", "Host").getOrNull()!!
         assertEquals(2, series.affectedEvents.size)
         series.affectedEvents.forEachIndexed { index, event ->
             assertTrue(event.waitlistEnabled)

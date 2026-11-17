@@ -279,7 +279,7 @@ class CalendarSyncWorkerTest {
             )) else base
             val events = if (recurring) {
                 db.database.createRecurringEventSeries(
-                    draft, "host@nav.no", "Host", no.nav.delta.event.InviteMode.SHARED,
+                    draft, "host@nav.no", "Host",
                 ).getOrNull()!!.affectedEvents
             } else listOf(repository.create(draft, Participant("host@nav.no", "Host")))
             val worker = CalendarSyncWorker(repository, cloud)

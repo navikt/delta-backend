@@ -62,8 +62,6 @@ spec:
       value: "all"
     - name: FEATURE_TEAMS_MEETING
       value: "all"
-    - name: FEATURE_SHARED_CALENDAR
-      value: "all"
     - name: FEATURE_SIGNUP_OPTIONS
       value: "all"
   envFrom:

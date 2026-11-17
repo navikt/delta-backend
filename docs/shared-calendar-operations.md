@@ -1,9 +1,16 @@
 # Shared calendar operations
 
-`FEATURE_SHARED_CALENDAR` starts at `off`. Enable `maintainers` only when the
-frontend handles pending/failed saves and `User.Read.All` has admin consent
-for people search. Existing SHARED events continue synchronizing when the flag
-is turned off; it changes the model selected for new events, not existing ones.
+All new events and recurring occurrences use shared invitations.
+`FEATURE_SHARED_CALENDAR` has been removed; setting it cannot restore legacy
+creation. `GET /features` always reports `sharedCalendar` and `peopleSearch` as
+true. People search still requires `User.Read.All` with admin consent.
+
+Existing `PER_PARTICIPANT` events retain their calendar behavior until they finish,
+as described in ADR-0001. Existing legacy series can be edited, shortened or
+deleted, but an edit that would add occurrences returns 400. Create a new shared
+series instead. No existing invitations are converted or resent by this change.
+Keep legacy synchronization, cancellation and pending delivery recovery until
+the remaining events and delivery work have drained.
 
 ## Recovery
 

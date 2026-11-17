@@ -18,16 +18,55 @@ import no.nav.delta.event.FullEvent
 import no.nav.delta.event.CreateEvent
 import no.nav.delta.event.Participant
 import no.nav.delta.event.ParticipantStatus
+import no.nav.delta.event.RecurrenceFrequency
+import no.nav.delta.event.RecurrenceRequest
+import no.nav.delta.event.getFullEvents
 import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installFullTestApplication
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
+import no.nav.delta.support.testObjectMapper
 import no.nav.delta.support.waitUntilSuspending
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SharedCalendarRoutesTest {
+    @Test
+    fun `new recurring events always use shared invitations for every occurrence`() = testApplication {
+        TestDatabase.create().use { db ->
+            val draft = readJson<CreateEvent>(eventJson()).let {
+                it.copy(
+                    invitees = null,
+                    recurrence = RecurrenceRequest(
+                        RecurrenceFrequency.WEEKLY, it.startTime.toLocalDate().plusWeeks(2),
+                    ),
+                )
+            }
+            application {
+                installFullTestApplication(localTestEnvironment(), db.database, DummyCloudClient())
+            }
+
+            val response = client.put("/admin/event") {
+                contentType(ContentType.Application.Json)
+                setBody(testObjectMapper.writeValueAsString(draft))
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val occurrences = db.database.getFullEvents()
+            assertEquals(3, occurrences.size)
+            occurrences.forEach {
+                assertEquals("SHARED", it.event.inviteMode.name)
+                assertEquals("PENDING", it.event.calendarSyncStatus?.name)
+            }
+            val repository = SharedCalendarRepository(db.database)
+            val jobs = generateSequence {
+                repository.claimNext()?.also { repository.complete(it) }
+            }.toList()
+            assertEquals(occurrences.map { it.event.id }.toSet(), jobs.map { it.eventId }.toSet())
+        }
+    }
+
     @Test
     fun `non hosts cannot invite or see declined invitations and sync errors`() = testApplication {
         TestDatabase.create().use { db ->
@@ -44,7 +83,7 @@ class SharedCalendarRoutesTest {
             repository.fail(claim)
             application {
                 installFullTestApplication(
-                    localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL),
+                    localTestEnvironment(),
                     db.database,
                     DummyCloudClient(),
                 )
@@ -66,7 +105,7 @@ class SharedCalendarRoutesTest {
     @Test
     fun `assembled application saves and synchronizes a shared calendar event`() = testApplication {
         TestDatabase.create().use { db ->
-            val env = localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL)
+            val env = localTestEnvironment()
             val cloud = DummyCloudClient()
             application { installFullTestApplication(env, db.database, cloud, startBackgroundTasks = true) }
             val response = client.put("/admin/event") {
@@ -88,7 +127,7 @@ class SharedCalendarRoutesTest {
     @Test
     fun `creation saves pending invitations without Graph and rejects group inputs`() = testApplication {
         TestDatabase.create().use { db ->
-            val env = localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL)
+            val env = localTestEnvironment()
             application { installFullTestApplication(env, db.database, DummyCloudClient()) }
             val response = client.put("/admin/event") {
                 contentType(ContentType.Application.Json)
@@ -112,7 +151,7 @@ class SharedCalendarRoutesTest {
     @Test
     fun `hosts can add revoke and retry invitations`() = testApplication {
         TestDatabase.create().use { db ->
-            val env = localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL)
+            val env = localTestEnvironment()
             application { installFullTestApplication(env, db.database, DummyCloudClient()) }
             val created = readJson<FullEvent>(client.put("/admin/event") {
                 contentType(ContentType.Application.Json)
@@ -137,7 +176,7 @@ class SharedCalendarRoutesTest {
     @Test
     fun `shared creation rejects invitation batches exceeding reserved capacity`() = testApplication {
         TestDatabase.create().use { db ->
-            val env = localTestEnvironment().copy(featureSharedCalendar = FeatureAccess.ALL)
+            val env = localTestEnvironment()
             application { installFullTestApplication(env, db.database, DummyCloudClient()) }
             val response = client.put("/admin/event") {
                 contentType(ContentType.Application.Json)
@@ -153,7 +192,6 @@ class SharedCalendarRoutesTest {
     fun `shared creation provisions Teams asynchronously and ignores notification opt out`() = testApplication {
         TestDatabase.create().use { db ->
             val env = localTestEnvironment().copy(
-                featureSharedCalendar = FeatureAccess.ALL,
                 featureTeamsMeeting = FeatureAccess.ALL,
             )
             application { installFullTestApplication(env, db.database, DummyCloudClient()) }

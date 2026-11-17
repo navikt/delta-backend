@@ -25,6 +25,8 @@ import no.nav.delta.support.TestDatabase
 import no.nav.delta.support.installTestApi
 import no.nav.delta.support.localTestEnvironment
 import no.nav.delta.support.readJson
+import no.nav.delta.support.markEventsAsLegacy
+import no.nav.delta.support.testObjectMapper
 import no.nav.delta.support.waitUntilSuspending
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -34,6 +36,8 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class EventRoutesTest {
@@ -61,7 +65,7 @@ class EventRoutesTest {
     }
 
     @Test
-    fun `admin put creates event and registers host`() = testApplication {
+    fun `admin put always creates a shared event and registers host`() = testApplication {
         application {
             val env = localTestEnvironment()
             installTestApi(env, database) {
@@ -80,6 +84,10 @@ class EventRoutesTest {
         val fullEvent = readJson<FullEvent>(response.bodyAsText())
         assertEquals(title, fullEvent.event.title)
         assertEquals("test@localhost", fullEvent.hosts.single().email)
+        assertEquals(InviteMode.SHARED, fullEvent.event.inviteMode)
+        assertEquals(CalendarSyncStatus.PENDING, fullEvent.event.calendarSyncStatus)
+        assertTrue(cloudClient.createdCalendarEventIds.isEmpty())
+        assertTrue(cloudClient.createdMasterEvents.isEmpty())
     }
 
     @Test
@@ -426,21 +434,14 @@ class EventRoutesTest {
     }
 
     @Test
-    fun `admin put creates a master event and stores the returned room status and teams link`() = testApplication {
+    fun `admin put saves room and teams pending without synchronous Graph calls`() = testApplication {
         val env = enabledEnv()
         application {
             installTestApi(env, database) {
                 eventApi(database, cloudClient, env)
             }
         }
-        cloudClient.masterEventResult =
-            no.nav.delta.room.MasterEventResult(
-                calendarEventId = "master-1",
-                roomStatus = RoomBookingStatus.ACCEPTED,
-                teamsJoinUrl = "https://teams.microsoft.com/l/meetup-join/abc",
-                teamsConferenceId = "123456789",
-                teamsDialIn = "+47 21 00 00 00,,123456789#",
-            ).right()
+        cloudClient.masterEventResult = RuntimeException("graph failure").left()
 
         val response =
             client.put("/admin/event") {
@@ -452,40 +453,16 @@ class EventRoutesTest {
             }
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(1, cloudClient.createdMasterEvents.size)
+        assertTrue(cloudClient.createdMasterEvents.isEmpty())
 
         val fullEvent = readJson<FullEvent>(response.bodyAsText())
-        assertEquals(RoomBookingStatus.ACCEPTED, fullEvent.event.roomStatus)
-        assertEquals("https://teams.microsoft.com/l/meetup-join/abc", fullEvent.event.teamsJoinUrl)
+        assertEquals(InviteMode.SHARED, fullEvent.event.inviteMode)
+        assertEquals(CalendarSyncStatus.PENDING, fullEvent.event.calendarSyncStatus)
+        assertEquals(null, fullEvent.event.roomStatus)
+        assertEquals(null, fullEvent.event.teamsJoinUrl)
 
         val storedMasterId = database.getMasterCalendarEventId(fullEvent.event.id.toString()).getOrNull()
-        assertEquals("master-1", storedMasterId)
-    }
-
-    @Test
-    fun `admin put returns 502 and creates no event when master event creation fails`() = testApplication {
-        val env = enabledEnv()
-        application {
-            installTestApi(env, database) {
-                eventApi(database, cloudClient, env)
-            }
-        }
-        cloudClient.masterEventResult = RuntimeException("graph failure").left()
-        val eventsBefore = database.getEvents(onlyFuture = true).size
-
-        val title = "master-fail-${UUID.randomUUID()}"
-        val response =
-            client.put("/admin/event") {
-                contentType(ContentType.Application.Json)
-                setBody(
-                    createEventJson(title = title, sendNotificationEmail = false)
-                        .dropLast(2) + ""","roomEmail":"room1@nav.no","roomName":"Room 1"}"""
-                )
-            }
-
-        assertEquals(HttpStatusCode.BadGateway, response.status)
-        assertEquals(eventsBefore, database.getEvents(onlyFuture = true).size)
-        assertTrue(database.getEvents(onlyFuture = true).none { it.title == title })
+        assertEquals(null, storedMasterId)
     }
 
     @Test
@@ -776,33 +753,6 @@ class EventRoutesTest {
     }
 
     @Test
-    fun `admin put rolls back the master and the event when a later step fails`() = testApplication {
-        val env = enabledEnv()
-        application {
-            installTestApi(env, database) {
-                eventApi(database, cloudClient, env)
-            }
-        }
-        val title = "rollback-${UUID.randomUUID()}"
-        // Signup deadline (start - 2h) is already passed, so registering the host fails after
-        // the event row and the master event were created.
-        val start = LocalDateTime.now().plusHours(1)
-
-        val response =
-            client.put("/admin/event") {
-                contentType(ContentType.Application.Json)
-                setBody(
-                    createEventJson(title = title, startTime = start, sendNotificationEmail = false)
-                        .dropLast(2) + ""","roomEmail":"room1@nav.no","roomName":"Room 1"}"""
-                )
-            }
-
-        assertTrue(response.status != HttpStatusCode.OK, "expected failure, got ${response.status}")
-        assertEquals(listOf("master-1"), cloudClient.deletedMasterEventIds)
-        assertTrue(database.getEvents(onlyFuture = true).none { it.title == title })
-    }
-
-    @Test
     fun `admin post rejects room fields with editScope UPCOMING`() = testApplication {
         val env = enabledEnv()
         application {
@@ -1041,23 +991,6 @@ class EventRoutesTest {
     }
 
     @Test
-    fun `admin put returns 502 and saves nothing when graph creates no teams join url`() = testApplication {
-        val env = enabledEnv()
-        application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
-        val title = "no-teams-link-${UUID.randomUUID()}"
-
-        val response =
-            client.put("/admin/event") {
-                contentType(ContentType.Application.Json)
-                setBody(createEventJson(title = title, sendNotificationEmail = false).dropLast(2) + ""","isOnlineMeeting":true}""")
-            }
-
-        assertEquals(HttpStatusCode.BadGateway, response.status)
-        assertEquals(listOf("master-1"), cloudClient.deletedMasterEventIds)
-        assertTrue(database.getEvents(onlyFuture = true).none { it.title == title })
-    }
-
-    @Test
     fun `admin post enabling teams without a join url restores the master and keeps the event unchanged`() = testApplication {
         val env = enabledEnv()
         application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
@@ -1135,6 +1068,81 @@ class EventRoutesTest {
             )
         val series = database.createRecurringEventSeries(draft, "test@localhost", "Test User").getOrNull()!!
         return series.referenceEventId
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [0, 1])
+    fun `legacy recurring series cannot add occurrences and rejection preserves existing events`(index: Int) = testApplication {
+        val env = localTestEnvironment()
+        application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
+        val start = LocalDateTime.now().plusDays(7).withNano(0)
+        val draft = futureEvent("legacy-series-${UUID.randomUUID()}").copy(
+            startTime = start,
+            endTime = start.plusHours(1),
+            recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(2)),
+        )
+        val series = database.createRecurringEventSeries(draft, "test@localhost", "Host").getOrNull()!!
+        database.markEventsAsLegacy(series.affectedEvents)
+        val before = series.affectedEvents.map { database.getFullEvent(it.id.toString()).getOrNull()!! }
+        val selected = before[index].event
+        val eventsBefore = database.getEvents().size
+        val response = client.post("/admin/event/${selected.id}") {
+            contentType(ContentType.Application.Json)
+            setBody(testObjectMapper.writeValueAsString(draft.copy(
+                title = "Must not be saved",
+                startTime = selected.startTime,
+                endTime = selected.endTime,
+                recurrence = draft.recurrence!!.copy(untilDate = start.toLocalDate().plusWeeks(3)),
+                editScope = EventEditScope.UPCOMING,
+                sendNotificationEmail = false,
+            )))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertProblem(response, "Denne serien bruker en eldre kalendermodell og kan ikke utvides. Opprett en ny serie.")
+        assertEquals(before, series.affectedEvents.map { database.getFullEvent(it.id.toString()).getOrNull()!! })
+        assertEquals(eventsBefore, database.getEvents().size)
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = [1, 2])
+    fun `legacy recurring series can still be edited and shortened`(weeks: Int) = testApplication {
+        val env = localTestEnvironment()
+        application { installTestApi(env, database) { eventApi(database, cloudClient, env) } }
+        val start = LocalDateTime.now().plusDays(7).withNano(0)
+        val draft = futureEvent("legacy-edit-${UUID.randomUUID()}").copy(
+            startTime = start,
+            endTime = start.plusHours(1),
+            recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY, start.toLocalDate().plusWeeks(2)),
+        )
+        val series = database.createRecurringEventSeries(draft, "test@localhost", "Host").getOrNull()!!
+        database.markEventsAsLegacy(series.affectedEvents)
+        series.affectedEvents.forEach {
+            database.setCalendarEventId(it.id.toString(), "test@localhost", "legacy-${it.id}")
+        }
+
+        val response = client.post("/admin/event/${series.referenceEventId}") {
+            contentType(ContentType.Application.Json)
+            setBody(testObjectMapper.writeValueAsString(draft.copy(
+                title = "Updated legacy series",
+                recurrence = draft.recurrence!!.copy(untilDate = start.toLocalDate().plusWeeks(weeks.toLong())),
+                editScope = EventEditScope.UPCOMING,
+                sendNotificationEmail = false,
+            )))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        series.affectedEvents.take(weeks + 1).forEach {
+            val saved = database.getFullEvent(it.id.toString()).getOrNull()!!
+            assertEquals("Updated legacy series", saved.event.title)
+            assertEquals(InviteMode.PER_PARTICIPANT, saved.event.inviteMode)
+            assertEquals(null, saved.event.calendarSyncStatus)
+            assertEquals(listOf("test@localhost"), saved.hosts.map { host -> host.email })
+            assertEquals("legacy-${it.id}", database.getCalendarEventId(it.id.toString(), "test@localhost").getOrNull())
+        }
+        series.affectedEvents.drop(weeks + 1).forEach {
+            assertTrue(database.getEvent(it.id.toString()).isLeft())
+        }
     }
 
     private fun enabledEnv() =

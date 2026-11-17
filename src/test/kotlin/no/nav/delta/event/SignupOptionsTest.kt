@@ -148,7 +148,7 @@ class SignupOptionsTest {
             draft(options = null).copy(participantLimit = 2, waitlistEnabled = true,
                 recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY,
                     LocalDateTime.now().plusDays(2).toLocalDate().plusWeeks(1))),
-            "host@nav.no", "Host", InviteMode.SHARED,
+            "host@nav.no", "Host",
         ).getOrNull()!!.affectedEvents
         val first = series.first()
         calendar.update(first.id, draft().copy(startTime = first.startTime, endTime = first.endTime,
@@ -264,7 +264,7 @@ class SignupOptionsTest {
         val series = fixture.database.createRecurringEventSeries(
             draft().copy(recurrence = RecurrenceRequest(RecurrenceFrequency.WEEKLY,
                 LocalDateTime.now().plusDays(2).toLocalDate().plusWeeks(2))),
-            "host@nav.no", "Host", InviteMode.SHARED,
+            "host@nav.no", "Host",
         ).getOrNull()!!.affectedEvents
         assertEquals(3, series.size)
         assertTrue(series.all { it.signupOptions.map { option -> option.label } == listOf("Fysisk", "Digitalt") })
